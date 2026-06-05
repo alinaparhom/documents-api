@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"
+      content="width=device-width, initial-scale=1, minimum-scale=1, viewport-fit=cover"
     />
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
@@ -157,15 +157,22 @@
         display: flex;
         align-items: center;
         gap: 8px;
+        flex: 0 0 auto;
         min-width: 0;
         overflow: hidden;
       }
 
-      [data-viewer-file-owner] {
+      .appdosc-viewer [data-viewer-file-owner] {
         flex: 0 1 32vw;
         min-width: 0;
-        max-width: 32vw !important;
-        margin-right: 0 !important;
+        max-width: 32vw;
+        margin-right: 0;
+        overflow: hidden;
+        color: var(--tg-theme-hint-color, #8a94a6);
+        font-size: 12px;
+        line-height: 1.2;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
       .appdosc-viewer__controls {
@@ -225,6 +232,67 @@
         overscroll-behavior: none;
       }
 
+      .appdosc-viewer__dialog {
+        width: min(1180px, calc(100vw - 24px));
+        height: min(920px, calc(100dvh - 24px));
+        max-height: calc(100dvh - 24px);
+        display: flex;
+        flex-direction: column;
+      }
+
+      .appdosc-viewer__body,
+      .appdosc-viewer__content,
+      .appdosc-viewer__surface {
+        min-height: 0;
+      }
+
+      .appdosc-viewer__body {
+        flex: 1 1 auto;
+      }
+
+      .appdosc-viewer__body,
+      .appdosc-viewer__content,
+      .appdosc-viewer__surface {
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+
+      .appdosc-viewer__body,
+      .appdosc-viewer__content,
+      .appdosc-viewer__surface,
+      .appdosc-viewer__zoom {
+        flex: 1 1 auto;
+      }
+
+      .appdosc-viewer__surface,
+      .appdosc-viewer__zoom {
+        width: 100%;
+        height: 100%;
+      }
+
+      .appdosc-viewer__zoom {
+        overflow: auto;
+        scrollbar-gutter: stable;
+        -webkit-overflow-scrolling: touch;
+        touch-action: pan-x pan-y;
+      }
+
+      .appdosc-viewer--frame .appdosc-viewer__zoom {
+        overflow: scroll;
+      }
+
+      .appdosc-viewer__frame {
+        display: block;
+        width: 100%;
+        height: 100%;
+        min-height: 68vh;
+        border: 0;
+        background: #ffffff;
+        transform-origin: 0 0;
+        touch-action: pan-x pan-y;
+      }
+
       .appdosc-viewer--pdf .appdosc-viewer__content,
       .appdosc-viewer--pdf .appdosc-viewer__surface,
       .appdosc-viewer__pdf {
@@ -238,19 +306,50 @@
       .appdosc-viewer__pdf {
         width: 100%;
         height: 100%;
-        overflow: hidden;
+        overflow: clip;
       }
 
       .appdosc-viewer__pdf-canvas {
         width: 100%;
         height: 100%;
         min-height: 0;
-        overflow: auto;
+        overflow-x: auto;
+        overflow-y: scroll;
         padding: 12px;
         background: #eef2f7;
         -webkit-overflow-scrolling: touch;
         overscroll-behavior: contain;
-        touch-action: pan-x pan-y pinch-zoom;
+        scrollbar-gutter: stable both-edges;
+        touch-action: pan-x pan-y;
+      }
+
+      .appdosc-viewer__pdf-canvas::-webkit-scrollbar {
+        width: 12px;
+        height: 12px;
+      }
+
+      .appdosc-viewer__pdf-canvas::-webkit-scrollbar-track {
+        background: rgba(203, 213, 225, 0.5);
+      }
+
+      .appdosc-viewer__pdf-canvas::-webkit-scrollbar-thumb {
+        border: 3px solid rgba(203, 213, 225, 0.5);
+        border-radius: 999px;
+        background: rgba(100, 116, 139, 0.72);
+      }
+
+      @media (pointer: coarse) {
+        .appdosc-viewer__dialog {
+          width: 100vw;
+          height: 100dvh;
+          max-height: 100dvh;
+        }
+
+        .appdosc-viewer__pdf-canvas {
+          overflow-y: auto;
+          scrollbar-width: thin;
+          padding: 8px;
+        }
       }
 
       .appdosc-pdf-viewer__page {
@@ -318,7 +417,7 @@
       }
 
       .appdosc-viewer__loader[hidden] {
-        display: none !important;
+        display: none;
       }
 
       .appdosc-viewer__loader-card {
@@ -1015,17 +1114,17 @@
         border-left: 1px solid rgba(0, 0, 0, 0.1);
       }
 
-      .appdosc-viewer__control--close {
-        color: #ffffff !important;
+      .appdosc-viewer__controls .appdosc-viewer__control--close {
+        color: #ffffff;
         font-weight: 700;
-        background-color: #e53935 !important;
-        background-image: none !important;
-        border: 1px solid #b71c1c !important;
+        background-color: #e53935;
+        background-image: none;
+        border: 1px solid #b71c1c;
         box-shadow: 0 8px 18px rgba(183, 28, 28, 0.34);
       }
 
-      .appdosc-viewer__control--close:active {
-        background-color: #c62828 !important;
+      .appdosc-viewer__controls .appdosc-viewer__control--close:active {
+        background-color: #c62828;
       }
 
 
@@ -4298,9 +4397,9 @@
           flex-wrap: nowrap;
         }
 
-        [data-viewer-file-owner] {
+        .appdosc-viewer [data-viewer-file-owner] {
           flex-basis: 22vw;
-          max-width: 22vw !important;
+          max-width: 22vw;
         }
 
         .appdosc-viewer__control {
@@ -6665,12 +6764,11 @@
         aria-labelledby="appdosc-viewer-title"
       >
         <header class="appdosc-viewer__header">
-          <div class="appdosc-viewer__title" id="appdosc-viewer-title" data-viewer-title hidden style="display:none">Документ</div>
+          <div class="appdosc-viewer__title" id="appdosc-viewer-title" data-viewer-title hidden>Документ</div>
           <div
             data-viewer-file-owner
             hidden
             aria-live="polite"
-            style="font-size:12px; line-height:1.2; color:var(--tg-theme-hint-color, #8a94a6); margin-right:8px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:45vw;"
           ></div>
           <div class="appdosc-viewer__controls">
             <button
@@ -6745,7 +6843,6 @@
               data-viewer-close
               aria-label="Закрыть просмотр"
               title="Закрыть"
-              style="background:#e53935;color:#fff;border:1px solid #b71c1c;"
             >
               ✕
             </button>
@@ -6793,7 +6890,8 @@
                   data-viewer-frame
                   title="Просмотр документа"
                   src=""
-                  loading="lazy"
+                  scrolling="yes"
+                  loading="eager"
                   allow="clipboard-read; clipboard-write; fullscreen; autoplay; encrypted-media"
                   allowfullscreen
                 ></iframe>

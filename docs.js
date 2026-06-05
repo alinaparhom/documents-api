@@ -602,6 +602,9 @@
   var messageTimerId = null;
   var outgoingRegistryEscapeHandler = null;
   var outgoingFilterPopoverOutsideHandler = null;
+  var activeOutgoingEditLocks = Object.create(null);
+  var ordersRegistryEscapeHandler = null;
+  var ordersFilterPopoverOutsideHandler = null;
   var elements = {
     addButton: null,
     adminButton: null,
@@ -1863,6 +1866,10 @@
       append('path', { d: 'M12 15V3' });
       return svg;
     }
+    if (name === 'paperclip') {
+      append('path', { d: 'M21.4 11.6l-8.8 8.8a6 6 0 0 1-8.5-8.5l9.4-9.4a4 4 0 0 1 5.7 5.7l-9.4 9.4a2 2 0 0 1-2.8-2.8l8.8-8.8' });
+      return svg;
+    }
     if (name === 'message') {
       append('path', { d: 'M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z' });
       return svg;
@@ -2010,6 +2017,22 @@
       '.documents-message--error{background:rgba(69,10,10,.9);color:#fecaca;}' +
       '}';
     document.head.appendChild(style);
+  }
+
+  function ensureDocumentsMessageLayer() {
+    if (!document.body) {
+      return null;
+    }
+
+    if (!elements.message) {
+      elements.message = createElement('div', 'documents-message');
+    }
+
+    if (elements.message.parentNode !== document.body) {
+      document.body.appendChild(elements.message);
+    }
+
+    return elements.message;
   }
 
   function ensureSubordinateReviewStyle() {
@@ -4675,17 +4698,30 @@
       '.documents-outgoing-table__muted{color:#64748b;}' +
       '.documents-outgoing-table__empty{padding:22px;text-align:center;color:#64748b;font-weight:800;}' +
       '.documents-outgoing-table__summary{max-width:320px;}' +
-      '.documents-outgoing-table__actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}' +
-      '.documents-outgoing-table__action{min-height:30px;border:1px solid #dbeafe;border-radius:8px;background:#fff;color:#172554;padding:0 8px;font:inherit;font-size:11px;font-weight:900;cursor:pointer;transition:background .16s ease,border-color .16s ease,color .16s ease;}' +
-      '.documents-outgoing-table__action:hover,.documents-outgoing-table__action:focus-visible{border-color:#93c5fd;background:#eff6ff;color:#1d4ed8;outline:0;}' +
+      '.documents-outgoing-table__actions{display:flex;align-items:center;justify-content:center;gap:5px;flex-wrap:nowrap;min-width:0;}' +
+      '.documents-outgoing-table__action{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:30px;height:30px;min-width:30px;min-height:30px;border:1px solid #dbeafe;border-radius:9px;background:#fff;color:#172554;padding:0;font:inherit;cursor:pointer;box-shadow:0 5px 14px rgba(37,99,235,.08);transition:background .16s ease,border-color .16s ease,color .16s ease,box-shadow .16s ease,transform .16s ease;}' +
+      '.documents-outgoing-table__action-icon{display:block;width:15px;height:15px;flex:0 0 auto;}' +
+      '.documents-outgoing-table__action:hover,.documents-outgoing-table__action:focus-visible{border-color:#93c5fd;background:#eff6ff;color:#1d4ed8;box-shadow:0 8px 18px rgba(37,99,235,.16);outline:0;transform:translateY(-1px);}' +
+      '.documents-outgoing-table__action--attach{border-color:#bae6fd;color:#0369a1;background:#f0f9ff;}' +
+      '.documents-outgoing-table__action--edit{border-color:#bfdbfe;color:#1d4ed8;background:#eff6ff;}' +
       '.documents-outgoing-table__action--danger{border-color:#fecaca;color:#dc2626;}' +
       '.documents-outgoing-table__action--danger:hover,.documents-outgoing-table__action--danger:focus-visible{border-color:#fca5a5;background:#fff1f0;color:#b91c1c;}' +
       '.documents-outgoing-file-list{display:flex;flex-direction:column;gap:5px;min-width:0;}' +
       '.documents-outgoing-file-item{display:block;min-width:0;}' +
-      '.documents-outgoing-file-link{display:grid;grid-template-columns:24px minmax(0,1fr);align-items:center;gap:5px;min-width:0;padding:3px 5px;border:1px solid #e2e8f0;border-radius:6px;background:#fff;color:#172554;text-decoration:none;transition:background .16s ease,border-color .16s ease,box-shadow .16s ease;}' +
+      '.documents-outgoing-file-link{display:grid;grid-template-columns:24px minmax(0,1fr) auto;align-items:center;gap:5px;min-width:0;padding:5px 6px;border:1px solid #e2e8f0;border-radius:6px;background:#fff;color:#172554;text-decoration:none;transition:background .16s ease,border-color .16s ease,box-shadow .16s ease;}' +
+      '.documents-orders-file-link{grid-template-columns:24px minmax(0,1fr);}' +
       '.documents-outgoing-file-link:hover,.documents-outgoing-file-link:focus-visible{background:#f8fbff;border-color:#bfdbfe;box-shadow:0 6px 16px rgba(37,99,235,.12);outline:0;}' +
+      '.documents-outgoing-file-link--locked{cursor:not-allowed;border-color:#fecaca;background:#fff7f7;color:#7f1d1d;}' +
+      '.documents-outgoing-file-link--locked:hover,.documents-outgoing-file-link--locked:focus-visible{background:#fff1f2;border-color:#fca5a5;box-shadow:none;}' +
       '.documents-outgoing-file-link__icon{display:inline-flex;align-items:center;justify-content:center;width:24px;height:18px;border-radius:4px;background:#e0f2fe;color:#0369a1;font-size:7px;font-weight:900;line-height:1;text-transform:uppercase;}' +
+      '.documents-outgoing-file-link__text{display:grid;gap:2px;min-width:0;}' +
       '.documents-outgoing-file-link__name{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;font-weight:800;color:#172554;}' +
+      '.documents-outgoing-file-link__meta{display:flex;align-items:center;gap:4px;min-width:0;color:#64748b;font-size:10px;font-weight:800;line-height:1.2;}' +
+      '.documents-outgoing-file-link__uploader{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
+      '.documents-outgoing-private-badge{display:inline-flex;align-items:center;justify-content:center;min-height:18px;padding:0 6px;border:1px solid #bfdbfe;border-radius:999px;background:#eff6ff;color:#1d4ed8;font-size:9px;font-weight:900;line-height:1;white-space:nowrap;}' +
+      '.documents-outgoing-private-badge--private{border-color:#fed7aa;background:#fff7ed;color:#c2410c;}' +
+      '.documents-outgoing-private-badge--public{border-color:#bbf7d0;background:#f0fdf4;color:#15803d;}' +
+      '.documents-outgoing-private-badge--locked{border-color:#fecaca;background:#fee2e2;color:#991b1b;}' +
       '.documents-outgoing-filter-popover{position:fixed;z-index:31000;width:min(340px,calc(100vw - 24px));max-height:min(520px,calc(100vh - 24px));display:flex;flex-direction:column;gap:10px;padding:12px;border:1px solid #cbd8ec;border-radius:12px;background:#fff;box-shadow:0 22px 54px rgba(15,23,42,.2);box-sizing:border-box;color:#172554;}' +
       '.documents-outgoing-filter-popover__title{font-size:13px;font-weight:900;line-height:1.3;color:#0f172a;}' +
       '.documents-outgoing-filter-popover__input{width:100%;height:34px;box-sizing:border-box;border:1px solid #cbd8ec;border-radius:8px;background:#fff;color:#0f172a;padding:0 10px;font:inherit;font-size:13px;outline:0;}' +
@@ -4703,7 +4739,7 @@
       '.documents-outgoing-filter-popover__button--primary:hover,.documents-outgoing-filter-popover__button--primary:focus-visible{border-color:#1f4fdc;background:#1f4fdc;color:#fff;}' +
       '.documents-outgoing-form__wide{grid-column:1 / -1;}' +
       '.documents-outgoing-form-modal{position:fixed;inset:0;z-index:32000;display:flex;align-items:center;justify-content:center;padding:18px;background:rgba(15,23,42,.48);backdrop-filter:blur(12px);box-sizing:border-box;}' +
-      '.documents-outgoing-form-modal__shell{width:min(760px,100%);max-height:calc(100dvh - 36px);display:flex;flex-direction:column;overflow:hidden;border:1px solid #d8e4f4;border-radius:16px;background:linear-gradient(180deg,#ffffff 0%,#f8fbff 100%);box-shadow:0 28px 80px rgba(15,23,42,.26);color:#172554;}' +
+      '.documents-outgoing-form-modal__shell{width:min(940px,100%);max-height:calc(100dvh - 36px);display:flex;flex-direction:column;overflow:hidden;border:1px solid #d8e4f4;border-radius:16px;background:linear-gradient(180deg,#ffffff 0%,#f8fbff 100%);box-shadow:0 28px 80px rgba(15,23,42,.26);color:#172554;}' +
       '.documents-outgoing-form-modal__header{display:grid;grid-template-columns:minmax(0,1fr);gap:4px;border-bottom:1px solid #e2e8f0;background:#fff;padding:18px 20px 16px;}' +
       '.documents-outgoing-form-modal__eyebrow{margin:0;color:#2458ff;font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:.06em;}' +
       '.documents-outgoing-form-modal__title{margin:0;color:#0f172a;font-size:22px;line-height:1.16;font-weight:900;letter-spacing:0;}' +
@@ -4711,6 +4747,9 @@
       '.documents-outgoing-form-modal__body{min-height:0;overflow:auto;padding:18px 20px 20px;}' +
       '.documents-outgoing-form-modal__form{margin:0;}' +
       '.documents-outgoing-form-modal__grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 12px;}' +
+      '.documents-outgoing-form-section{display:grid;gap:12px;margin:0 0 14px;padding:14px;border:1px solid #dbeafe;border-radius:14px;background:rgba(255,255,255,.84);box-shadow:0 10px 22px rgba(15,23,42,.05);}' +
+      '.documents-outgoing-form-section__title{display:flex;align-items:center;justify-content:space-between;gap:10px;color:#0f172a;font-size:13px;font-weight:900;line-height:1.3;}' +
+      '.documents-outgoing-form-section__hint{color:#64748b;font-size:12px;font-weight:700;line-height:1.35;}' +
       '.documents-outgoing-form-modal .documents-form__field{min-width:0;}' +
       '.documents-outgoing-form-modal .documents-form__field label{display:grid;gap:7px;margin:0;color:#344054;font-size:12px;font-weight:900;line-height:1.25;}' +
       '.documents-outgoing-form-modal .documents-form__field input,.documents-outgoing-form-modal .documents-form__field select,.documents-outgoing-form-modal .documents-form__field textarea{width:100%;min-height:42px;border:1px solid #cbd8ec;border-radius:10px;background:#fff;color:#0f172a;padding:10px 12px;font:inherit;font-size:14px;line-height:1.35;box-sizing:border-box;box-shadow:0 1px 0 rgba(15,23,42,.03);transition:border-color .16s ease,box-shadow .16s ease,background .16s ease;}' +
@@ -4730,6 +4769,12 @@
       '.documents-outgoing-file-upload__button-icon{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;flex:0 0 auto;font-size:15px;line-height:1;}' +
       '.documents-outgoing-file-upload__summary{min-width:0;color:#475569;font-size:13px;font-weight:800;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
       '.documents-outgoing-file-upload__summary.is-filled{color:#172554;}' +
+      '.documents-outgoing-private-toggle{grid-column:1 / -1;display:grid;grid-template-columns:auto minmax(0,1fr);align-items:start;gap:10px;width:100%;padding:11px 12px;border:1px solid #bfdbfe;border-radius:12px;background:#eff6ff;color:#172554;box-sizing:border-box;cursor:pointer;}' +
+      '.documents-outgoing-private-toggle:hover,.documents-outgoing-private-toggle:focus-within{border-color:#93c5fd;background:#eaf3ff;}' +
+      '.documents-outgoing-private-toggle input{width:18px;height:18px;margin:1px 0 0;accent-color:#2458ff;}' +
+      '.documents-outgoing-private-toggle__content{display:grid;gap:3px;min-width:0;}' +
+      '.documents-outgoing-private-toggle__title{font-size:13px;font-weight:900;line-height:1.25;color:#172554;}' +
+      '.documents-outgoing-private-toggle__hint{font-size:12px;font-weight:700;line-height:1.35;color:#475569;}' +
       '.documents-outgoing-file-manager{display:grid;gap:9px;padding:12px;border:1px solid #dbeafe;border-radius:14px;background:linear-gradient(180deg,#f8fbff 0%,#fff 100%);}' +
       '.documents-outgoing-file-manager__title{color:#0f172a;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.04em;}' +
       '.documents-outgoing-file-manager__list{display:grid;gap:8px;}' +
@@ -4738,6 +4783,7 @@
       '.documents-outgoing-file-manager__info{display:flex;align-items:center;gap:10px;min-width:0;}' +
       '.documents-outgoing-file-manager__icon{display:inline-flex;align-items:center;justify-content:center;width:36px;height:28px;flex:0 0 auto;border-radius:8px;background:#e0f2fe;color:#0369a1;font-size:10px;font-weight:900;line-height:1;text-transform:uppercase;}' +
       '.documents-outgoing-file-manager__text{display:grid;gap:2px;min-width:0;}' +
+      '.documents-outgoing-file-manager__name-line{display:flex;align-items:center;gap:6px;min-width:0;}' +
       '.documents-outgoing-file-manager__name{display:block;min-width:0;padding:0;border:0;background:transparent;color:#172554;font:inherit;font-size:13px;font-weight:900;line-height:1.25;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;}' +
       '.documents-outgoing-file-manager__name:hover,.documents-outgoing-file-manager__name:focus-visible{color:#2458ff;outline:none;text-decoration:underline;text-underline-offset:3px;}' +
       '.documents-outgoing-file-manager__meta{min-width:0;color:#64748b;font-size:12px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
@@ -4972,14 +5018,15 @@
       '@media (max-width:420px){' +
       '#documents-title,.documents-panel__title{max-width:1px;flex-basis:1px;color:transparent;}' +
       '.documents-panel-control-group{gap:2px;}' +
-      '.documents-panel-icon-button,#documents-close,#documents-logout-button,#documents-refresh-button,#documents-settings-button,#documents-online-button,.documents-panel-control-group .documents-tools-toggle,#documents-add-button,#documents-admin-button,#documents-responsible-button,#documents-unviewed-button,#documents-outgoing-button{width:25px;min-width:25px;max-width:25px;height:27px;min-height:27px;padding:0;border-radius:7px;}' +
-      '#documents-admin-button,#documents-responsible-button,#documents-unviewed-button,#documents-outgoing-button{font-size:0;overflow:hidden;}' +
+      '.documents-panel-icon-button,#documents-close,#documents-logout-button,#documents-refresh-button,#documents-settings-button,#documents-online-button,.documents-panel-control-group .documents-tools-toggle,#documents-add-button,#documents-admin-button,#documents-responsible-button,#documents-unviewed-button,#documents-outgoing-button,#documents-orders-button{width:25px;min-width:25px;max-width:25px;height:27px;min-height:27px;padding:0;border-radius:7px;}' +
+      '#documents-admin-button,#documents-responsible-button,#documents-unviewed-button,#documents-outgoing-button,#documents-orders-button{font-size:0;overflow:hidden;}' +
       '#documents-unviewed-button{overflow:visible;}' +
       '#documents-unviewed-button .documents-unviewed-button__counter{position:absolute;top:-7px;right:-7px;min-width:16px;height:16px;padding:0 4px;border:1px solid #fff;font-size:10px;}' +
       '#documents-admin-button::before{content:"A";font-size:11px;font-weight:900;line-height:1;}' +
       '#documents-responsible-button::before{content:"О";font-size:11px;font-weight:900;line-height:1;}' +
       '#documents-unviewed-button::before{content:"!";font-size:13px;font-weight:900;line-height:1;}' +
       '#documents-outgoing-button::before{content:"И";font-size:11px;font-weight:900;line-height:1;}' +
+      '#documents-orders-button::before{content:"П";font-size:11px;font-weight:900;line-height:1;}' +
       '.documents-panel-icon-button__icon,.documents-panel-action-icon{width:14px;height:14px;}' +
       '}' +
       '@media (max-width:760px){' +
@@ -10330,7 +10377,8 @@
   }
 
   function showMessage(type, text, durationOverride) {
-    if (!elements.message) {
+    var message = ensureDocumentsMessageLayer();
+    if (!message) {
       return;
     }
     ensureDocumentsMessageStyle();
@@ -10338,22 +10386,22 @@
       window.clearTimeout(messageTimerId);
       messageTimerId = null;
     }
-    elements.message.className = 'documents-message';
-    elements.message.classList.remove('is-visible');
+    message.className = 'documents-message';
+    message.classList.remove('is-visible');
     if (!text) {
-      elements.message.style.display = 'none';
-      elements.message.textContent = '';
+      message.style.display = 'none';
+      message.textContent = '';
       return;
     }
     var normalizedType = ['success', 'info', 'warning', 'error'].indexOf(type) !== -1 ? type : 'info';
-    elements.message.classList.add('documents-message--' + normalizedType);
-    elements.message.style.display = 'block';
-    elements.message.setAttribute('role', normalizedType === 'error' ? 'alert' : 'status');
-    elements.message.setAttribute('aria-live', normalizedType === 'error' ? 'assertive' : 'polite');
-    elements.message.textContent = text;
+    message.classList.add('documents-message--' + normalizedType);
+    message.style.display = 'block';
+    message.setAttribute('role', normalizedType === 'error' ? 'alert' : 'status');
+    message.setAttribute('aria-live', normalizedType === 'error' ? 'assertive' : 'polite');
+    message.textContent = text;
     window.requestAnimationFrame(function() {
-      if (elements.message) {
-        elements.message.classList.add('is-visible');
+      if (elements.message === message) {
+        message.classList.add('is-visible');
       }
     });
     var duration = Number(durationOverride) > 0
@@ -10813,6 +10861,18 @@
       elements.outgoingButton.setAttribute('aria-hidden', canUseOutgoing ? 'false' : 'true');
       elements.outgoingButton.tabIndex = canUseOutgoing ? 0 : -1;
       elements.outgoingButton.classList.toggle('documents-button--hidden', !canUseOutgoing);
+    }
+    if (elements.ordersButton) {
+      var canUseOrders = organizationReady && hasAdminAccess;
+      elements.ordersButton.disabled = !canUseOrders;
+      elements.ordersButton.setAttribute('aria-hidden', canUseOrders ? 'false' : 'true');
+      elements.ordersButton.tabIndex = canUseOrders ? 0 : -1;
+      elements.ordersButton.classList.toggle('documents-button--hidden', !hasAdminAccess);
+      if (hasAdminAccess) {
+        elements.ordersButton.removeAttribute('hidden');
+      } else {
+        elements.ordersButton.setAttribute('hidden', '');
+      }
     }
     if (elements.settingsButton) {
       var canUseSettings = organizationReady && (accessContext.forceAccess || accessContext.accessGranted);
@@ -16210,6 +16270,146 @@
     return SUBORDINATE_WORKFLOW_STATUS_LABELS[status] || SUBORDINATE_WORKFLOW_STATUS_LABELS.pending;
   }
 
+  function assignmentEntryAssignedByCurrentUser(entry) {
+    if (!entry || typeof entry !== 'object' || !state.userAssignmentKeyMap) {
+      return false;
+    }
+
+    var candidates = [
+      entry.assignedBy,
+      entry.assigned_by,
+      entry.assignedByTelegram,
+      entry.assigned_by_telegram,
+      entry.assignedById,
+      entry.assigned_by_id,
+      entry.assignedByLogin,
+      entry.assigned_by_login,
+      entry.assignmentAuthor,
+      entry.assignmentAuthorId,
+      entry.assignmentAuthorName
+    ];
+
+    for (var i = 0; i < candidates.length; i += 1) {
+      var candidate = candidates[i];
+      if (candidate === null || candidate === undefined) {
+        continue;
+      }
+      var value = String(candidate).trim();
+      if (!value) {
+        continue;
+      }
+
+      var responsible = findResponsibleById(value) || findDirectorByLabel(value);
+      if (responsible && matchesCurrentUserAssignee(responsible)) {
+        return true;
+      }
+
+      var normalizedId = normalizeAssigneeIdentifier(value);
+      if (normalizedId && Object.prototype.hasOwnProperty.call(state.userAssignmentKeyMap, 'id::' + normalizedId)) {
+        return true;
+      }
+
+      var normalizedName = normalizeUserIdentifier(value);
+      if (normalizedName && Object.prototype.hasOwnProperty.call(state.userAssignmentKeyMap, 'name::' + normalizedName)) {
+        return true;
+      }
+
+      var directorName = normalizeDirectorLabel(value);
+      if (directorName && Object.prototype.hasOwnProperty.call(state.userAssignmentKeyMap, 'name::' + directorName)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  function assignmentEntryTargetsCurrentUser(entry) {
+    if (!entry || typeof entry !== 'object') {
+      return false;
+    }
+    return matchesCurrentUserAssignee(entry);
+  }
+
+  function assignmentEntryHasCompletedStatus(doc, entry) {
+    if (!entry || typeof entry !== 'object') {
+      return false;
+    }
+    if (assignmentEntryTargetsCurrentUser(entry)) {
+      return true;
+    }
+    if (normalizeSubordinateReviewStatus(entry.reviewStatus) === 'accepted') {
+      return true;
+    }
+    if (getStatusTone(entry.status) === 'done') {
+      return true;
+    }
+    var history = collectAssigneeStatusHistory(doc, entry);
+    if (!Array.isArray(history) || !history.length) {
+      return false;
+    }
+    var latest = history[history.length - 1];
+    return Boolean(latest && getStatusTone(latest.status) === 'done');
+  }
+
+  function buildCurrentResponsibleAssignmentsBlockMessage(pendingNames) {
+    var names = [];
+    var seen = Object.create(null);
+    if (Array.isArray(pendingNames)) {
+      pendingNames.forEach(function(name) {
+        var value = name ? String(name).trim() : '';
+        var key = value.toLowerCase();
+        if (!value || seen[key]) {
+          return;
+        }
+        seen[key] = true;
+        names.push(value);
+      });
+    }
+    if (!names.length) {
+      return 'Вы назначили исполнителя. Ему нужно завершить задачу.';
+    }
+    var visible = names.slice(0, 5).join(', ');
+    if (names.length > 5) {
+      visible += ' +' + (names.length - 5);
+    }
+    return 'Вы назначили: ' + visible + '. Ему нужно завершить задачу.';
+  }
+
+  function getCurrentResponsibleAssignmentCompletionSummary(doc) {
+    var entries = resolveAssigneeList(doc);
+    var total = 0;
+    var completed = 0;
+    var pendingNames = [];
+
+    for (var i = 0; i < entries.length; i += 1) {
+      var entry = entries[i];
+      if (!entry || typeof entry !== 'object') {
+        continue;
+      }
+      var role = entry.role ? String(entry.role).toLowerCase() : '';
+      if (role && role !== 'responsible' && role !== 'subordinate') {
+        continue;
+      }
+      if (!assignmentEntryAssignedByCurrentUser(entry)) {
+        continue;
+      }
+      total += 1;
+      if (assignmentEntryHasCompletedStatus(doc, entry)) {
+        completed += 1;
+        continue;
+      }
+      pendingNames.push(buildAssigneeDisplayName(entry) || 'исполнитель');
+    }
+
+    return {
+      completed: completed,
+      total: total,
+      allCompleted: total === 0 || completed >= total,
+      pendingNames: pendingNames,
+      message: buildCurrentResponsibleAssignmentsBlockMessage(pendingNames)
+    };
+  }
+
   function getSubordinateMutationId(entry) {
     if (!entry || typeof entry !== 'object') {
       return '';
@@ -18192,10 +18392,11 @@
     return viewBlock + '\n\n' + statusBlock;
   }
 
-  function buildStatusSelectOptions(select, currentStatus) {
+  function buildStatusSelectOptions(select, currentStatus, options) {
     if (!select) {
       return;
     }
+    var settings = options && typeof options === 'object' ? options : {};
     var normalized = currentStatus ? String(currentStatus) : '';
     if (normalized && isDocumentViewedStatus(normalized)) {
       normalized = '';
@@ -18212,6 +18413,10 @@
       var option = document.createElement('option');
       option.value = statusOption;
       option.textContent = statusOption;
+      if (settings.disableCompleted && getStatusTone(statusOption) === 'done') {
+        option.disabled = true;
+        option.title = settings.completedDisabledReason || '';
+      }
       select.appendChild(option);
       added[statusOption] = true;
     }
@@ -19604,13 +19809,18 @@
   }
 
   function loadColumnOrder(organization, force) {
+    var requestProfileKey = getAccessProfileKey(state.access);
     if (!organization) {
       applyColumnOrder(getDefaultColumnOrder(), { render: true });
       state.columnOrderLoaded = false;
       state.columnOrderOrganization = '';
+      state.columnOrderProfileKey = '';
       return Promise.resolve(state.columnOrder);
     }
-    if (!force && state.columnOrderLoaded && state.columnOrderOrganization === organization) {
+    if (!force
+      && state.columnOrderLoaded
+      && state.columnOrderOrganization === organization
+      && state.columnOrderProfileKey === requestProfileKey) {
       return Promise.resolve(state.columnOrder);
     }
     if (!force && state.columnOrderLoadingPromise) {
@@ -19630,7 +19840,8 @@
     }), { credentials: 'same-origin' })
       .then(handleResponse)
       .then(function(data) {
-        if (requestCacheVersion !== state.runtimeCacheVersion) {
+        if (requestCacheVersion !== state.runtimeCacheVersion
+          || getAccessProfileKey(state.access) !== requestProfileKey) {
           return state.columnOrder;
         }
         var normalized = normalizeColumnOrder(data && data.columns);
@@ -19642,7 +19853,7 @@
           : normalized;
         state.columnOrderProfile = data && data.profile ? String(data.profile) : state.columnOrderProfile;
         state.columnOrderOrganization = organization;
-        state.columnOrderProfileKey = getAccessProfileKey(state.access);
+        state.columnOrderProfileKey = requestProfileKey;
         state.columnOrderLoaded = true;
         applyColumnOrder(effectiveOrder, { render: true });
         saveColumnOrderToLocalStorage(effectiveOrder);
@@ -20033,6 +20244,18 @@
     if (nextStatus === previous) {
       return;
     }
+    if (getStatusTone(nextStatus) === 'done'
+      && documentHasResponsibleSubordinateReviewFlow(doc)
+      && isCurrentUserResponsibleForDocument(doc)
+      && !isCurrentUserAdmin()) {
+      var ownAssignmentSummary = getCurrentResponsibleAssignmentCompletionSummary(doc);
+      if (ownAssignmentSummary.total > 0 && !ownAssignmentSummary.allCompleted) {
+        showMessage('warning', ownAssignmentSummary.message);
+        select.value = previous;
+        setStatusSelectTone(select, previous);
+        return;
+      }
+    }
     var previousMeta = meta ? meta.textContent : '';
     select.disabled = true;
     setStatusSelectTone(select, nextStatus);
@@ -20087,7 +20310,13 @@
       var select = document.createElement('select');
       select.className = 'documents-status__select';
       select.setAttribute('aria-label', 'Статус документа');
-      buildStatusSelectOptions(select, statusText !== '—' ? statusText : '');
+      var ownAssignmentSummary = documentHasResponsibleSubordinateReviewFlow(doc) && isCurrentUserResponsibleForDocument(doc) && !isCurrentUserAdmin()
+        ? getCurrentResponsibleAssignmentCompletionSummary(doc)
+        : null;
+      buildStatusSelectOptions(select, statusText !== '—' ? statusText : '', {
+        disableCompleted: Boolean(ownAssignmentSummary && ownAssignmentSummary.total > 0 && !ownAssignmentSummary.allCompleted),
+        completedDisabledReason: ownAssignmentSummary ? ownAssignmentSummary.message : ''
+      });
       setStatusSelectTone(select, select.value || statusText);
       select.addEventListener('change', function() {
         handleStatusSelectChange(doc, select, meta);
@@ -21389,7 +21618,17 @@
         return {};
       });
     }
-    return response.json();
+    return response.json().then(function(data) {
+      if (data && typeof data === 'object' && data.success === false) {
+        var message = data.error || data.message || 'Сервер вернул ошибку без текста.';
+        var error = new Error(message);
+        error.responseData = data;
+        error.reason = data.reason || '';
+        error.status = response.status;
+        throw error;
+      }
+      return data;
+    });
   }
 
   function uploadFormDataWithProgress(url, formData, progressHandler) {
@@ -22110,10 +22349,16 @@
       return Promise.reject(new Error('Организация не определена.'));
     }
 
-    return fetch(buildApiUrl('outgoing_list', {
+    var params = {
       organization: state.organization,
       cacheBust: Date.now()
-    }), {
+    };
+    var telegramId = getTelegramUserId();
+    if (telegramId) {
+      params.telegram_user_id = telegramId;
+    }
+
+    return fetch(buildApiUrl('outgoing_list', params), {
       credentials: 'same-origin',
       cache: 'no-store'
     }).then(handleResponse);
@@ -22151,6 +22396,49 @@
     return String(value);
   }
 
+  function isOutgoingFilePrivate(file) {
+    if (!file || typeof file !== 'object') {
+      return false;
+    }
+    var visibility = String(file.visibility || '').trim().toLowerCase();
+    return visibility === 'private';
+  }
+
+  function isOutgoingFileAccessDenied(file) {
+    if (!file || typeof file !== 'object') {
+      return false;
+    }
+    return Boolean(file.accessDenied || file.restricted);
+  }
+
+  function getOutgoingFileUploader(file) {
+    if (!file || typeof file !== 'object') {
+      return '';
+    }
+    var candidates = [
+      file.uploadedBy,
+      file.uploadedByName,
+      file.createdBy,
+      file.updatedBy
+    ];
+    for (var i = 0; i < candidates.length; i += 1) {
+      var value = candidates[i] === undefined || candidates[i] === null ? '' : String(candidates[i]).trim();
+      if (value) {
+        return value;
+      }
+    }
+    return '';
+  }
+
+  function createOutgoingFileVisibilityBadge(file) {
+    var isPrivate = isOutgoingFilePrivate(file);
+    var isLocked = isOutgoingFileAccessDenied(file);
+    var className = 'documents-outgoing-private-badge '
+      + (isPrivate ? 'documents-outgoing-private-badge--private' : 'documents-outgoing-private-badge--public')
+      + (isLocked ? ' documents-outgoing-private-badge--locked' : '');
+    return createElement('span', className, isPrivate ? (isLocked ? 'Нет доступа' : 'Приватный') : 'Открытый');
+  }
+
   function renderOutgoingFilesCell(cell, record) {
     var files = record && Array.isArray(record.files) ? record.files : [];
     if (!files.length) {
@@ -22166,20 +22454,40 @@
       }
       var url = resolveAttachmentUrl(file, { bustCache: true });
       var fileName = getAttachmentName(file, index + 1);
-      if (!url) {
-        return;
-      }
+      var isLocked = isOutgoingFileAccessDenied(file);
+      var uploader = getOutgoingFileUploader(file);
       var item = createElement('div', 'documents-outgoing-file-item');
       var link = createElement('a', 'documents-outgoing-file-link');
-      link.href = url;
-      link.target = '_blank';
-      link.rel = 'noopener noreferrer';
+      if (isLocked || !url) {
+        link.href = '#';
+        link.classList.add('documents-outgoing-file-link--locked');
+        link.setAttribute('aria-disabled', 'true');
+      } else {
+        link.href = url;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+      }
       link.title = fileName;
-      link.setAttribute('aria-label', 'Предпросмотр файла ' + fileName);
-      link.appendChild(createElement('span', 'documents-outgoing-file-link__icon', getAttachmentExtensionLabel(file)));
-      link.appendChild(createElement('span', 'documents-outgoing-file-link__name', fileName));
+      link.setAttribute('aria-label', isLocked ? 'Приватный файл недоступен' : 'Предпросмотр файла ' + fileName);
+      link.appendChild(createElement('span', 'documents-outgoing-file-link__icon', isLocked ? 'PRV' : getAttachmentExtensionLabel(file)));
+      var text = createElement('span', 'documents-outgoing-file-link__text');
+      text.appendChild(createElement('span', 'documents-outgoing-file-link__name', fileName));
+      var meta = createElement('span', 'documents-outgoing-file-link__meta');
+      meta.appendChild(createElement('span', 'documents-outgoing-file-link__uploader', uploader ? ('Добавил: ' + uploader) : 'Автор не указан'));
+      text.appendChild(meta);
+      link.appendChild(text);
+      link.appendChild(createOutgoingFileVisibilityBadge(file));
+      if (isLocked) {
+        link.title = uploader
+          ? 'Приватный файл. Доступ есть только у админов и пользователя: ' + uploader
+          : 'Приватный файл. Доступ есть только у админов и пользователя, который его добавил.';
+      }
       link.addEventListener('click', function(event) {
         event.preventDefault();
+        if (isLocked || !url) {
+          showMessage('warning', 'Это приватный файл. Открыть его могут только админы и пользователь, который его добавил.');
+          return;
+        }
         openOutgoingAttachmentInNewTab(file, url);
       });
 
@@ -22398,6 +22706,10 @@
   function openOutgoingAttachmentInNewTab(file, resolvedUrl) {
     var url = resolvedUrl || resolveAttachmentUrl(file, { bustCache: true });
     var fileName = getAttachmentName(file);
+    if (isOutgoingFileAccessDenied(file)) {
+      showMessage('warning', 'Это приватный файл. Открыть его могут только админы и пользователь, который его добавил.');
+      return;
+    }
     if (!url) {
       showMessage('error', 'Не удалось открыть файл: ссылка недоступна.');
       return;
@@ -22416,6 +22728,17 @@
     fetch(url, { credentials: 'include', cache: 'no-store' })
       .then(function(response) {
         if (!response.ok) {
+          var contentType = response.headers && response.headers.get
+            ? response.headers.get('Content-Type') || ''
+            : '';
+          if (contentType.indexOf('application/json') !== -1) {
+            return response.json().then(function(data) {
+              var message = data && typeof data === 'object'
+                ? (data.error || data.message || '')
+                : '';
+              throw new Error(message || ('Статус ' + response.status));
+            });
+          }
           throw new Error('Статус ' + response.status);
         }
         return response.blob().then(function(blob) {
@@ -22679,6 +23002,21 @@
     }, 0);
   }
 
+  function createOutgoingActionIconButton(iconName, label, variantClass) {
+    var className = 'documents-outgoing-table__action';
+    if (variantClass) {
+      className += ' ' + variantClass;
+    }
+
+    var button = createElement('button', className);
+    button.type = 'button';
+    button.title = label;
+    button.setAttribute('aria-label', label);
+    button.appendChild(createSvgIcon(iconName, 'documents-outgoing-table__action-icon'));
+
+    return button;
+  }
+
   function renderOutgoingRegistryRows(tbody, records, options) {
     tbody.textContent = '';
     var list = Array.isArray(records) ? records : [];
@@ -22701,26 +23039,48 @@
         var cell = document.createElement('td');
         if (column.key === 'actions') {
           var actions = createElement('div', 'documents-outgoing-table__actions');
-          if (canManage && record && record.id) {
-            var editButton = createElement('button', 'documents-outgoing-table__action', 'Редактировать');
-            editButton.type = 'button';
-            editButton.setAttribute('aria-label', 'Редактировать запись исходящей корреспонденции');
+          var canEditRecord = Boolean(record && record.canEdit);
+          var canAttachRecord = Boolean(record && (record.canAttach || record.canEdit));
+          if (canAttachRecord && record && record.id) {
+            var attachButton = createOutgoingActionIconButton(
+              'paperclip',
+              'Прикрепить файл к записи исходящей корреспонденции',
+              'documents-outgoing-table__action--attach'
+            );
+            attachButton.addEventListener('click', function() {
+              if (typeof config.onAttach === 'function') {
+                config.onAttach(record);
+              }
+            });
+            actions.appendChild(attachButton);
+          }
+          if (canEditRecord && record && record.id) {
+            var editButton = createOutgoingActionIconButton(
+              'pencil',
+              'Редактировать запись исходящей корреспонденции',
+              'documents-outgoing-table__action--edit'
+            );
             editButton.addEventListener('click', function() {
               if (typeof config.onEdit === 'function') {
                 config.onEdit(record);
               }
             });
-            var deleteButton = createElement('button', 'documents-outgoing-table__action documents-outgoing-table__action--danger', 'Удалить');
-            deleteButton.type = 'button';
-            deleteButton.setAttribute('aria-label', 'Удалить запись исходящей корреспонденции');
+            actions.appendChild(editButton);
+          }
+          if (canManage && record && record.id) {
+            var deleteButton = createOutgoingActionIconButton(
+              'trash',
+              'Удалить запись исходящей корреспонденции',
+              'documents-outgoing-table__action--danger'
+            );
             deleteButton.addEventListener('click', function() {
               if (typeof config.onDelete === 'function') {
                 config.onDelete(record);
               }
             });
-            actions.appendChild(editButton);
             actions.appendChild(deleteButton);
-          } else {
+          }
+          if (!actions.childNodes.length) {
             actions.appendChild(createElement('span', 'documents-outgoing-table__muted', '—'));
           }
           cell.appendChild(actions);
@@ -22759,7 +23119,7 @@
       }).then(handleResponse);
     }
 
-    var body = payload && typeof payload === 'object' ? payload : {};
+    var body = mergeTelegramUserId(payload && typeof payload === 'object' ? payload : {});
     return fetch(buildApiUrl(action), {
       method: 'POST',
       credentials: 'same-origin',
@@ -22812,6 +23172,40 @@
     };
   }
 
+  function createOutgoingPrivateFilesToggle() {
+    var label = createElement('label', 'documents-outgoing-private-toggle');
+    var input = document.createElement('input');
+    input.type = 'checkbox';
+    input.name = 'outgoingFilesPrivate';
+    input.value = '1';
+    var content = createElement('span', 'documents-outgoing-private-toggle__content');
+    content.appendChild(createElement('span', 'documents-outgoing-private-toggle__title', 'Приватные файлы'));
+    content.appendChild(createElement('span', 'documents-outgoing-private-toggle__hint', 'Все файлы этой загрузки увидят только админы и пользователь, который их добавил.'));
+    label.appendChild(input);
+    label.appendChild(content);
+
+    return {
+      field: label,
+      input: input
+    };
+  }
+
+  function createOutgoingFormSection(title, hint) {
+    var section = createElement('section', 'documents-outgoing-form-section');
+    var heading = createElement('div', 'documents-outgoing-form-section__title', title || '');
+    section.appendChild(heading);
+    if (hint) {
+      section.appendChild(createElement('div', 'documents-outgoing-form-section__hint', hint));
+    }
+    var grid = createElement('div', 'documents-form__grid documents-outgoing-form-modal__grid');
+    section.appendChild(grid);
+
+    return {
+      section: section,
+      grid: grid
+    };
+  }
+
   function normalizeOutgoingNumberForCompare(value) {
     return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
   }
@@ -22857,6 +23251,15 @@
     return postOutgoingRegistryAction('outgoing_edit_lock_acquire', {
       organization: state.organization,
       id: record.id
+    }).then(function(data) {
+      if (data && data.lockToken) {
+        activeOutgoingEditLocks[record.id] = {
+          id: record.id,
+          lockToken: String(data.lockToken),
+          organization: state.organization || ''
+        };
+      }
+      return data;
     });
   }
 
@@ -22865,11 +23268,232 @@
       return;
     }
 
+    if (activeOutgoingEditLocks[recordId]
+      && activeOutgoingEditLocks[recordId].lockToken === String(lockToken)) {
+      delete activeOutgoingEditLocks[recordId];
+    }
+
     postOutgoingRegistryAction('outgoing_edit_lock_release', {
       organization: state.organization,
       id: recordId,
       lockToken: lockToken
     }).catch(function() {});
+  }
+
+  function releaseActiveOutgoingEditLocksOnUnload() {
+    var locks = Object.keys(activeOutgoingEditLocks).map(function(key) {
+      return activeOutgoingEditLocks[key];
+    }).filter(function(lock) {
+      return lock && lock.id && lock.lockToken;
+    });
+    if (!locks.length) {
+      return;
+    }
+
+    locks.forEach(function(lock) {
+      var payload = JSON.stringify({
+        organization: lock.organization || state.organization || '',
+        id: lock.id,
+        lockToken: lock.lockToken
+      });
+      delete activeOutgoingEditLocks[lock.id];
+      if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+        try {
+          var blob = new Blob([payload], { type: 'application/json' });
+          if (navigator.sendBeacon(buildApiUrl('outgoing_edit_lock_release'), blob)) {
+            return;
+          }
+        } catch (error) {}
+      }
+      fetch(buildApiUrl('outgoing_edit_lock_release'), {
+        method: 'POST',
+        credentials: 'same-origin',
+        cache: 'no-store',
+        keepalive: true,
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: payload
+      }).catch(function() {});
+    });
+  }
+
+  function openOutgoingAttachFilesModal(record, onSaved) {
+    if (!state.organization) {
+      showMessage('error', 'Организация не определена.');
+      return;
+    }
+    if (!record || !record.id) {
+      showMessage('error', 'Запись исходящей корреспонденции не найдена.');
+      return;
+    }
+
+    ensureOutgoingRegistryStyle();
+
+    var modal = createElement('div', 'documents-outgoing-form-modal');
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.setAttribute('aria-labelledby', 'documents-outgoing-attach-title');
+
+    var shell = createElement('div', 'documents-modal__shell documents-outgoing-form-modal__shell');
+    var header = createElement('div', 'documents-modal__header documents-outgoing-form-modal__header');
+    var eyebrow = createElement('p', 'documents-outgoing-form-modal__eyebrow', 'Исходящая корреспонденция');
+    var title = createElement('h3', 'documents-modal__title documents-outgoing-form-modal__title', 'Прикрепить файлы');
+    title.id = 'documents-outgoing-attach-title';
+    var recordLabel = [record.outgoingNumber, record.addressee].filter(function(value) {
+      return value !== undefined && value !== null && String(value).trim() !== '';
+    }).join(' · ');
+    var subtitle = createElement(
+      'p',
+      'documents-outgoing-form-modal__subtitle',
+      recordLabel || 'Выберите файлы для добавления к исходящей записи.'
+    );
+    var body = createElement('div', 'documents-outgoing-form-modal__body');
+    var form = createElement('form', 'documents-form documents-outgoing-form-modal__form');
+    var formId = 'documents-outgoing-attach-form-' + Date.now();
+    form.id = formId;
+    form.setAttribute('autocomplete', 'off');
+
+    var closeAttachForm = function() {
+      if (modal.parentNode) {
+        modal.parentNode.removeChild(modal);
+      }
+      document.removeEventListener('keydown', attachFormEscapeHandler);
+    };
+    var attachFormEscapeHandler = function(event) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        closeAttachForm();
+      }
+    };
+
+    var cancelButton = createElement('button', 'documents-button documents-button--secondary', 'Отмена');
+    cancelButton.type = 'button';
+    cancelButton.addEventListener('click', function() {
+      closeAttachForm();
+    });
+
+    var submitButton = createElement('button', 'documents-button documents-button--primary', 'Прикрепить');
+    submitButton.type = 'submit';
+    submitButton.setAttribute('form', formId);
+
+    var actions = createElement('div', 'documents-modal__actions documents-outgoing-form-modal__footer');
+    actions.appendChild(cancelButton);
+    actions.appendChild(submitButton);
+    header.appendChild(eyebrow);
+    header.appendChild(title);
+    header.appendChild(subtitle);
+
+    var uploadSection = createOutgoingFormSection('Файлы', 'Выберите один или несколько файлов и укажите режим доступа для этой загрузки.');
+    var grid = uploadSection.grid;
+    var filesField = createOutgoingFormField({ name: 'attachments[]', label: 'Файлы', type: 'file', wide: true });
+    filesField.input.multiple = true;
+    filesField.input.accept = '.pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.txt,.rtf,.odt,.ods,.zip';
+    filesField.input.classList.add('documents-outgoing-file-upload__input');
+    filesField.field.classList.add('documents-form__field--file');
+
+    var filesUploadParent = filesField.input.parentNode;
+    var filesUploadControl = createElement('div', 'documents-outgoing-file-upload');
+    var filesUploadButton = createElement('button', 'documents-outgoing-file-upload__button');
+    filesUploadButton.type = 'button';
+    filesUploadButton.appendChild(createElement('span', 'documents-outgoing-file-upload__button-icon', '+'));
+    filesUploadButton.appendChild(createElement('span', '', 'Выбрать файлы'));
+    var filesUploadSummary = createElement('span', 'documents-outgoing-file-upload__summary', 'Файлы не выбраны');
+    filesUploadControl.appendChild(filesField.input);
+    filesUploadControl.appendChild(filesUploadButton);
+    filesUploadControl.appendChild(filesUploadSummary);
+    if (filesUploadParent) {
+      filesUploadParent.appendChild(filesUploadControl);
+    }
+    filesUploadButton.addEventListener('click', function(event) {
+      event.preventDefault();
+      filesField.input.click();
+    });
+    filesField.input.addEventListener('change', function() {
+      var selected = Array.from(filesField.input.files || []);
+      filesUploadSummary.classList.toggle('is-filled', selected.length > 0);
+      if (!selected.length) {
+        filesUploadSummary.textContent = 'Файлы не выбраны';
+        return;
+      }
+
+      var totalSize = selected.reduce(function(sum, file) {
+        return sum + (Number(file && file.size) || 0);
+      }, 0);
+      var firstName = selected[0] && selected[0].name ? selected[0].name : 'Файл';
+      filesUploadSummary.textContent = selected.length === 1
+        ? firstName + ' · ' + formatFileSize(totalSize)
+        : selected.length + ' файлов · ' + formatFileSize(totalSize);
+    });
+    filesField.field.appendChild(createElement('div', 'documents-outgoing-form-modal__file-hint', 'PDF, изображения, DOCX/XLSX, TXT, RTF, ODT/ODS или ZIP до 25 МБ на файл.'));
+    var privateToggle = createOutgoingPrivateFilesToggle();
+
+    grid.appendChild(filesField.field);
+    grid.appendChild(privateToggle.field);
+    form.appendChild(uploadSection.section);
+    body.appendChild(form);
+
+    form.addEventListener('submit', function(event) {
+      event.preventDefault();
+      var selectedFiles = Array.from(filesField.input.files || []);
+      if (!selectedFiles.length) {
+        showMessage('error', 'Выберите минимум один файл для прикрепления.');
+        filesField.input.focus();
+        return;
+      }
+      var fileErrors = validateAttachmentFiles(selectedFiles, normalizeOutgoingFileList(record.files));
+      if (fileErrors.length) {
+        showMessage('error', fileErrors.slice(0, 3).join(' '));
+        return;
+      }
+
+      submitButton.disabled = true;
+      cancelButton.disabled = true;
+      submitButton.textContent = 'Прикрепляем...';
+
+      var requestPayload = new FormData();
+      requestPayload.append('action', 'outgoing_attach_files');
+      requestPayload.append('organization', state.organization);
+      requestPayload.append('id', record.id);
+      if (privateToggle.input.checked) {
+        requestPayload.append('outgoingFilesPrivate', '1');
+        requestPayload.append('filesVisibility', 'private');
+      }
+      selectedFiles.forEach(function(file) {
+        requestPayload.append('attachments[]', file);
+      });
+      appendTelegramUserIdToFormData(requestPayload);
+
+      postOutgoingRegistryAction('outgoing_attach_files', requestPayload)
+        .then(function(data) {
+          closeAttachForm();
+          showMessage('success', data && data.message ? data.message : 'Файлы прикреплены.');
+          if (typeof onSaved === 'function') {
+            onSaved(data);
+          }
+        })
+        .catch(function(error) {
+          submitButton.disabled = false;
+          cancelButton.disabled = false;
+          submitButton.textContent = 'Прикрепить';
+          showMessage('error', error && error.message ? error.message : 'Не удалось прикрепить файлы.');
+        });
+    });
+
+    shell.appendChild(header);
+    shell.appendChild(body);
+    shell.appendChild(actions);
+    modal.appendChild(shell);
+    modal.addEventListener('click', function(event) {
+      if (event.target === modal) {
+        closeAttachForm();
+      }
+    });
+    document.addEventListener('keydown', attachFormEscapeHandler);
+    document.body.appendChild(modal);
+    filesUploadButton.focus();
   }
 
   function openOutgoingRecordForm(record, onSaved, knownRecords, editLock) {
@@ -22945,11 +23569,15 @@
     header.appendChild(title);
     header.appendChild(subtitle);
 
-    var grid = createElement('div', 'documents-form__grid documents-outgoing-form-modal__grid');
+    var detailsSection = createOutgoingFormSection('Реквизиты документа', 'Основные поля, которые будут отображаться в таблице исходящей корреспонденции.');
+    var filesSection = createOutgoingFormSection('Файлы и доступ', 'Добавьте новые файлы и выберите, кому они будут доступны.');
+    var grid = detailsSection.grid;
+    var filesGrid = filesSection.grid;
     var registryNumberField = createOutgoingFormField({ name: 'registryNumber', label: 'Исходящий номер *', value: record && record.outgoingNumber, required: true });
+    var addresseeField = createOutgoingFormField({ name: 'correspondent', label: 'Адресат *', value: record && record.addressee, required: true });
     var fields = [
       registryNumberField,
-      createOutgoingFormField({ name: 'correspondent', label: 'Адресат *', value: record && record.addressee, required: true }),
+      addresseeField,
       createOutgoingFormField({ name: 'registrationDate', label: 'Дата регистрации *', type: 'date', value: record && record.sendingDate, required: true }),
       createOutgoingFormField({ name: 'documentNumber', label: 'Индекс', value: record && record.documentIndexNumber, placeholder: 'Например, 45/1' }),
       createOutgoingFormField({ name: 'documentType', label: 'Тип документа *', type: 'select', value: record && (record.documentType || record.direction) || 'Исходящий', required: true, choices: ['Исходящий'] }),
@@ -22964,6 +23592,11 @@
     };
     registryNumberField.input.addEventListener('input', validateOutgoingNumberField);
     registryNumberField.input.addEventListener('blur', validateOutgoingNumberField);
+    addresseeField.input.addEventListener('input', function() {
+      if (normalizeTextInputValue(addresseeField.input.value)) {
+        setOutgoingFormFieldError(addresseeField, '');
+      }
+    });
     var filesField = createOutgoingFormField({ name: 'attachments[]', label: isEditMode ? 'Добавить файлы' : 'Файлы', type: 'file', wide: true });
     filesField.input.multiple = true;
     filesField.input.accept = '.pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.txt,.rtf,.odt,.ods,.zip';
@@ -23004,6 +23637,7 @@
     });
     var filesHint = createElement('div', 'documents-outgoing-form-modal__file-hint', 'PDF, изображения, DOCX/XLSX, TXT, RTF, ODT/ODS или ZIP до 25 МБ на файл.');
     filesField.field.appendChild(filesHint);
+    var privateToggle = createOutgoingPrivateFilesToggle();
     var existingFiles = normalizeOutgoingFileList(record && record.files);
     var removedFileKeys = [];
     var existingFilesPanel = null;
@@ -23024,20 +23658,27 @@
         var info = createElement('div', 'documents-outgoing-file-manager__info');
         var icon = createElement('span', 'documents-outgoing-file-manager__icon', getAttachmentExtensionLabel(file));
         var text = createElement('div', 'documents-outgoing-file-manager__text');
+        var nameLine = createElement('div', 'documents-outgoing-file-manager__name-line');
         var nameNode = createElement('button', 'documents-outgoing-file-manager__name', fileName);
         var metaParts = [];
         var sizeText = Number(file.size) > 0 ? formatFileSize(file.size) : '';
+        var uploader = getOutgoingFileUploader(file);
         if (sizeText) {
           metaParts.push(sizeText);
         }
         if (file.uploadedAt) {
           metaParts.push(formatDateTime(file.uploadedAt));
         }
+        if (uploader) {
+          metaParts.push('Добавил: ' + uploader);
+        }
         nameNode.type = 'button';
         nameNode.addEventListener('click', function() {
           openOutgoingAttachmentInNewTab(file);
         });
-        text.appendChild(nameNode);
+        nameLine.appendChild(nameNode);
+        nameLine.appendChild(createOutgoingFileVisibilityBadge(file));
+        text.appendChild(nameLine);
         text.appendChild(createElement('div', 'documents-outgoing-file-manager__meta', metaParts.join(' · ') || 'Файл исходящего документа'));
         info.appendChild(icon);
         info.appendChild(text);
@@ -23071,10 +23712,12 @@
       grid.appendChild(item.field);
     });
     if (existingFilesField) {
-      grid.appendChild(existingFilesField);
+      filesGrid.appendChild(existingFilesField);
     }
-    grid.appendChild(filesField.field);
-    form.appendChild(grid);
+    filesGrid.appendChild(filesField.field);
+    filesGrid.appendChild(privateToggle.field);
+    form.appendChild(detailsSection.section);
+    form.appendChild(filesSection.section);
     body.appendChild(form);
 
     form.addEventListener('submit', function(event) {
@@ -23091,9 +23734,16 @@
       fields.forEach(function(item) {
         payload[item.input.name] = normalizeTextInputValue(item.input.value);
       });
+      payload.addressee = payload.correspondent || '';
       if (!validateOutgoingNumberField()) {
         submitButton.disabled = false;
         registryNumberField.input.focus();
+        return;
+      }
+      if (!payload.addressee) {
+        submitButton.disabled = false;
+        setOutgoingFormFieldError(addresseeField, 'Поле «Адресат» обязательно для заполнения.');
+        addresseeField.input.focus();
         return;
       }
       var selectedFiles = Array.from(filesField.input.files || []);
@@ -23112,12 +23762,20 @@
       if (selectedFiles.length) {
         requestPayload = new FormData();
         requestPayload.append('action', 'outgoing_save');
+        requestPayload.append('payload', JSON.stringify(payload));
         Object.keys(payload).forEach(function(key) {
+          if (Array.isArray(payload[key])) {
+            return;
+          }
           requestPayload.append(key, payload[key]);
         });
         selectedFiles.forEach(function(file) {
           requestPayload.append('attachments[]', file);
         });
+        if (privateToggle.input.checked) {
+          requestPayload.append('outgoingFilesPrivate', '1');
+          requestPayload.append('filesVisibility', 'private');
+        }
         if (isEditMode) {
           requestPayload.append('filesToDelete', JSON.stringify(uniqueRemovedFileKeys));
           requestPayload.append('filesRemaining', JSON.stringify(remainingFileKeys));
@@ -23141,6 +23799,11 @@
           if (error && error.reason === 'outgoing_number_exists') {
             setOutgoingFormFieldError(registryNumberField, error.message || 'Этот исходящий номер уже занят.');
             registryNumberField.input.focus();
+            return;
+          }
+          if (error && error.reason === 'outgoing_addressee_required') {
+            setOutgoingFormFieldError(addresseeField, error.message || 'Поле «Адресат» обязательно для заполнения.');
+            addresseeField.input.focus();
             return;
           }
           if (error && (error.reason === 'outgoing_record_locked' || error.reason === 'outgoing_record_conflict')) {
@@ -23306,6 +23969,10 @@
         canManage: modalState.canManage,
         columnOrder: modalState.columnOrder,
         emptyMessage: hasFilters ? 'По выбранным фильтрам записей нет.' : 'Записей исходящей корреспонденции пока нет.',
+        onAttach: function(row) {
+          showOutgoingNotice('', '');
+          openOutgoingAttachFilesModal(row, syncOutgoingRows);
+        },
         onEdit: function(row) {
           showOutgoingNotice('', '');
           acquireOutgoingRecordEditLock(row)
@@ -23570,6 +24237,1443 @@
         row.appendChild(cell);
         tbody.appendChild(row);
         showMessage('error', 'Не удалось загрузить исходящую корреспонденцию: ' + message);
+      });
+  }
+
+  var ORDERS_REGISTRY_COLUMNS = [
+    { key: 'orderNumber', label: '№ приказа', type: 'number' },
+    { key: 'orderDate', label: 'Дата', type: 'date' },
+    { key: 'summary', label: 'Краткое содержание', type: 'string' },
+    { key: 'executor', label: 'Исполнитель', type: 'string' },
+    { key: 'files', label: 'Файл приказа', type: 'string' },
+    { key: 'actions', label: 'Действия', type: 'enum' }
+  ];
+  var ORDERS_COLUMN_ORDER_STORAGE_PREFIX = 'documents:orders-column-order:';
+  var ORDERS_REGISTRY_COLUMN_MAP = (function() {
+    var map = {};
+    ORDERS_REGISTRY_COLUMNS.forEach(function(column) {
+      map[column.key] = column;
+    });
+    return map;
+  })();
+
+  function getDefaultOrdersColumnOrder() {
+    return ORDERS_REGISTRY_COLUMNS.map(function(column) {
+      return column.key;
+    });
+  }
+
+  function normalizeOrdersColumnOrder(order) {
+    var defaults = getDefaultOrdersColumnOrder();
+    var source = Array.isArray(order) ? order : defaults;
+    var allowed = {};
+    var seen = {};
+    var normalized = [];
+    defaults.forEach(function(key) {
+      allowed[key] = true;
+    });
+    source.forEach(function(candidate) {
+      var key = String(candidate || '');
+      if (!key || !allowed[key] || seen[key]) {
+        return;
+      }
+      seen[key] = true;
+      normalized.push(key);
+    });
+    defaults.forEach(function(key) {
+      if (!seen[key]) {
+        normalized.push(key);
+      }
+    });
+    return normalized;
+  }
+
+  function getOrderedOrdersColumns(order) {
+    return normalizeOrdersColumnOrder(order).map(function(key) {
+      return ORDERS_REGISTRY_COLUMN_MAP[key];
+    }).filter(Boolean);
+  }
+
+  function getOrdersColumnOrderUserKey() {
+    return getCurrentUserKey() || getAccessProfileKey(state.access) || state.telegramUserId || 'guest';
+  }
+
+  function getOrdersColumnOrderStorageKey() {
+    var organization = state.organization || '';
+    if (!organization) {
+      return '';
+    }
+    return ORDERS_COLUMN_ORDER_STORAGE_PREFIX + organization + ':' + getOrdersColumnOrderUserKey();
+  }
+
+  function loadOrdersColumnOrderFromLocalStorage() {
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return getDefaultOrdersColumnOrder();
+    }
+    var key = getOrdersColumnOrderStorageKey();
+    if (!key) {
+      return getDefaultOrdersColumnOrder();
+    }
+    try {
+      var raw = window.localStorage.getItem(key);
+      return raw ? normalizeOrdersColumnOrder(JSON.parse(raw)) : getDefaultOrdersColumnOrder();
+    } catch (error) {
+      return getDefaultOrdersColumnOrder();
+    }
+  }
+
+  function saveOrdersColumnOrderToLocalStorage(order) {
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return;
+    }
+    var key = getOrdersColumnOrderStorageKey();
+    if (!key) {
+      return;
+    }
+    try {
+      window.localStorage.setItem(key, JSON.stringify(normalizeOrdersColumnOrder(order)));
+    } catch (error) {
+      if (typeof docsLogger.warn === 'function') {
+        docsLogger.warn('Не удалось сохранить порядок столбцов журнала приказов:', error);
+      }
+    }
+  }
+
+  function requestOrdersColumnOrder() {
+    if (!state.organization) {
+      return Promise.resolve(getDefaultOrdersColumnOrder());
+    }
+    return fetch(buildApiUrl('orders_column_order_load', {
+      organization: state.organization,
+      user_key: getOrdersColumnOrderUserKey(),
+      cacheBust: Date.now()
+    }), {
+      credentials: 'same-origin',
+      cache: 'no-store'
+    }).then(handleResponse).then(function(data) {
+      return normalizeOrdersColumnOrder(data && data.columns);
+    });
+  }
+
+  function saveOrdersColumnOrder(order) {
+    var columns = normalizeOrdersColumnOrder(order);
+    saveOrdersColumnOrderToLocalStorage(columns);
+    if (!state.organization) {
+      return Promise.resolve(columns);
+    }
+    return fetch(buildApiUrl('orders_column_order_save'), {
+      method: 'POST',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({
+        organization: state.organization,
+        user_key: getOrdersColumnOrderUserKey(),
+        columns: columns
+      })
+    }).then(handleResponse).then(function(data) {
+      return normalizeOrdersColumnOrder(data && data.columns);
+    });
+  }
+
+  function requestOrdersRegistryRecords() {
+    if (!state.organization) {
+      return Promise.reject(new Error('Организация не определена.'));
+    }
+    return fetch(buildApiUrl('orders_list', {
+      organization: state.organization,
+      cacheBust: Date.now()
+    }), {
+      credentials: 'same-origin',
+      cache: 'no-store'
+    }).then(handleResponse);
+  }
+
+  function getOrderRecordValue(record, key) {
+    if (!record || typeof record !== 'object') {
+      return '—';
+    }
+    if (key === 'orderDate') {
+      return record.orderDate ? formatDate(record.orderDate) : '—';
+    }
+    if (key === 'files') {
+      if (Array.isArray(record.files) && record.files.length) {
+        return record.files.map(function(file, index) {
+          return getAttachmentName(file, index + 1);
+        }).join('\n');
+      }
+      if (record.filesLabel) {
+        return String(record.filesLabel);
+      }
+      if (record.filesCount) {
+        return 'Файлы: ' + String(record.filesCount);
+      }
+      return '—';
+    }
+    var value = record[key];
+    if (value === undefined || value === null || String(value).trim() === '') {
+      return '—';
+    }
+    return String(value);
+  }
+
+  function ordersColumnCanFilter(column) {
+    return Boolean(column && column.key && column.key !== 'actions');
+  }
+
+  function ordersColumnCanSort(column) {
+    return Boolean(column && column.key && column.key !== 'actions' && column.key !== 'files');
+  }
+
+  function orderFilterIsActive(filters, key) {
+    return Boolean(filters && key && Array.isArray(filters[key]) && filters[key].length > 0);
+  }
+
+  function ordersHasActiveFilters(filters) {
+    if (!filters || typeof filters !== 'object') {
+      return false;
+    }
+    for (var key in filters) {
+      if (Object.prototype.hasOwnProperty.call(filters, key) && orderFilterIsActive(filters, key)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function filterOrdersRegistryRecords(records, filters) {
+    var list = Array.isArray(records) ? records : [];
+    if (!ordersHasActiveFilters(filters)) {
+      return list.slice();
+    }
+    return list.filter(function(record) {
+      for (var key in filters) {
+        if (!Object.prototype.hasOwnProperty.call(filters, key) || !orderFilterIsActive(filters, key)) {
+          continue;
+        }
+        var allowed = filters[key].map(normalizeOutgoingFilterValue);
+        var value = normalizeOutgoingFilterValue(getOrderRecordValue(record, key));
+        if (allowed.indexOf(value) === -1) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }
+
+  function parseOrdersNumberSortValue(value) {
+    var text = String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
+    var match = text.match(/^(\d+)(?:\D+(\d+))?/);
+    if (!match) {
+      return {
+        hasNumber: false,
+        base: 0,
+        suffix: 0,
+        text: text
+      };
+    }
+    return {
+      hasNumber: true,
+      base: Number(match[1]) || 0,
+      suffix: Number(match[2]) || 0,
+      text: text
+    };
+  }
+
+  function compareOrdersValues(leftRecord, rightRecord, key) {
+    if (key === 'orderNumber') {
+      var leftNumber = parseOrdersNumberSortValue(leftRecord && leftRecord.orderNumber);
+      var rightNumber = parseOrdersNumberSortValue(rightRecord && rightRecord.orderNumber);
+      if (leftNumber.hasNumber !== rightNumber.hasNumber) {
+        return leftNumber.hasNumber ? -1 : 1;
+      }
+      if (leftNumber.hasNumber && rightNumber.hasNumber) {
+        if (leftNumber.base !== rightNumber.base) {
+          return leftNumber.base - rightNumber.base;
+        }
+        if (leftNumber.suffix !== rightNumber.suffix) {
+          return leftNumber.suffix - rightNumber.suffix;
+        }
+      }
+      return leftNumber.text.localeCompare(rightNumber.text, 'ru', { numeric: true });
+    }
+    if (key === 'orderDate') {
+      return String(leftRecord && leftRecord.orderDate || '').localeCompare(String(rightRecord && rightRecord.orderDate || ''));
+    }
+    return normalizeOutgoingFilterValue(getOrderRecordValue(leftRecord, key))
+      .localeCompare(normalizeOutgoingFilterValue(getOrderRecordValue(rightRecord, key)), 'ru', { numeric: true });
+  }
+
+  function sortOrdersRegistryRecords(records, sortState) {
+    var list = (Array.isArray(records) ? records : []).slice();
+    var key = sortState && sortState.key ? sortState.key : 'orderDate';
+    var direction = sortState && sortState.direction === 'asc' ? 'asc' : 'desc';
+    list.sort(function(left, right) {
+      var result = compareOrdersValues(left, right, key);
+      return direction === 'asc' ? result : -result;
+    });
+    return list;
+  }
+
+  function collectOrdersFilterOptions(records, key) {
+    var map = Object.create(null);
+    var options = [];
+    (Array.isArray(records) ? records : []).forEach(function(record) {
+      var label = getOrderRecordValue(record, key);
+      var normalized = normalizeOutgoingFilterValue(label);
+      if (normalized === '') {
+        normalized = normalizeOutgoingFilterValue('—');
+        label = '—';
+      }
+      if (map[normalized]) {
+        map[normalized].count += 1;
+        return;
+      }
+      map[normalized] = {
+        label: String(label),
+        normalized: normalized,
+        count: 1
+      };
+      options.push(map[normalized]);
+    });
+    options.sort(function(a, b) {
+      if (a.label === '—') {
+        return 1;
+      }
+      if (b.label === '—') {
+        return -1;
+      }
+      return a.label.localeCompare(b.label, 'ru', { numeric: true });
+    });
+    return options;
+  }
+
+  function closeOrdersFilterPopover() {
+    var popover = document.querySelector('.documents-orders-filter-popover');
+    if (popover && popover.parentNode) {
+      popover.parentNode.removeChild(popover);
+    }
+    if (ordersFilterPopoverOutsideHandler) {
+      document.removeEventListener('pointerdown', ordersFilterPopoverOutsideHandler);
+      ordersFilterPopoverOutsideHandler = null;
+    }
+  }
+
+  function openOrdersFilterPopover(anchor, column, modalState, onChange) {
+    if (!anchor || !column || !modalState) {
+      return;
+    }
+    closeOrdersFilterPopover();
+
+    var key = column.key;
+    var options = collectOrdersFilterOptions(modalState.records, key);
+    var selected = Object.create(null);
+    var hasFilter = orderFilterIsActive(modalState.filters, key);
+    if (hasFilter) {
+      modalState.filters[key].forEach(function(value) {
+        selected[normalizeOutgoingFilterValue(value)] = true;
+      });
+    } else {
+      options.forEach(function(option) {
+        selected[option.normalized] = true;
+      });
+    }
+
+    var popover = createElement('div', 'documents-outgoing-filter-popover documents-orders-filter-popover');
+    popover.setAttribute('role', 'dialog');
+    popover.setAttribute('aria-label', 'Фильтр: ' + column.label);
+    var title = createElement('div', 'documents-outgoing-filter-popover__title', column.label);
+    var input = document.createElement('input');
+    input.type = 'search';
+    input.className = 'documents-outgoing-filter-popover__input';
+    input.placeholder = 'Найти значение';
+    input.setAttribute('autocomplete', 'off');
+    var list = createElement('div', 'documents-outgoing-filter-popover__list');
+    var actions = createElement('div', 'documents-outgoing-filter-popover__actions');
+    var resetButton = createElement('button', 'documents-outgoing-filter-popover__button', 'Сбросить');
+    var allButton = createElement('button', 'documents-outgoing-filter-popover__button', 'Все');
+    var applyButton = createElement('button', 'documents-outgoing-filter-popover__button documents-outgoing-filter-popover__button--primary', 'Применить');
+    resetButton.type = 'button';
+    allButton.type = 'button';
+    applyButton.type = 'button';
+
+    function renderOptions() {
+      var query = normalizeOutgoingFilterValue(input.value);
+      list.textContent = '';
+      var visible = options.filter(function(option) {
+        return query === '' || option.normalized.indexOf(query) !== -1;
+      });
+      if (!visible.length) {
+        list.appendChild(createElement('div', 'documents-outgoing-filter-popover__empty', 'Значения не найдены.'));
+        return;
+      }
+      visible.forEach(function(option) {
+        var label = createElement('label', 'documents-outgoing-filter-popover__item');
+        var checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.value = option.label;
+        checkbox.checked = selected[option.normalized] === true;
+        checkbox.addEventListener('change', function() {
+          if (checkbox.checked) {
+            selected[option.normalized] = true;
+          } else {
+            delete selected[option.normalized];
+          }
+        });
+        label.appendChild(checkbox);
+        label.appendChild(createElement('span', '', option.label + ' (' + option.count + ')'));
+        list.appendChild(label);
+      });
+    }
+
+    input.addEventListener('input', renderOptions);
+    allButton.addEventListener('click', function() {
+      options.forEach(function(option) {
+        selected[option.normalized] = true;
+      });
+      renderOptions();
+    });
+    resetButton.addEventListener('click', function() {
+      if (modalState.filters && Object.prototype.hasOwnProperty.call(modalState.filters, key)) {
+        delete modalState.filters[key];
+      }
+      closeOrdersFilterPopover();
+      if (typeof onChange === 'function') {
+        onChange();
+      }
+    });
+    applyButton.addEventListener('click', function() {
+      var selectedValues = options
+        .filter(function(option) {
+          return selected[option.normalized] === true;
+        })
+        .map(function(option) {
+          return option.label;
+        });
+      if (!modalState.filters || typeof modalState.filters !== 'object') {
+        modalState.filters = {};
+      }
+      if (!selectedValues.length || selectedValues.length === options.length) {
+        delete modalState.filters[key];
+      } else {
+        modalState.filters[key] = selectedValues;
+      }
+      closeOrdersFilterPopover();
+      if (typeof onChange === 'function') {
+        onChange();
+      }
+    });
+
+    actions.appendChild(resetButton);
+    actions.appendChild(allButton);
+    actions.appendChild(applyButton);
+    popover.appendChild(title);
+    popover.appendChild(input);
+    popover.appendChild(list);
+    popover.appendChild(actions);
+    document.body.appendChild(popover);
+    positionOutgoingFilterPopover(popover, anchor);
+    renderOptions();
+    input.focus();
+
+    var outsideHandler = function(event) {
+      if (!popover.contains(event.target) && event.target !== anchor && !anchor.contains(event.target)) {
+        closeOrdersFilterPopover();
+      }
+    };
+    ordersFilterPopoverOutsideHandler = outsideHandler;
+    window.setTimeout(function() {
+      if (ordersFilterPopoverOutsideHandler === outsideHandler) {
+        document.addEventListener('pointerdown', outsideHandler);
+      }
+    }, 0);
+  }
+
+  function renderOrdersRegistryRows(tbody, records, options) {
+    tbody.textContent = '';
+    var list = Array.isArray(records) ? records : [];
+    var config = options && typeof options === 'object' ? options : {};
+    var canManage = Boolean(config.canManage);
+    var columns = getOrderedOrdersColumns(config.columnOrder);
+    if (!list.length) {
+      var emptyRow = document.createElement('tr');
+      var emptyCell = createElement('td', 'documents-outgoing-table__empty', config.emptyMessage || 'Записей приказов пока нет.');
+      emptyCell.colSpan = columns.length;
+      emptyRow.appendChild(emptyCell);
+      tbody.appendChild(emptyRow);
+      return;
+    }
+
+    list.forEach(function(record) {
+      var row = document.createElement('tr');
+      columns.forEach(function(column) {
+        var cell = document.createElement('td');
+        if (column.key === 'actions') {
+          var actions = createElement('div', 'documents-outgoing-table__actions');
+          if (canManage && record && record.id) {
+            var attachButton = createOutgoingActionIconButton('paperclip', 'Прикрепить файл приказа', 'documents-outgoing-table__action--attach');
+            attachButton.addEventListener('click', function() {
+              if (typeof config.onAttach === 'function') {
+                config.onAttach(record);
+              }
+            });
+            actions.appendChild(attachButton);
+            var editButton = createOutgoingActionIconButton('pencil', 'Редактировать приказ', 'documents-outgoing-table__action--edit');
+            editButton.addEventListener('click', function() {
+              if (typeof config.onEdit === 'function') {
+                config.onEdit(record);
+              }
+            });
+            actions.appendChild(editButton);
+            var deleteButton = createOutgoingActionIconButton('trash', 'Удалить приказ', 'documents-outgoing-table__action--danger');
+            deleteButton.addEventListener('click', function() {
+              if (typeof config.onDelete === 'function') {
+                config.onDelete(record);
+              }
+            });
+            actions.appendChild(deleteButton);
+          }
+          if (!actions.childNodes.length) {
+            actions.appendChild(createElement('span', 'documents-outgoing-table__muted', '—'));
+          }
+          cell.appendChild(actions);
+          row.appendChild(cell);
+          return;
+        }
+        if (column.key === 'summary') {
+          cell.className = 'documents-outgoing-table__summary';
+        }
+        if (column.key === 'files') {
+          renderOrderFilesCell(cell, record);
+          row.appendChild(cell);
+          return;
+        }
+        var value = getOrderRecordValue(record, column.key);
+        if (value === '—') {
+          cell.classList.add('documents-outgoing-table__muted');
+        }
+        cell.textContent = value;
+        row.appendChild(cell);
+      });
+      tbody.appendChild(row);
+    });
+  }
+
+  function renderOrderFilesCell(cell, record) {
+    var files = record && Array.isArray(record.files) ? record.files : [];
+    if (!files.length) {
+      cell.classList.add('documents-outgoing-table__muted');
+      cell.textContent = '—';
+      return;
+    }
+
+    var list = createElement('div', 'documents-outgoing-file-list');
+    files.forEach(function(file, index) {
+      if (!file || typeof file !== 'object') {
+        return;
+      }
+      var url = resolveAttachmentUrl(file, { bustCache: true });
+      var fileName = getAttachmentName(file, index + 1);
+      var uploader = getOutgoingFileUploader(file);
+      var item = createElement('div', 'documents-outgoing-file-item');
+      var link = createElement('a', 'documents-outgoing-file-link documents-orders-file-link');
+      link.href = url || '#';
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.title = fileName;
+      link.setAttribute('aria-label', 'Открыть файл приказа ' + fileName);
+      link.appendChild(createElement('span', 'documents-outgoing-file-link__icon', getAttachmentExtensionLabel(file)));
+      var text = createElement('span', 'documents-outgoing-file-link__text');
+      text.appendChild(createElement('span', 'documents-outgoing-file-link__name', fileName));
+      var meta = createElement('span', 'documents-outgoing-file-link__meta');
+      meta.appendChild(createElement('span', 'documents-outgoing-file-link__uploader', uploader ? ('Добавил: ' + uploader) : 'Автор не указан'));
+      text.appendChild(meta);
+      link.appendChild(text);
+      link.addEventListener('click', function(event) {
+        event.preventDefault();
+        if (!url) {
+          showMessage('error', 'Не удалось открыть файл приказа: ссылка недоступна.');
+          return;
+        }
+        openOutgoingAttachmentInNewTab(file, url);
+      });
+      item.appendChild(link);
+      list.appendChild(item);
+    });
+
+    if (!list.childNodes.length) {
+      cell.classList.add('documents-outgoing-table__muted');
+      cell.textContent = '—';
+      return;
+    }
+    cell.appendChild(list);
+  }
+
+  function findOrderNumberDuplicate(records, value, excludeId) {
+    var normalized = normalizeOutgoingNumberForCompare(value);
+    if (!normalized || !Array.isArray(records)) {
+      return null;
+    }
+    for (var i = 0; i < records.length; i += 1) {
+      var item = records[i];
+      if (!item || typeof item !== 'object') {
+        continue;
+      }
+      if (excludeId && String(item.id || '') === String(excludeId)) {
+        continue;
+      }
+      if (normalizeOutgoingNumberForCompare(item.orderNumber) === normalized) {
+        return item;
+      }
+    }
+    return null;
+  }
+
+  function openOrdersAttachFilesModal(record, onSaved) {
+    if (!state.organization) {
+      showMessage('error', 'Организация не определена.');
+      return;
+    }
+    if (!record || !record.id) {
+      showMessage('error', 'Запись приказа не найдена.');
+      return;
+    }
+    ensureOutgoingRegistryStyle();
+
+    var modal = createElement('div', 'documents-outgoing-form-modal');
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.setAttribute('aria-labelledby', 'documents-orders-attach-title');
+    var shell = createElement('div', 'documents-modal__shell documents-outgoing-form-modal__shell');
+    var header = createElement('div', 'documents-modal__header documents-outgoing-form-modal__header');
+    var eyebrow = createElement('p', 'documents-outgoing-form-modal__eyebrow', 'Журнал приказов');
+    var title = createElement('h3', 'documents-modal__title documents-outgoing-form-modal__title', 'Прикрепить файл приказа');
+    title.id = 'documents-orders-attach-title';
+    var recordLabel = [record.orderNumber, getOrderRecordValue(record, 'summary')].filter(function(value) {
+      return value !== undefined && value !== null && String(value).trim() !== '' && String(value).trim() !== '—';
+    }).join(' · ');
+    var subtitle = createElement('p', 'documents-outgoing-form-modal__subtitle', recordLabel || 'Выберите один или несколько файлов приказа.');
+    var body = createElement('div', 'documents-outgoing-form-modal__body');
+    var form = createElement('form', 'documents-form documents-outgoing-form-modal__form');
+    var formId = 'documents-orders-attach-form-' + Date.now();
+    form.id = formId;
+    form.setAttribute('autocomplete', 'off');
+    var closeAttachForm = function() {
+      if (modal.parentNode) {
+        modal.parentNode.removeChild(modal);
+      }
+      document.removeEventListener('keydown', attachFormEscapeHandler);
+    };
+    var attachFormEscapeHandler = function(event) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        closeAttachForm();
+      }
+    };
+    var cancelButton = createElement('button', 'documents-button documents-button--secondary', 'Отмена');
+    cancelButton.type = 'button';
+    cancelButton.addEventListener('click', closeAttachForm);
+    var submitButton = createElement('button', 'documents-button documents-button--primary', 'Прикрепить');
+    submitButton.type = 'submit';
+    submitButton.setAttribute('form', formId);
+    var actions = createElement('div', 'documents-modal__actions documents-outgoing-form-modal__footer');
+    actions.appendChild(cancelButton);
+    actions.appendChild(submitButton);
+    header.appendChild(eyebrow);
+    header.appendChild(title);
+    header.appendChild(subtitle);
+
+    var uploadSection = createOutgoingFormSection('Файл приказа', 'Выберите один или несколько файлов для выбранной записи.');
+    var filesField = createOutgoingFormField({ name: 'attachments[]', label: 'Файлы', type: 'file', wide: true });
+    filesField.input.multiple = true;
+    filesField.input.accept = '.pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.txt,.rtf,.odt,.ods,.zip';
+    filesField.input.classList.add('documents-outgoing-file-upload__input');
+    filesField.field.classList.add('documents-form__field--file');
+    var filesUploadParent = filesField.input.parentNode;
+    var filesUploadControl = createElement('div', 'documents-outgoing-file-upload');
+    var filesUploadButton = createElement('button', 'documents-outgoing-file-upload__button');
+    filesUploadButton.type = 'button';
+    filesUploadButton.appendChild(createElement('span', 'documents-outgoing-file-upload__button-icon', '+'));
+    filesUploadButton.appendChild(createElement('span', '', 'Выбрать файлы'));
+    var filesUploadSummary = createElement('span', 'documents-outgoing-file-upload__summary', 'Файлы не выбраны');
+    filesUploadControl.appendChild(filesField.input);
+    filesUploadControl.appendChild(filesUploadButton);
+    filesUploadControl.appendChild(filesUploadSummary);
+    if (filesUploadParent) {
+      filesUploadParent.appendChild(filesUploadControl);
+    }
+    filesUploadButton.addEventListener('click', function(event) {
+      event.preventDefault();
+      filesField.input.click();
+    });
+    filesField.input.addEventListener('change', function() {
+      var selected = Array.from(filesField.input.files || []);
+      filesUploadSummary.classList.toggle('is-filled', selected.length > 0);
+      if (!selected.length) {
+        filesUploadSummary.textContent = 'Файлы не выбраны';
+        return;
+      }
+      var totalSize = selected.reduce(function(sum, file) {
+        return sum + (Number(file && file.size) || 0);
+      }, 0);
+      filesUploadSummary.textContent = selected.length === 1
+        ? (selected[0] && selected[0].name ? selected[0].name : 'Файл') + ' · ' + formatFileSize(totalSize)
+        : selected.length + ' файлов · ' + formatFileSize(totalSize);
+    });
+    filesField.field.appendChild(createElement('div', 'documents-outgoing-form-modal__file-hint', 'PDF, изображения, DOCX/XLSX, TXT, RTF, ODT/ODS или ZIP до 25 МБ на файл.'));
+    uploadSection.grid.appendChild(filesField.field);
+    form.appendChild(uploadSection.section);
+    body.appendChild(form);
+
+    form.addEventListener('submit', function(event) {
+      event.preventDefault();
+      var selectedFiles = Array.from(filesField.input.files || []);
+      if (!selectedFiles.length) {
+        showMessage('error', 'Выберите минимум один файл приказа.');
+        filesField.input.focus();
+        return;
+      }
+      var fileErrors = validateAttachmentFiles(selectedFiles, normalizeOutgoingFileList(record.files));
+      if (fileErrors.length) {
+        showMessage('error', fileErrors.slice(0, 3).join(' '));
+        return;
+      }
+      submitButton.disabled = true;
+      cancelButton.disabled = true;
+      submitButton.textContent = 'Прикрепляем...';
+      var requestPayload = new FormData();
+      requestPayload.append('action', 'orders_attach_files');
+      requestPayload.append('organization', state.organization);
+      requestPayload.append('id', record.id);
+      selectedFiles.forEach(function(file) {
+        requestPayload.append('attachments[]', file);
+      });
+      appendTelegramUserIdToFormData(requestPayload);
+      postOutgoingRegistryAction('orders_attach_files', requestPayload)
+        .then(function(data) {
+          closeAttachForm();
+          showMessage('success', data && data.message ? data.message : 'Файлы приказа прикреплены.');
+          if (typeof onSaved === 'function') {
+            onSaved(data);
+          }
+        })
+        .catch(function(error) {
+          submitButton.disabled = false;
+          cancelButton.disabled = false;
+          submitButton.textContent = 'Прикрепить';
+          showMessage('error', error && error.message ? error.message : 'Не удалось прикрепить файлы приказа.');
+        });
+    });
+
+    shell.appendChild(header);
+    shell.appendChild(body);
+    shell.appendChild(actions);
+    modal.appendChild(shell);
+    modal.addEventListener('click', function(event) {
+      if (event.target === modal) {
+        closeAttachForm();
+      }
+    });
+    document.addEventListener('keydown', attachFormEscapeHandler);
+    document.body.appendChild(modal);
+    filesUploadButton.focus();
+  }
+
+  function openOrdersRecordForm(record, onSaved, knownRecords) {
+    if (!state.organization) {
+      showMessage('error', 'Организация не определена.');
+      return;
+    }
+    ensureOutgoingRegistryStyle();
+    var isEditMode = Boolean(record && record.id);
+    var modal = createElement('div', 'documents-outgoing-form-modal');
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.setAttribute('aria-labelledby', 'documents-orders-form-title');
+    var shell = createElement('div', 'documents-modal__shell documents-outgoing-form-modal__shell');
+    var header = createElement('div', 'documents-modal__header documents-outgoing-form-modal__header');
+    var eyebrow = createElement('p', 'documents-outgoing-form-modal__eyebrow', 'Журнал приказов');
+    var title = createElement('h3', 'documents-modal__title documents-outgoing-form-modal__title', isEditMode ? 'Изменить приказ' : 'Добавить приказ');
+    title.id = 'documents-orders-form-title';
+    var subtitle = createElement('p', 'documents-outgoing-form-modal__subtitle', isEditMode ? 'Обновите реквизиты приказа и файлы.' : 'Заполните реквизиты приказа и прикрепите файл при необходимости.');
+    var body = createElement('div', 'documents-outgoing-form-modal__body');
+    var form = createElement('form', 'documents-form documents-outgoing-form-modal__form');
+    var formId = 'documents-orders-form-' + Date.now();
+    form.id = formId;
+    form.setAttribute('autocomplete', 'off');
+    var closeOrdersForm = function() {
+      if (modal.parentNode) {
+        modal.parentNode.removeChild(modal);
+      }
+      document.removeEventListener('keydown', ordersFormEscapeHandler);
+    };
+    var ordersFormEscapeHandler = function(event) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        closeOrdersForm();
+      }
+    };
+    var cancelButton = createElement('button', 'documents-button documents-button--secondary', 'Отмена');
+    cancelButton.type = 'button';
+    cancelButton.addEventListener('click', closeOrdersForm);
+    var submitButton = createElement('button', 'documents-button documents-button--primary', isEditMode ? 'Сохранить' : 'Добавить');
+    submitButton.type = 'submit';
+    submitButton.setAttribute('form', formId);
+    var actions = createElement('div', 'documents-modal__actions documents-outgoing-form-modal__footer');
+    actions.appendChild(cancelButton);
+    actions.appendChild(submitButton);
+    header.appendChild(eyebrow);
+    header.appendChild(title);
+    header.appendChild(subtitle);
+
+    var detailsSection = createOutgoingFormSection('Реквизиты приказа', 'Основные поля журнала регистрации приказов по основной деятельности.');
+    var filesSection = createOutgoingFormSection('Файл приказа', 'Добавьте новые файлы или удалите уже прикреплённые.');
+    var orderNumberField = createOutgoingFormField({ name: 'orderNumber', label: '№ приказа *', value: record && record.orderNumber, required: true });
+    var orderDateField = createOutgoingFormField({ name: 'orderDate', label: 'Дата *', type: 'date', value: record && record.orderDate, required: true });
+    var summaryField = createOutgoingFormField({ name: 'summary', label: 'Краткое содержание *', type: 'textarea', value: record && record.summary, wide: true, rows: 5, required: true });
+    var executorField = createOutgoingFormField({ name: 'executor', label: 'Исполнитель', value: record && record.executor, placeholder: 'Введите ФИО исполнителя' });
+    var fields = [orderNumberField, orderDateField, executorField, summaryField];
+
+    var validateOrderNumberField = function() {
+      var duplicate = findOrderNumberDuplicate(knownRecords, orderNumberField.input.value, isEditMode ? record.id : '');
+      var message = duplicate ? 'Этот № приказа уже зарегистрирован.' : '';
+      setOutgoingFormFieldError(orderNumberField, message);
+      return !duplicate;
+    };
+    orderNumberField.input.addEventListener('input', validateOrderNumberField);
+    orderNumberField.input.addEventListener('blur', validateOrderNumberField);
+    summaryField.input.addEventListener('input', function() {
+      if (normalizeTextInputValue(summaryField.input.value)) {
+        setOutgoingFormFieldError(summaryField, '');
+      }
+    });
+
+    var filesField = createOutgoingFormField({ name: 'attachments[]', label: isEditMode ? 'Добавить файлы' : 'Файлы приказа', type: 'file', wide: true });
+    filesField.input.multiple = true;
+    filesField.input.accept = '.pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.txt,.rtf,.odt,.ods,.zip';
+    filesField.input.classList.add('documents-outgoing-file-upload__input');
+    filesField.field.classList.add('documents-form__field--file');
+    var filesUploadParent = filesField.input.parentNode;
+    var filesUploadControl = createElement('div', 'documents-outgoing-file-upload');
+    var filesUploadButton = createElement('button', 'documents-outgoing-file-upload__button');
+    filesUploadButton.type = 'button';
+    filesUploadButton.appendChild(createElement('span', 'documents-outgoing-file-upload__button-icon', '+'));
+    filesUploadButton.appendChild(createElement('span', '', 'Выбрать файлы'));
+    var filesUploadSummary = createElement('span', 'documents-outgoing-file-upload__summary', 'Файлы не выбраны');
+    filesUploadControl.appendChild(filesField.input);
+    filesUploadControl.appendChild(filesUploadButton);
+    filesUploadControl.appendChild(filesUploadSummary);
+    if (filesUploadParent) {
+      filesUploadParent.appendChild(filesUploadControl);
+    }
+    filesUploadButton.addEventListener('click', function(event) {
+      event.preventDefault();
+      filesField.input.click();
+    });
+    filesField.input.addEventListener('change', function() {
+      var selected = Array.from(filesField.input.files || []);
+      filesUploadSummary.classList.toggle('is-filled', selected.length > 0);
+      if (!selected.length) {
+        filesUploadSummary.textContent = 'Файлы не выбраны';
+        return;
+      }
+      var totalSize = selected.reduce(function(sum, file) {
+        return sum + (Number(file && file.size) || 0);
+      }, 0);
+      filesUploadSummary.textContent = selected.length === 1
+        ? (selected[0] && selected[0].name ? selected[0].name : 'Файл') + ' · ' + formatFileSize(totalSize)
+        : selected.length + ' файлов · ' + formatFileSize(totalSize);
+    });
+    filesField.field.appendChild(createElement('div', 'documents-outgoing-form-modal__file-hint', 'PDF, изображения, DOCX/XLSX, TXT, RTF, ODT/ODS или ZIP до 25 МБ на файл.'));
+    var existingFiles = normalizeOutgoingFileList(record && record.files);
+    var removedFileKeys = [];
+    var existingFilesPanel = null;
+
+    function renderExistingOrderFiles() {
+      if (!existingFilesPanel) {
+        return;
+      }
+      existingFilesPanel.textContent = '';
+      if (!existingFiles.length) {
+        existingFilesPanel.appendChild(createElement('div', 'documents-outgoing-file-manager__empty', 'Прикреплённых файлов приказа нет.'));
+        return;
+      }
+      existingFiles.forEach(function(file, index) {
+        var fileName = getAttachmentName(file, index + 1);
+        var fileKey = buildOutgoingFileKey(file);
+        var row = createElement('div', 'documents-outgoing-file-manager__item');
+        var info = createElement('div', 'documents-outgoing-file-manager__info');
+        var icon = createElement('span', 'documents-outgoing-file-manager__icon', getAttachmentExtensionLabel(file));
+        var text = createElement('div', 'documents-outgoing-file-manager__text');
+        var nameLine = createElement('div', 'documents-outgoing-file-manager__name-line');
+        var nameNode = createElement('button', 'documents-outgoing-file-manager__name', fileName);
+        var metaParts = [];
+        if (Number(file.size) > 0) {
+          metaParts.push(formatFileSize(file.size));
+        }
+        if (file.uploadedAt) {
+          metaParts.push(formatDateTime(file.uploadedAt));
+        }
+        var uploader = getOutgoingFileUploader(file);
+        if (uploader) {
+          metaParts.push('Добавил: ' + uploader);
+        }
+        nameNode.type = 'button';
+        nameNode.addEventListener('click', function() {
+          openOutgoingAttachmentInNewTab(file);
+        });
+        nameLine.appendChild(nameNode);
+        text.appendChild(nameLine);
+        text.appendChild(createElement('div', 'documents-outgoing-file-manager__meta', metaParts.join(' · ') || 'Файл приказа'));
+        info.appendChild(icon);
+        info.appendChild(text);
+        row.appendChild(info);
+        var removeButton = createElement('button', 'documents-outgoing-file-manager__remove', 'Удалить');
+        removeButton.type = 'button';
+        removeButton.addEventListener('click', function() {
+          if (fileKey) {
+            removedFileKeys.push(fileKey);
+          }
+          existingFiles = existingFiles.filter(function(candidate) {
+            return candidate !== file;
+          });
+          renderExistingOrderFiles();
+        });
+        row.appendChild(removeButton);
+        existingFilesPanel.appendChild(row);
+      });
+    }
+
+    var existingFilesField = null;
+    if (isEditMode) {
+      existingFilesField = createElement('div', 'documents-form__field documents-outgoing-form__wide documents-outgoing-file-manager');
+      existingFilesField.appendChild(createElement('div', 'documents-outgoing-file-manager__title', 'Текущие файлы приказа'));
+      existingFilesPanel = createElement('div', 'documents-outgoing-file-manager__list');
+      existingFilesField.appendChild(existingFilesPanel);
+      renderExistingOrderFiles();
+    }
+    fields.forEach(function(item) {
+      detailsSection.grid.appendChild(item.field);
+    });
+    if (existingFilesField) {
+      filesSection.grid.appendChild(existingFilesField);
+    }
+    filesSection.grid.appendChild(filesField.field);
+    form.appendChild(detailsSection.section);
+    form.appendChild(filesSection.section);
+    body.appendChild(form);
+
+    form.addEventListener('submit', function(event) {
+      event.preventDefault();
+      submitButton.disabled = true;
+      var payload = {
+        organization: state.organization
+      };
+      if (isEditMode) {
+        payload.id = record.id;
+      }
+      fields.forEach(function(item) {
+        payload[item.input.name] = normalizeTextInputValue(item.input.value);
+      });
+      if (!validateOrderNumberField()) {
+        submitButton.disabled = false;
+        orderNumberField.input.focus();
+        return;
+      }
+      if (!payload.orderDate) {
+        submitButton.disabled = false;
+        setOutgoingFormFieldError(orderDateField, 'Поле «Дата» обязательно для заполнения.');
+        orderDateField.input.focus();
+        return;
+      }
+      if (!payload.summary) {
+        submitButton.disabled = false;
+        setOutgoingFormFieldError(summaryField, 'Поле «Краткое содержание» обязательно для заполнения.');
+        summaryField.input.focus();
+        return;
+      }
+      var selectedFiles = Array.from(filesField.input.files || []);
+      var fileErrors = validateAttachmentFiles(selectedFiles, existingFiles);
+      if (fileErrors.length) {
+        submitButton.disabled = false;
+        showMessage('error', fileErrors.slice(0, 3).join(' '));
+        return;
+      }
+      var remainingFileKeys = existingFiles.map(buildOutgoingFileKey).filter(Boolean);
+      var uniqueRemovedFileKeys = removedFileKeys.filter(function(key, index, list) {
+        return key && list.indexOf(key) === index;
+      });
+      var requestPayload = payload;
+      if (selectedFiles.length) {
+        requestPayload = new FormData();
+        requestPayload.append('action', 'orders_save');
+        requestPayload.append('payload', JSON.stringify(payload));
+        Object.keys(payload).forEach(function(key) {
+          if (!Array.isArray(payload[key])) {
+            requestPayload.append(key, payload[key]);
+          }
+        });
+        selectedFiles.forEach(function(file) {
+          requestPayload.append('attachments[]', file);
+        });
+        if (isEditMode) {
+          requestPayload.append('filesToDelete', JSON.stringify(uniqueRemovedFileKeys));
+          requestPayload.append('filesRemaining', JSON.stringify(remainingFileKeys));
+        }
+        appendTelegramUserIdToFormData(requestPayload);
+      } else if (isEditMode) {
+        requestPayload.filesToDelete = uniqueRemovedFileKeys;
+        requestPayload.filesRemaining = remainingFileKeys;
+      }
+      postOutgoingRegistryAction('orders_save', requestPayload)
+        .then(function(data) {
+          closeOrdersForm();
+          showMessage('success', data && data.message ? data.message : 'Приказ сохранён.');
+          if (typeof onSaved === 'function') {
+            onSaved(data);
+          }
+        })
+        .catch(function(error) {
+          submitButton.disabled = false;
+          if (error && error.reason === 'order_number_exists') {
+            setOutgoingFormFieldError(orderNumberField, error.message || 'Этот № приказа уже зарегистрирован.');
+            orderNumberField.input.focus();
+            return;
+          }
+          if (error && error.reason === 'order_date_required') {
+            setOutgoingFormFieldError(orderDateField, error.message || 'Поле «Дата» обязательно для заполнения.');
+            orderDateField.input.focus();
+            return;
+          }
+          if (error && error.reason === 'order_summary_required') {
+            setOutgoingFormFieldError(summaryField, error.message || 'Поле «Краткое содержание» обязательно для заполнения.');
+            summaryField.input.focus();
+            return;
+          }
+          var message = error && error.message ? error.message : 'Сервер не вернул текст ошибки.';
+          if (typeof docsLogger.error === 'function') {
+            docsLogger.error('Не удалось сохранить приказ:', error);
+          }
+          showMessage('error', 'Не удалось сохранить приказ: ' + message);
+        });
+    });
+
+    shell.appendChild(header);
+    shell.appendChild(body);
+    shell.appendChild(actions);
+    modal.appendChild(shell);
+    modal.addEventListener('click', function(event) {
+      if (event.target === modal) {
+        closeOrdersForm();
+      }
+    });
+    document.addEventListener('keydown', ordersFormEscapeHandler);
+    document.body.appendChild(modal);
+    orderNumberField.input.focus();
+  }
+
+  function deleteOrderRecord(record, onDeleted) {
+    if (!record || !record.id) {
+      return;
+    }
+    if (!window.confirm('Удалить приказ из журнала?')) {
+      return;
+    }
+    postOutgoingRegistryAction('orders_delete', {
+      organization: state.organization,
+      id: record.id
+    })
+      .then(function(data) {
+        showMessage('success', data && data.message ? data.message : 'Приказ удалён.');
+        if (typeof onDeleted === 'function') {
+          onDeleted(data);
+        }
+      })
+      .catch(function(error) {
+        showMessage('error', error && error.message ? error.message : 'Не удалось удалить приказ.');
+      });
+  }
+
+  function closeOrdersRegistryModal(modal) {
+    if (!modal) {
+      return;
+    }
+    closeOrdersFilterPopover();
+    if (ordersRegistryEscapeHandler) {
+      document.removeEventListener('keydown', ordersRegistryEscapeHandler);
+      ordersRegistryEscapeHandler = null;
+    }
+    if (modal.parentNode) {
+      modal.parentNode.removeChild(modal);
+    }
+  }
+
+  function openOrdersRegistryModal() {
+    ensureOutgoingRegistryStyle();
+    var existingModal = document.querySelector('.documents-orders-modal');
+    if (existingModal) {
+      closeOrdersRegistryModal(existingModal);
+    }
+    var modal = createElement('div', 'documents-outgoing-modal documents-orders-modal');
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.setAttribute('aria-labelledby', 'documents-orders-title');
+    var panel = createElement('div', 'documents-outgoing-modal__panel');
+    var header = createElement('div', 'documents-outgoing-modal__header');
+    var titleWrap = createElement('div', 'documents-outgoing-modal__title-wrap');
+    var title = createElement('h3', 'documents-outgoing-modal__title', 'Журнал регистрации приказов по основной деятельности');
+    title.id = 'documents-orders-title';
+    var summary = createElement('p', 'documents-outgoing-modal__summary', 'Загружаем журнал приказов...');
+    var headerActions = createElement('div', 'documents-outgoing-modal__actions');
+    var resetFiltersButton = createElement('button', 'documents-outgoing-modal__add', 'Сбросить фильтры');
+    resetFiltersButton.type = 'button';
+    var addRecordButton = createElement('button', 'documents-outgoing-modal__add', 'Добавить приказ');
+    addRecordButton.type = 'button';
+    var closeButton = createElement('button', 'documents-outgoing-modal__close', '×');
+    closeButton.type = 'button';
+    closeButton.setAttribute('aria-label', 'Закрыть журнал приказов');
+    titleWrap.appendChild(title);
+    titleWrap.appendChild(summary);
+    header.appendChild(titleWrap);
+    headerActions.appendChild(resetFiltersButton);
+    headerActions.appendChild(addRecordButton);
+    headerActions.appendChild(closeButton);
+    header.appendChild(headerActions);
+    var notice = createElement('div', 'documents-outgoing-modal__notice');
+    notice.setAttribute('role', 'status');
+    notice.setAttribute('aria-live', 'polite');
+    var body = createElement('div', 'documents-outgoing-modal__body');
+    var table = createElement('table', 'documents-outgoing-table');
+    var thead = document.createElement('thead');
+    var headerRow = document.createElement('tr');
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+    var tbody = document.createElement('tbody');
+    table.appendChild(tbody);
+    body.appendChild(table);
+    var dropLine = createElement('div', 'documents-outgoing-column-drop-line');
+    body.appendChild(dropLine);
+    panel.appendChild(header);
+    panel.appendChild(notice);
+    panel.appendChild(body);
+    modal.appendChild(panel);
+    document.body.appendChild(modal);
+
+    var modalState = {
+      records: [],
+      canManage: false,
+      filters: {},
+      sort: {
+        key: 'orderDate',
+        direction: 'desc'
+      },
+      organization: state.organization || '',
+      columnOrder: loadOrdersColumnOrderFromLocalStorage(),
+      columnOrderDirty: false
+    };
+    var columnDragState = null;
+
+    function showOrdersNotice(type, text) {
+      var message = text ? String(text).trim() : '';
+      notice.textContent = message;
+      notice.classList.remove('documents-outgoing-modal__notice--visible', 'documents-outgoing-modal__notice--error', 'documents-outgoing-modal__notice--success');
+      if (!message) {
+        return;
+      }
+      notice.classList.add('documents-outgoing-modal__notice--visible');
+      if (type === 'error') {
+        notice.classList.add('documents-outgoing-modal__notice--error');
+      } else if (type === 'success') {
+        notice.classList.add('documents-outgoing-modal__notice--success');
+      }
+    }
+
+    function refreshOrdersView() {
+      var filteredRecords = filterOrdersRegistryRecords(modalState.records, modalState.filters);
+      var sortedRecords = sortOrdersRegistryRecords(filteredRecords, modalState.sort);
+      var hasFilters = ordersHasActiveFilters(modalState.filters);
+      summary.textContent = 'Организация: ' + (modalState.organization || state.organization || 'не выбрана')
+        + ' · приказов: ' + modalState.records.length
+        + (hasFilters ? ' · показано: ' + sortedRecords.length : '')
+        + ' · сортировка: ' + ((ORDERS_REGISTRY_COLUMN_MAP[modalState.sort.key] || {}).label || 'Дата') + ' '
+        + (modalState.sort.direction === 'asc' ? '↑' : '↓');
+      resetFiltersButton.disabled = !hasFilters;
+      renderOrdersRegistryRows(tbody, sortedRecords, {
+        canManage: modalState.canManage,
+        columnOrder: modalState.columnOrder,
+        emptyMessage: hasFilters ? 'По выбранным фильтрам приказов нет.' : 'Записей приказов пока нет.',
+        onAttach: function(row) {
+          showOrdersNotice('', '');
+          openOrdersAttachFilesModal(row, syncOrdersRows);
+        },
+        onEdit: function(row) {
+          showOrdersNotice('', '');
+          openOrdersRecordForm(row, syncOrdersRows, modalState.records);
+        },
+        onDelete: function(row) {
+          deleteOrderRecord(row, syncOrdersRows);
+        }
+      });
+      renderOrdersHeader();
+    }
+
+    function renderOrdersHeader() {
+      headerRow.textContent = '';
+      getOrderedOrdersColumns(modalState.columnOrder).forEach(function(column) {
+        var cell = document.createElement('th');
+        cell.scope = 'col';
+        cell.dataset.columnKey = column.key;
+        var content = createElement('div', 'documents-outgoing-table__header');
+        if (ordersColumnCanFilter(column)) {
+          var filterButton = createElement('button', 'documents-outgoing-table__filter');
+          filterButton.type = 'button';
+          filterButton.classList.toggle('is-active', orderFilterIsActive(modalState.filters, column.key));
+          filterButton.setAttribute('aria-label', 'Фильтр: ' + column.label);
+          filterButton.appendChild(createElement('span', 'documents-outgoing-table__filter-label', column.label));
+          filterButton.appendChild(createElement('span', 'documents-outgoing-table__filter-icon', '⌕'));
+          filterButton.addEventListener('click', function(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            openOrdersFilterPopover(filterButton, column, modalState, refreshOrdersView);
+          });
+          content.appendChild(filterButton);
+        } else {
+          content.appendChild(createElement('span', 'documents-outgoing-table__header-label', column.label));
+        }
+        if (ordersColumnCanSort(column)) {
+          var sortButton = createElement('button', 'documents-outgoing-column-drag', modalState.sort.key === column.key ? (modalState.sort.direction === 'asc' ? '↑' : '↓') : '↕');
+          sortButton.type = 'button';
+          sortButton.setAttribute('aria-label', 'Сортировать столбец «' + column.label + '»');
+          sortButton.title = 'Сортировка';
+          sortButton.addEventListener('click', function(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            if (modalState.sort.key === column.key) {
+              modalState.sort.direction = modalState.sort.direction === 'asc' ? 'desc' : 'asc';
+            } else {
+              modalState.sort.key = column.key;
+              modalState.sort.direction = column.key === 'orderDate' ? 'desc' : 'asc';
+            }
+            refreshOrdersView();
+          });
+          content.appendChild(sortButton);
+        }
+        var dragButton = createElement('button', 'documents-outgoing-column-drag', '⋮⋮');
+        dragButton.type = 'button';
+        dragButton.dataset.columnKey = column.key;
+        dragButton.setAttribute('aria-label', 'Переместить столбец «' + column.label + '»');
+        dragButton.title = 'Переместить столбец';
+        content.appendChild(dragButton);
+        cell.appendChild(content);
+        headerRow.appendChild(cell);
+      });
+    }
+
+    function getOrdersColumnDropIndex(clientX) {
+      var cells = Array.from(headerRow.querySelectorAll('th[data-column-key]'));
+      if (!cells.length) {
+        return 0;
+      }
+      for (var i = 0; i < cells.length; i += 1) {
+        var rect = cells[i].getBoundingClientRect();
+        if (clientX < rect.left + rect.width / 2) {
+          return i;
+        }
+      }
+      return cells.length;
+    }
+
+    function positionOrdersDropLine(clientX) {
+      var cells = Array.from(headerRow.querySelectorAll('th[data-column-key]'));
+      if (!cells.length) {
+        dropLine.style.display = 'none';
+        return;
+      }
+      var dropIndex = getOrdersColumnDropIndex(clientX);
+      var targetCell = cells[Math.min(dropIndex, cells.length - 1)];
+      var targetRect = targetCell.getBoundingClientRect();
+      var bodyRect = body.getBoundingClientRect();
+      var left = dropIndex >= cells.length ? targetRect.right : targetRect.left;
+      dropLine.style.left = (left - bodyRect.left + body.scrollLeft) + 'px';
+      dropLine.style.display = 'block';
+    }
+
+    function stopOrdersColumnDrag() {
+      if (!columnDragState) {
+        return;
+      }
+      document.removeEventListener('pointermove', handleOrdersColumnDragMove);
+      document.removeEventListener('pointerup', handleOrdersColumnDragEnd);
+      document.removeEventListener('pointercancel', handleOrdersColumnDragCancel);
+      if (columnDragState.ghost && columnDragState.ghost.parentNode) {
+        columnDragState.ghost.parentNode.removeChild(columnDragState.ghost);
+      }
+      if (columnDragState.handle) {
+        columnDragState.handle.classList.remove('is-dragging');
+      }
+      dropLine.style.display = 'none';
+      columnDragState = null;
+    }
+
+    function handleOrdersColumnDragMove(event) {
+      if (!columnDragState) {
+        return;
+      }
+      event.preventDefault();
+      columnDragState.currentClientX = event.clientX;
+      if (columnDragState.ghost) {
+        columnDragState.ghost.style.left = (event.clientX + 12) + 'px';
+        columnDragState.ghost.style.top = (event.clientY + 12) + 'px';
+      }
+      positionOrdersDropLine(event.clientX);
+    }
+
+    function handleOrdersColumnDragEnd(event) {
+      if (!columnDragState) {
+        return;
+      }
+      event.preventDefault();
+      var draggedKey = columnDragState.columnKey;
+      var order = normalizeOrdersColumnOrder(modalState.columnOrder);
+      var fromIndex = order.indexOf(draggedKey);
+      var dropIndex = getOrdersColumnDropIndex(event.clientX);
+      if (fromIndex !== -1) {
+        order.splice(fromIndex, 1);
+        if (dropIndex > fromIndex) {
+          dropIndex -= 1;
+        }
+        order.splice(Math.max(0, Math.min(dropIndex, order.length)), 0, draggedKey);
+        modalState.columnOrder = normalizeOrdersColumnOrder(order);
+        modalState.columnOrderDirty = true;
+        refreshOrdersView();
+        saveOrdersColumnOrder(modalState.columnOrder).catch(function(error) {
+          showMessage('warning', error && error.message ? error.message : 'Порядок сохранён локально, но не записан в JSON.');
+        });
+      }
+      stopOrdersColumnDrag();
+    }
+
+    function handleOrdersColumnDragCancel() {
+      stopOrdersColumnDrag();
+    }
+
+    headerRow.addEventListener('pointerdown', function(event) {
+      var handle = event.target && event.target.closest
+        ? event.target.closest('.documents-outgoing-column-drag')
+        : null;
+      if (!handle || !handle.dataset.columnKey) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      var columnKey = handle.dataset.columnKey || '';
+      var column = ORDERS_REGISTRY_COLUMN_MAP[columnKey];
+      if (!column) {
+        return;
+      }
+      var ghost = createElement('div', 'documents-outgoing-column-ghost', column.label);
+      ghost.style.left = (event.clientX + 12) + 'px';
+      ghost.style.top = (event.clientY + 12) + 'px';
+      document.body.appendChild(ghost);
+      handle.classList.add('is-dragging');
+      columnDragState = {
+        columnKey: columnKey,
+        handle: handle,
+        ghost: ghost,
+        currentClientX: event.clientX
+      };
+      document.addEventListener('pointermove', handleOrdersColumnDragMove);
+      document.addEventListener('pointerup', handleOrdersColumnDragEnd);
+      document.addEventListener('pointercancel', handleOrdersColumnDragCancel);
+      positionOrdersDropLine(event.clientX);
+    });
+
+    function syncOrdersRows(data) {
+      if (data && Array.isArray(data.records)) {
+        modalState.records = data.records;
+      }
+      if (data && typeof data.canManageOrderRecords === 'boolean') {
+        modalState.canManage = data.canManageOrderRecords;
+      }
+      if (data && data.organization) {
+        modalState.organization = String(data.organization);
+      }
+      refreshOrdersView();
+    }
+
+    resetFiltersButton.addEventListener('click', function() {
+      modalState.filters = {};
+      closeOrdersFilterPopover();
+      refreshOrdersView();
+    });
+    addRecordButton.addEventListener('click', function() {
+      openOrdersRecordForm(null, syncOrdersRows, modalState.records);
+    });
+    closeButton.addEventListener('click', function() {
+      stopOrdersColumnDrag();
+      closeOrdersRegistryModal(modal);
+    });
+    modal.addEventListener('click', function(event) {
+      if (event.target === modal) {
+        stopOrdersColumnDrag();
+        closeOrdersRegistryModal(modal);
+      }
+    });
+    ordersRegistryEscapeHandler = function(event) {
+      if (event.key === 'Escape') {
+        if (document.querySelector('.documents-outgoing-form-modal')) {
+          return;
+        }
+        if (document.querySelector('.documents-orders-filter-popover')) {
+          event.preventDefault();
+          closeOrdersFilterPopover();
+          return;
+        }
+        event.preventDefault();
+        stopOrdersColumnDrag();
+        closeOrdersRegistryModal(modal);
+      }
+    };
+    document.addEventListener('keydown', ordersRegistryEscapeHandler);
+
+    renderOrdersHeader();
+    renderOrdersRegistryRows(tbody, [], {
+      canManage: false,
+      columnOrder: modalState.columnOrder
+    });
+    requestOrdersColumnOrder()
+      .then(function(order) {
+        if (modalState.columnOrderDirty) {
+          return;
+        }
+        modalState.columnOrder = normalizeOrdersColumnOrder(order);
+        saveOrdersColumnOrderToLocalStorage(modalState.columnOrder);
+        refreshOrdersView();
+      })
+      .catch(function(error) {
+        if (typeof docsLogger.warn === 'function') {
+          docsLogger.warn('Не удалось загрузить порядок столбцов журнала приказов:', error);
+        }
+      });
+    requestOrdersRegistryRecords()
+      .then(function(data) {
+        syncOrdersRows(data);
+      })
+      .catch(function(error) {
+        var message = error && error.message ? error.message : String(error);
+        summary.textContent = 'Не удалось загрузить журнал приказов.';
+        tbody.textContent = '';
+        var row = document.createElement('tr');
+        var cell = createElement('td', 'documents-outgoing-table__empty', message);
+        cell.colSpan = getOrderedOrdersColumns(modalState.columnOrder).length;
+        row.appendChild(cell);
+        tbody.appendChild(row);
+        showMessage('error', 'Не удалось загрузить журнал приказов: ' + message);
       });
   }
 
@@ -27092,7 +29196,30 @@
       outgoingButton.setAttribute('aria-label', 'Открыть исходящую корреспонденцию');
     }
 
-    var message = createElement('div', 'documents-message');
+    var ordersButton = document.getElementById('documents-orders-button');
+    if (!ordersButton && buttonContainer) {
+      ordersButton = createElement('button', 'documents-panel__admin documents-panel__admin--orders', 'Приказы');
+      ordersButton.id = 'documents-orders-button';
+      ordersButton.type = 'button';
+      var ordersAnchor = outgoingButton || adminButton || settingsButton || null;
+      if (ordersAnchor && ordersAnchor.parentElement === buttonContainer) {
+        buttonContainer.insertBefore(ordersButton, ordersAnchor.nextSibling);
+      } else {
+        buttonContainer.appendChild(ordersButton);
+      }
+    }
+    if (ordersButton && !ordersButton.dataset.ordersBound) {
+      ordersButton.dataset.ordersBound = 'true';
+      ordersButton.addEventListener('click', function() {
+        openOrdersRegistryModal();
+      });
+    }
+    if (ordersButton) {
+      ordersButton.title = 'Открыть журнал приказов по основной деятельности';
+      ordersButton.setAttribute('aria-label', 'Открыть журнал приказов по основной деятельности');
+    }
+
+    var message = elements.message || createElement('div', 'documents-message');
     var tableToolbar = createElement('div', 'documents-table-toolbar');
     var toolsToggle = createDocumentsToolsToggle();
     var tabsBar = createElement('div', 'documents-tabs');
@@ -27366,7 +29493,7 @@
     pagination.appendChild(paginationButtons);
     tableWrapper.appendChild(pagination);
 
-    workspace.appendChild(message);
+    document.body.appendChild(message);
     workspace.appendChild(tableToolbar);
     workspace.appendChild(filterBar);
     workspace.appendChild(tableWrapper);
@@ -27386,6 +29513,7 @@
     elements.unviewedButton = unviewedButton;
     elements.unviewedCounter = unviewedCounter;
     elements.outgoingButton = outgoingButton;
+    elements.ordersButton = ordersButton;
     elements.settingsButton = settingsButton;
     elements.message = message;
     elements.tableToolbar = tableToolbar;
@@ -27451,8 +29579,10 @@
       window.addEventListener('documentsAccessContextChanged', handleAccessContextChange);
       window.addEventListener('beforeunload', stopPresenceTracking);
       window.addEventListener('beforeunload', stopRealtimeRegistrySync);
+      window.addEventListener('beforeunload', releaseActiveOutgoingEditLocksOnUnload);
       window.addEventListener('pagehide', stopPresenceTracking);
       window.addEventListener('pagehide', stopRealtimeRegistrySync);
+      window.addEventListener('pagehide', releaseActiveOutgoingEditLocksOnUnload);
     }
     state.telegramUserId = getTelegramUserId();
     if (!diagnosticsState.startSent) {

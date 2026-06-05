@@ -35,6 +35,7 @@ function resolve_documents_root(): string
 define('DOCUMENTS_ROOT', resolve_documents_root());
 const REGISTRY_FILENAME = 'registry.json';
 const OUTGOING_REGISTRY_FILENAME = 'outgoing_registry.json';
+const ORDERS_REGISTRY_FILENAME = 'orders_registry.json';
 const SETTINGS_FILENAME = 'settingsdocs.json';
 const DOCS_COLUMN_WIDTH_MIN = 72;
 const DOCS_COLUMN_WIDTH_MAX = 360;
@@ -88,6 +89,14 @@ const DOCS_OUTGOING_COLUMN_ORDER_DEFAULTS = [
     'summary',
     'files',
     'executor',
+    'actions',
+];
+const DOCS_ORDERS_COLUMN_ORDER_DEFAULTS = [
+    'orderNumber',
+    'orderDate',
+    'summary',
+    'executor',
+    'files',
     'actions',
 ];
 const MINI_APP_USER_LOG_FILENAME = 'miniappuser.json';
@@ -2301,6 +2310,15 @@ function docs_build_assignment_notification_message(array $record, array $assign
         $lines[] = 'Вх. №: не указан';
     }
 
+    $theme = sanitize_text_field($record['summary'] ?? '', 350);
+    if ($theme === '') {
+        $theme = sanitize_text_field($record['content'] ?? '', 350);
+    }
+    if ($theme === '') {
+        $theme = sanitize_text_field($record['description'] ?? '', 350);
+    }
+    $lines[] = 'Тема: ' . ($theme !== '' ? $theme : 'не указана');
+
     $content = sanitize_text_field($record['correspondent'] ?? '', 350);
     if ($content === '') {
         $content = sanitize_text_field($record['summary'] ?? '', 350);
@@ -4065,9 +4083,47 @@ log_docs_event('Request received', $logContext);
 function respond(array $payload, int $status = 200): void
 {
     http_response_code($status);
-    header('Content-Type: application/json; charset=UTF-8');
-    echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    docs_send_json_payload($payload);
     exit;
+}
+
+function docs_client_accepts_gzip(): bool
+{
+    $encoding = $_SERVER['HTTP_ACCEPT_ENCODING'] ?? '';
+    if (!is_string($encoding) || stripos($encoding, 'gzip') === false) {
+        return false;
+    }
+
+    if (ini_get('zlib.output_compression')) {
+        return false;
+    }
+
+    return !headers_sent();
+}
+
+function docs_send_json_payload(array $payload): void
+{
+    $json = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if ($json === false) {
+        http_response_code(500);
+        $json = '{"success":false,"error":"json_encode_failed"}';
+    }
+
+    header('Content-Type: application/json; charset=UTF-8');
+    header('Vary: Accept-Encoding', false);
+
+    if (strlen($json) >= 1024 && docs_client_accepts_gzip() && function_exists('gzencode')) {
+        $compressed = gzencode($json, 5);
+        if (is_string($compressed) && $compressed !== '') {
+            header('Content-Encoding: gzip');
+            header('Content-Length: ' . strlen($compressed));
+            echo $compressed;
+            return;
+        }
+    }
+
+    header('Content-Length: ' . strlen($json));
+    echo $json;
 }
 
 function respond_error(string $message, int $status = 400, array $extra = []): void
@@ -4118,8 +4174,7 @@ function respond_success_with_background_task(array $payload, callable $backgrou
     }
 
     http_response_code(200);
-    header('Content-Type: application/json; charset=UTF-8');
-    echo json_encode(array_merge(['success' => true], $payload), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    docs_send_json_payload(array_merge(['success' => true], $payload));
 
     fastcgi_finish_request();
     $backgroundTask();
@@ -4465,6 +4520,11 @@ function get_outgoing_registry_path(string $folder): string
     return DOCUMENTS_ROOT . '/' . $folder . '/' . OUTGOING_REGISTRY_FILENAME;
 }
 
+function get_orders_registry_path(string $folder): string
+{
+    return DOCUMENTS_ROOT . '/' . $folder . '/' . ORDERS_REGISTRY_FILENAME;
+}
+
 function get_settings_path(string $folder): string
 {
     return DOCUMENTS_ROOT . '/' . $folder . '/' . SETTINGS_FILENAME;
@@ -4574,6 +4634,82 @@ function docs_payload_first_date(array $payload, array $fields): string
     return '';
 }
 
+function docs_normalize_outgoing_save_payload(array $payload): array
+{
+    foreach (['payload', 'fields', 'record', 'data'] as $field) {
+        if (!isset($payload[$field])) {
+            continue;
+        }
+
+        $nested = $payload[$field];
+        if (is_string($nested)) {
+            $decoded = json_decode($nested, true);
+            $nested = is_array($decoded) ? $decoded : [];
+        }
+
+        if (!is_array($nested) || empty($nested)) {
+            continue;
+        }
+
+        unset($payload[$field]);
+        foreach ($nested as $key => $value) {
+            if (!is_string($key) && !is_int($key)) {
+                continue;
+            }
+
+            $key = (string) $key;
+            $currentValue = $payload[$key] ?? null;
+            $currentIsEmpty = $currentValue === null
+                || (is_string($currentValue) && trim($currentValue) === '')
+                || (is_array($currentValue) && empty($currentValue));
+
+            $nestedArrayShouldWin = is_array($value)
+                && in_array($key, ['filesToDelete', 'filesRemaining'], true);
+
+            if ($nestedArrayShouldWin || !array_key_exists($key, $payload) || $currentIsEmpty) {
+                $payload[$key] = $value;
+            }
+        }
+    }
+
+    return $payload;
+}
+
+function docs_payload_first_scalar_text(array $payload, array $fields, int $maxLength = 220): string
+{
+    foreach ($fields as $field) {
+        if (!is_string($field) || $field === '' || !array_key_exists($field, $payload)) {
+            continue;
+        }
+
+        $value = $payload[$field];
+        if (is_array($value)) {
+            $value = reset($value);
+        }
+        if (is_object($value) || is_array($value)) {
+            continue;
+        }
+
+        $value = sanitize_text_field((string) $value, $maxLength);
+        if ($value !== '') {
+            return $value;
+        }
+    }
+
+    return '';
+}
+
+function docs_payload_has_any_field(array $payload, array $fields): bool
+{
+    foreach ($fields as $field) {
+        if (is_string($field) && $field !== '' && array_key_exists($field, $payload)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 function docs_create_outgoing_record_id(): string
 {
     try {
@@ -4601,18 +4737,286 @@ function docs_prepare_outgoing_files_payload($value): array
             continue;
         }
 
+        $visibility = docs_normalize_outgoing_file_visibility($file['visibility'] ?? '');
+
         $files[] = array_filter([
             'originalName' => sanitize_text_field((string) ($file['originalName'] ?? ($file['name'] ?? $storedName)), 255),
             'storedName' => $storedName,
             'size' => isset($file['size']) ? max(0, (int) $file['size']) : 0,
             'uploadedAt' => docs_normalize_datetime_iso(isset($file['uploadedAt']) ? (string) $file['uploadedAt'] : null) ?? '',
             'url' => $url,
+            'accessKey' => sanitize_text_field((string) ($file['accessKey'] ?? ''), 200),
+            'visibility' => $visibility,
+            'uploadedBy' => sanitize_text_field((string) ($file['uploadedBy'] ?? ''), 220),
+            'uploadedByKey' => sanitize_text_field((string) ($file['uploadedByKey'] ?? ''), 200),
         ], static function ($item) {
             return $item !== '' && $item !== 0;
         });
     }
 
     return $files;
+}
+
+function docs_normalize_outgoing_file_visibility($value): string
+{
+    $normalized = mb_strtolower(trim((string) $value), 'UTF-8');
+    if (in_array($normalized, ['private', 'privat', '1', 'true', 'yes', 'on', 'приватный', 'личный'], true)) {
+        return 'private';
+    }
+
+    return 'public';
+}
+
+function docs_payload_requests_private_outgoing_files(array $payload): bool
+{
+    foreach (['outgoingFilesPrivate', 'filesPrivate', 'privateFiles', 'isPrivate'] as $key) {
+        if (!array_key_exists($key, $payload)) {
+            continue;
+        }
+        $value = is_array($payload[$key]) ? reset($payload[$key]) : $payload[$key];
+        $normalized = mb_strtolower(trim((string) $value), 'UTF-8');
+        if (in_array($normalized, ['1', 'true', 'yes', 'on', 'private', 'приватный'], true)) {
+            return true;
+        }
+    }
+
+    $visibility = docs_normalize_outgoing_file_visibility($payload['filesVisibility'] ?? ($payload['visibility'] ?? ''));
+
+    return $visibility === 'private';
+}
+
+function docs_is_outgoing_file_private(array $file): bool
+{
+    return docs_normalize_outgoing_file_visibility($file['visibility'] ?? '') === 'private';
+}
+
+function docs_normalize_outgoing_user_key(string $value): string
+{
+    $value = sanitize_text_field($value, 200);
+    $value = trim($value);
+
+    return $value !== '' ? mb_strtolower($value, 'UTF-8') : '';
+}
+
+function docs_normalize_outgoing_user_keys($value): array
+{
+    $values = is_array($value) ? $value : [$value];
+    $keys = [];
+    foreach ($values as $item) {
+        if (is_array($item)) {
+            foreach (docs_normalize_outgoing_user_keys($item) as $nestedKey) {
+                $keys[$nestedKey] = true;
+            }
+            continue;
+        }
+
+        $key = docs_normalize_outgoing_user_key((string) $item);
+        if ($key !== '') {
+            $keys[$key] = true;
+        }
+    }
+
+    return array_keys($keys);
+}
+
+function docs_outgoing_file_user_can_access(array $file, bool $canManageOutgoing, $currentUserKeys): bool
+{
+    if (!docs_is_outgoing_file_private($file)) {
+        return true;
+    }
+
+    if ($canManageOutgoing) {
+        return true;
+    }
+
+    $ownerKey = docs_normalize_outgoing_user_key((string) ($file['uploadedByKey'] ?? ''));
+    if ($ownerKey === '') {
+        return false;
+    }
+
+    foreach (docs_normalize_outgoing_user_keys($currentUserKeys) as $viewerKey) {
+        if (hash_equals($ownerKey, $viewerKey)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function docs_outgoing_record_user_can_edit(array $record, bool $_canManageOutgoing, $currentUserKeys): bool
+{
+    $ownerKey = docs_normalize_outgoing_user_key((string) ($record['createdByKey'] ?? ''));
+    if ($ownerKey === '') {
+        return false;
+    }
+
+    foreach (docs_normalize_outgoing_user_keys($currentUserKeys) as $userKey) {
+        if (hash_equals($ownerKey, $userKey)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function docs_normalize_outgoing_owner_label($value): string
+{
+    $label = sanitize_text_field((string) $value, 220);
+    $label = preg_replace('/\s+/u', ' ', trim($label));
+    if (!is_string($label) || $label === '') {
+        return '';
+    }
+
+    return mb_strtolower($label, 'UTF-8');
+}
+
+function docs_outgoing_file_has_inherited_private_owner(array $file, array $record): bool
+{
+    if (!docs_is_outgoing_file_private($file)) {
+        return false;
+    }
+
+    $ownerKey = docs_normalize_outgoing_user_key((string) ($file['uploadedByKey'] ?? ''));
+    $uploaderLabel = docs_normalize_outgoing_owner_label($file['uploadedBy'] ?? '');
+    if ($ownerKey === '' || $uploaderLabel === '') {
+        return false;
+    }
+
+    $recordOwners = [
+        [
+            'key' => $record['createdByKey'] ?? '',
+            'label' => $record['createdBy'] ?? '',
+        ],
+        [
+            'key' => $record['updatedByKey'] ?? '',
+            'label' => $record['updatedBy'] ?? '',
+        ],
+    ];
+
+    foreach ($recordOwners as $recordOwner) {
+        $recordKey = docs_normalize_outgoing_user_key((string) ($recordOwner['key'] ?? ''));
+        if ($recordKey === '' || !hash_equals($ownerKey, $recordKey)) {
+            continue;
+        }
+
+        $recordLabel = docs_normalize_outgoing_owner_label($recordOwner['label'] ?? '');
+        if ($recordLabel !== '' && !hash_equals($uploaderLabel, $recordLabel)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function docs_ensure_private_outgoing_storage_guard(string $directory): void
+{
+    if ($directory === '' || !is_dir($directory)) {
+        return;
+    }
+
+    $htaccessPath = rtrim($directory, '/\\') . '/.htaccess';
+    if (!is_file($htaccessPath)) {
+        @file_put_contents($htaccessPath, "Require all denied\nDeny from all\n", LOCK_EX);
+        @chmod($htaccessPath, 0644);
+    }
+
+    $indexPath = rtrim($directory, '/\\') . '/index.html';
+    if (!is_file($indexPath)) {
+        @file_put_contents($indexPath, '', LOCK_EX);
+        @chmod($indexPath, 0644);
+    }
+}
+
+function docs_build_private_outgoing_file_url(string $folder, string $recordId, string $fileKey): string
+{
+    $params = [
+        'action' => 'outgoing_file',
+        'organization' => $folder,
+        'record_id' => $recordId,
+        'file' => $fileKey,
+    ];
+
+    return '/docs.php?' . http_build_query($params, '', '&', PHP_QUERY_RFC3986);
+}
+
+function docs_create_outgoing_private_file_access_key(): string
+{
+    try {
+        return 'opf_' . bin2hex(random_bytes(16));
+    } catch (Throwable $exception) {
+        return 'opf_' . str_replace('.', '', uniqid('', true));
+    }
+}
+
+function docs_outgoing_file_key_is_signed_access(array $file, string $fileKey): bool
+{
+    if (!docs_is_outgoing_file_private($file)) {
+        return false;
+    }
+
+    $accessKey = sanitize_text_field((string) ($file['accessKey'] ?? ''), 200);
+    if ($accessKey === '' || $fileKey === '') {
+        return false;
+    }
+
+    return hash_equals($accessKey, $fileKey);
+}
+
+function docs_prepare_outgoing_record_response(array $record, bool $canManageOutgoing = false, $currentUserKeys = '', string $folder = ''): array
+{
+    $prepared = docs_prepare_outgoing_record($record);
+    $recordId = sanitize_text_field((string) ($prepared['id'] ?? ''), 160);
+    $canEditRecord = docs_outgoing_record_user_can_edit($prepared, $canManageOutgoing, $currentUserKeys);
+    $visibleFiles = [];
+    foreach (($prepared['files'] ?? []) as $file) {
+        if (!is_array($file)) {
+            continue;
+        }
+
+        if (docs_is_outgoing_file_private($file)) {
+            $hasInheritedOwner = docs_outgoing_file_has_inherited_private_owner($file, $record);
+            if (($hasInheritedOwner && !$canManageOutgoing) || !docs_outgoing_file_user_can_access($file, $canManageOutgoing, $currentUserKeys)) {
+                $visibleFiles[] = array_filter([
+                    'originalName' => 'Приватный файл',
+                    'visibility' => 'private',
+                    'accessDenied' => true,
+                    'restricted' => true,
+                    'uploadedBy' => sanitize_text_field((string) ($file['uploadedBy'] ?? ''), 220),
+                    'uploadedAt' => sanitize_text_field((string) ($file['uploadedAt'] ?? ''), 80),
+                    'size' => isset($file['size']) ? max(0, (int) $file['size']) : 0,
+                ], static function ($item) {
+                    return $item !== '' && $item !== 0;
+                });
+                continue;
+            }
+
+            $fileKey = sanitize_text_field((string) ($file['accessKey'] ?? ''), 200);
+            if ($fileKey === '') {
+                $fileKey = sanitize_text_field((string) ($file['storedName'] ?? ($file['originalName'] ?? '')), 255);
+            }
+            if ($folder !== '' && $recordId !== '' && $fileKey !== '') {
+                $file['url'] = docs_build_private_outgoing_file_url($folder, $recordId, $fileKey);
+            }
+        }
+
+        $visibleFiles[] = $file;
+    }
+
+    $prepared['files'] = $visibleFiles;
+    $prepared['filesCount'] = count($visibleFiles);
+    $fileNames = [];
+    foreach ($visibleFiles as $file) {
+        $fileName = sanitize_text_field((string) ($file['originalName'] ?? ($file['storedName'] ?? '')), 220);
+        if ($fileName !== '') {
+            $fileNames[] = $fileName;
+        }
+    }
+    $prepared['filesLabel'] = !empty($fileNames) ? sanitize_text_field(implode(', ', $fileNames), 500) : '';
+    $prepared['canEdit'] = $canEditRecord;
+    $prepared['canAttach'] = true;
+    $prepared['canDelete'] = $canManageOutgoing;
+
+    return $prepared;
 }
 
 function docs_decode_outgoing_file_key_list($value): array
@@ -4653,6 +5057,7 @@ function docs_decode_outgoing_file_key_list($value): array
 function docs_collect_outgoing_file_keys(array $file): array
 {
     $candidates = [
+        $file['accessKey'] ?? '',
         $file['storedName'] ?? '',
         $file['originalName'] ?? '',
         $file['url'] ?? '',
@@ -4700,6 +5105,7 @@ function docs_get_outgoing_file_path_candidates(string $folder, array $file): ar
     $paths = [];
     $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
     if ($storedName !== '') {
+        $paths[] = docs_get_outgoing_files_root($folder, false, true) . '/' . $storedName;
         $paths[] = ensure_organization_directory($folder) . '/' . $storedName;
         $paths[] = ensure_organization_directory($folder) . '/Исходящие/' . $storedName;
     }
@@ -4726,6 +5132,39 @@ function docs_get_outgoing_file_path_candidates(string $folder, array $file): ar
     })));
 }
 
+function docs_find_private_outgoing_file_by_real_path(string $folder, string $realPath): ?array
+{
+    $folder = sanitize_folder_name($folder);
+    $targetPath = realpath($realPath);
+    if ($folder === '' || !is_string($targetPath) || $targetPath === '') {
+        return null;
+    }
+
+    foreach (docs_load_outgoing_registry($folder) as $record) {
+        if (!is_array($record) || empty($record['files']) || !is_array($record['files'])) {
+            continue;
+        }
+
+        foreach ($record['files'] as $file) {
+            if (!is_array($file) || !docs_is_outgoing_file_private($file)) {
+                continue;
+            }
+
+            foreach (docs_get_outgoing_file_path_candidates($folder, $file) as $pathCandidate) {
+                $candidateRealPath = realpath($pathCandidate);
+                if (is_string($candidateRealPath) && $candidateRealPath !== '' && hash_equals($targetPath, $candidateRealPath)) {
+                    return [
+                        'record' => $record,
+                        'file' => $file,
+                    ];
+                }
+            }
+        }
+    }
+
+    return null;
+}
+
 function docs_delete_outgoing_file_from_storage(string $folder, array $file): void
 {
     foreach (docs_get_outgoing_file_path_candidates($folder, $file) as $path) {
@@ -4735,21 +5174,77 @@ function docs_delete_outgoing_file_from_storage(string $folder, array $file): vo
     }
 }
 
-function docs_user_can_manage_outgoing_records(array $accessContext, ?array $sessionAuth = null): bool
+function docs_get_document_file_path_candidates(string $folder, array $file): array
 {
-    if (is_array($sessionAuth)) {
-        $role = docs_normalize_assignment_role((string) ($sessionAuth['role'] ?? ''));
-        if ($role === 'admin') {
-            return true;
-        }
+    $paths = [];
+    $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
+    if ($storedName !== '') {
+        $paths[] = ensure_organization_directory($folder) . '/' . $storedName;
+    }
 
-        $responsibleRole = docs_normalize_assignment_role((string) ($sessionAuth['responsibleRole'] ?? ''));
-        if ($responsibleRole === 'admin') {
-            return true;
+    $url = sanitize_text_field((string) ($file['url'] ?? ''), 500);
+    if ($url !== '') {
+        $path = parse_url($url, PHP_URL_PATH);
+        if (is_string($path) && $path !== '') {
+            $decodedPath = rawurldecode($path);
+            $marker = '/documents/' . $folder . '/';
+            $position = strpos($decodedPath, $marker);
+            if ($position !== false) {
+                $relative = substr($decodedPath, $position + strlen($marker));
+                $relative = str_replace(['../', '..\\'], '', ltrim($relative, '/\\'));
+                if ($relative !== '') {
+                    $paths[] = ensure_organization_directory($folder) . '/' . $relative;
+                }
+            }
         }
     }
 
-    return !empty($accessContext['forceAccess']);
+    return array_values(array_unique(array_filter($paths, static function ($path): bool {
+        return is_string($path) && $path !== '';
+    })));
+}
+
+function docs_delete_document_file_from_storage(string $folder, array $file): void
+{
+    foreach (docs_get_document_file_path_candidates($folder, $file) as $path) {
+        if (is_file($path)) {
+            @unlink($path);
+        }
+    }
+}
+
+function docs_resolve_unique_storage_target(string $directory, string $storedName): array
+{
+    $storedName = docs_sanitize_filename($storedName, 'attachment');
+    $target = rtrim($directory, '/\\') . '/' . $storedName;
+    $duplicateIndex = 2;
+
+    while (is_file($target)) {
+        $pathInfo = pathinfo($storedName);
+        $extension = isset($pathInfo['extension']) && $pathInfo['extension'] !== '' ? '.' . $pathInfo['extension'] : '';
+        $filename = $pathInfo['filename'] ?? $storedName;
+        $storedName = $filename . '_' . $duplicateIndex . $extension;
+        $target = rtrim($directory, '/\\') . '/' . $storedName;
+        $duplicateIndex++;
+    }
+
+    return [$storedName, $target];
+}
+
+function docs_user_can_manage_outgoing_records(array $accessContext, ?array $sessionAuth = null): bool
+{
+    if (!is_array($sessionAuth)) {
+        return false;
+    }
+
+    $role = docs_normalize_assignment_role((string) ($sessionAuth['role'] ?? ''));
+    if ($role === 'admin') {
+        return true;
+    }
+
+    $responsibleRole = docs_normalize_assignment_role((string) ($sessionAuth['responsibleRole'] ?? ''));
+
+    return $responsibleRole === 'admin';
 }
 
 function docs_load_outgoing_registry(string $folder): array
@@ -4836,6 +5331,7 @@ function docs_lock_outgoing_registry(string $folder): array
         return [null, []];
     }
 
+    rewind($handle);
     $raw = stream_get_contents($handle);
     if ($raw === false || trim($raw) === '') {
         $records = [];
@@ -4880,9 +5376,18 @@ function docs_save_outgoing_registry_locked($handle, array $records): bool
     }
 
     rewind($handle);
-    ftruncate($handle, 0);
-    fwrite($handle, $json . PHP_EOL);
-    fflush($handle);
+    if (!ftruncate($handle, 0)) {
+        return false;
+    }
+
+    $written = fwrite($handle, $json . PHP_EOL);
+    if ($written === false) {
+        return false;
+    }
+
+    if (!fflush($handle)) {
+        return false;
+    }
 
     return true;
 }
@@ -4934,12 +5439,12 @@ function docs_outgoing_number_exists(array $records, string $outgoingNumber, str
     return false;
 }
 
-function docs_prepare_outgoing_records_response(array $records): array
+function docs_prepare_outgoing_records_response(array $records, bool $canManageOutgoing = false, $currentUserKeys = '', string $folder = ''): array
 {
     $prepared = [];
     foreach ($records as $record) {
         if (is_array($record)) {
-            $prepared[] = docs_prepare_outgoing_record($record);
+            $prepared[] = docs_prepare_outgoing_record_response($record, $canManageOutgoing, $currentUserKeys, $folder);
         }
     }
 
@@ -4999,7 +5504,14 @@ function docs_outgoing_edit_lock_matches(array $lock, string $token): bool
     return hash_equals((string) ($prepared['token'] ?? ''), $token);
 }
 
-function docs_acquire_outgoing_record_edit_lock(string $folder, string $recordId, string $userLabel, string $userKey): array
+function docs_acquire_outgoing_record_edit_lock(
+    string $folder,
+    string $recordId,
+    string $userLabel,
+    string $userKey,
+    bool $canManageOutgoing = false,
+    $currentUserKeys = ''
+): array
 {
     [$handle, $records] = docs_lock_outgoing_registry($folder);
     if ($handle === null) {
@@ -5029,8 +5541,32 @@ function docs_acquire_outgoing_record_edit_lock(string $folder, string $recordId
         ];
     }
 
+    if (!docs_outgoing_record_user_can_edit($records[$recordIndex], $canManageOutgoing, $currentUserKeys)) {
+        docs_unlock_outgoing_registry($handle);
+        return [
+            'ok' => false,
+            'status' => 403,
+            'message' => 'Редактировать можно только записи, которые вы добавили.',
+            'reason' => 'outgoing_update_forbidden',
+        ];
+    }
+
     $existingLock = docs_prepare_outgoing_edit_lock($records[$recordIndex]['editLock'] ?? null);
     if (!empty($existingLock) && docs_outgoing_edit_lock_is_active($existingLock)) {
+        $normalizedExistingUserKey = mb_strtolower(trim((string) ($existingLock['userKey'] ?? '')), 'UTF-8');
+        $normalizedUserKey = mb_strtolower(trim($userKey), 'UTF-8');
+        if ($normalizedExistingUserKey !== '' && $normalizedExistingUserKey === $normalizedUserKey) {
+            $records[$recordIndex]['editLock']['expiresAt'] = time() + DOCS_OUTGOING_EDIT_LOCK_TTL;
+            docs_save_outgoing_registry_locked($handle, $records);
+            docs_unlock_outgoing_registry($handle);
+
+            return [
+                'ok' => true,
+                'token' => (string) ($existingLock['token'] ?? ''),
+                'expiresAt' => $records[$recordIndex]['editLock']['expiresAt'],
+            ];
+        }
+
         $lockedBy = sanitize_text_field((string) ($existingLock['userLabel'] ?? 'другой пользователь'), 220);
         docs_unlock_outgoing_registry($handle);
 
@@ -5185,19 +5721,26 @@ function docs_sanitize_outgoing_record_payload(array $payload, ?array $existing,
     $now = date('c');
     $base = is_array($existing) ? $existing : [];
     $isNew = empty($base['id']);
+    $outgoingNumberFields = ['registryNumber', 'registry_number', 'outgoingNumber', 'outgoing_number'];
+    $sendingDateFields = ['registrationDate', 'registration_date', 'sendingDate'];
+    $documentIndexFields = ['documentNumber', 'document_number', 'documentIndexNumber', 'document_index_number'];
+    $addresseeFields = ['addressee', 'correspondent', 'sender', 'recipient', 'adresat', 'address'];
+    $summaryFields = ['summary', 'content', 'description'];
+    $executorFields = ['executor'];
+    $noteFields = ['note'];
 
     $record = [
         'id' => $isNew ? docs_create_outgoing_record_id() : sanitize_text_field((string) $base['id'], 160),
         'source' => 'outgoing',
-        'outgoingNumber' => docs_payload_first_text($payload, ['registryNumber', 'registry_number', 'outgoingNumber'], 160),
-        'sendingDate' => docs_payload_first_date($payload, ['registrationDate', 'registration_date', 'sendingDate']),
-        'documentIndexNumber' => docs_payload_first_text($payload, ['documentNumber', 'document_number', 'documentIndexNumber'], 220),
+        'outgoingNumber' => docs_payload_first_scalar_text($payload, $outgoingNumberFields, 160),
+        'sendingDate' => docs_payload_first_date($payload, $sendingDateFields),
+        'documentIndexNumber' => docs_payload_first_scalar_text($payload, $documentIndexFields, 220),
         'documentType' => 'Исходящий',
-        'addressee' => docs_payload_first_text($payload, ['correspondent', 'sender', 'addressee'], 260),
-        'summary' => docs_payload_first_text($payload, ['summary'], 1000),
+        'addressee' => docs_payload_first_scalar_text($payload, $addresseeFields, 260),
+        'summary' => docs_payload_first_scalar_text($payload, $summaryFields, 1000),
         'files' => docs_prepare_outgoing_files_payload($base['files'] ?? []),
-        'executor' => docs_payload_first_text($payload, ['executor'], 220),
-        'note' => docs_payload_first_text($payload, ['note'], 500),
+        'executor' => docs_payload_first_scalar_text($payload, $executorFields, 220),
+        'note' => docs_payload_first_scalar_text($payload, $noteFields, 500),
         'registeredBy' => $base['registeredBy'] ?? $authorLabel,
         'registeredAt' => $base['registeredAt'] ?? $now,
         'createdBy' => $base['createdBy'] ?? $authorLabel,
@@ -5208,6 +5751,27 @@ function docs_sanitize_outgoing_record_payload(array $payload, ?array $existing,
         'updatedAt' => $now,
         'deleted' => false,
     ];
+
+    if (!$isNew) {
+        $fallbackFields = [
+            'outgoingNumber' => [$outgoingNumberFields, 160],
+            'sendingDate' => [$sendingDateFields, 0],
+            'documentIndexNumber' => [$documentIndexFields, 220],
+            'addressee' => [$addresseeFields, 260],
+            'summary' => [$summaryFields, 1000],
+            'executor' => [$executorFields, 220],
+            'note' => [$noteFields, 500],
+        ];
+
+        foreach ($fallbackFields as $recordField => $config) {
+            [$fields, $maxLength] = $config;
+            if (!docs_payload_has_any_field($payload, $fields) && array_key_exists($recordField, $base)) {
+                $record[$recordField] = $recordField === 'sendingDate'
+                    ? sanitize_date_field((string) $base[$recordField])
+                    : sanitize_text_field((string) $base[$recordField], (int) $maxLength);
+            }
+        }
+    }
 
     return docs_prepare_outgoing_record($record);
 }
@@ -5229,11 +5793,34 @@ function docs_validate_outgoing_record(array $record): ?string
     return null;
 }
 
-function docs_get_outgoing_files_root(string $folder, bool $create = true): string
+function docs_outgoing_validation_reason(string $message): string
+{
+    if (strpos($message, 'Исходящий номер') !== false) {
+        return 'outgoing_number_required';
+    }
+
+    if (strpos($message, 'Дата регистрации') !== false) {
+        return 'outgoing_sending_date_required';
+    }
+
+    if (strpos($message, 'Адресат') !== false) {
+        return 'outgoing_addressee_required';
+    }
+
+    return 'outgoing_validation_failed';
+}
+
+function docs_get_outgoing_files_root(string $folder, bool $create = true, bool $private = false): string
 {
     $dir = ensure_organization_directory($folder);
+    if ($private) {
+        $dir .= '/.outgoing-private';
+    }
     if ($create && !is_dir($dir)) {
         @mkdir($dir, 0775, true);
+    }
+    if ($private && $create) {
+        docs_ensure_private_outgoing_storage_guard($dir);
     }
 
     return $dir;
@@ -5254,7 +5841,7 @@ function docs_normalize_outgoing_file_name(string $originalName, array $record, 
     ], $sequence);
 }
 
-function docs_apply_outgoing_file_mutation(array &$record, string $folder, array $payload): void
+function docs_apply_outgoing_file_mutation(array &$record, string $folder, array $payload, ?array &$filesPendingDeletion = null): void
 {
     if (!isset($record['files']) || !is_array($record['files'])) {
         $record['files'] = [];
@@ -5282,7 +5869,11 @@ function docs_apply_outgoing_file_mutation(array &$record, string $folder, array
         }
 
         if ($shouldDelete) {
-            docs_delete_outgoing_file_from_storage($folder, $file);
+            if (is_array($filesPendingDeletion)) {
+                $filesPendingDeletion[] = $file;
+            } else {
+                docs_delete_outgoing_file_from_storage($folder, $file);
+            }
             continue;
         }
 
@@ -5292,7 +5883,7 @@ function docs_apply_outgoing_file_mutation(array &$record, string $folder, array
     $record['files'] = $nextFiles;
 }
 
-function docs_attach_uploaded_outgoing_files_to_record(array &$record, string $folder, string $errorPrefix): void
+function docs_attach_uploaded_outgoing_files_to_record(array &$record, string $folder, string $errorPrefix, string $authorLabel = '', string $authorKey = '', bool $privateFiles = false): void
 {
     if (empty($_FILES['attachments']) || !isset($_FILES['attachments']['name'])) {
         return;
@@ -5302,7 +5893,13 @@ function docs_attach_uploaded_outgoing_files_to_record(array &$record, string $f
         $record['files'] = [];
     }
 
-    $dir = docs_get_outgoing_files_root($folder);
+    if ($privateFiles && docs_normalize_outgoing_user_key($authorKey) === '') {
+        respond_error('Приватные файлы нельзя сохранить без идентификатора пользователя.', 403, [
+            'reason' => 'outgoing_private_owner_required',
+        ]);
+    }
+
+    $dir = docs_get_outgoing_files_root($folder, true, $privateFiles);
     $names = $_FILES['attachments']['name'];
     $tmpNames = $_FILES['attachments']['tmp_name'];
     $errors = $_FILES['attachments']['error'];
@@ -5318,7 +5915,7 @@ function docs_attach_uploaded_outgoing_files_to_record(array &$record, string $f
         respond_error($message, $status, $details);
     };
 
-    $storeFile = static function (string $originalName, string $tmpPath, int $size) use (&$record, $folder, $dir, &$createdUploadTargets, $failUpload, $errorPrefix): void {
+    $storeFile = static function (string $originalName, string $tmpPath, int $size) use (&$record, $folder, $dir, &$createdUploadTargets, $failUpload, $errorPrefix, $authorLabel, $authorKey, $privateFiles): void {
         $validationError = docs_validate_uploaded_attachment($originalName, $size);
         if ($validationError !== null) {
             $failUpload($errorPrefix . ': ' . $validationError, 422, ['reason' => 'invalid_attachment']);
@@ -5332,17 +5929,10 @@ function docs_attach_uploaded_outgoing_files_to_record(array &$record, string $f
             );
         }
 
-        $storedName = docs_normalize_outgoing_file_name($originalName, $record, count($record['files']) + 1, $folder);
-        $target = $dir . '/' . $storedName;
-        $duplicateIndex = 2;
-        while (is_file($target)) {
-            $pathInfo = pathinfo($storedName);
-            $extension = isset($pathInfo['extension']) && $pathInfo['extension'] !== '' ? '.' . $pathInfo['extension'] : '';
-            $filename = $pathInfo['filename'] ?? $storedName;
-            $storedName = $filename . '_' . $duplicateIndex . $extension;
-            $target = $dir . '/' . $storedName;
-            $duplicateIndex++;
-        }
+        [$storedName, $target] = docs_resolve_unique_storage_target(
+            $dir,
+            docs_normalize_outgoing_file_name($originalName, $record, count($record['files']) + 1, $folder)
+        );
 
         if (!move_uploaded_file($tmpPath, $target)) {
             $failUpload(
@@ -5353,12 +5943,21 @@ function docs_attach_uploaded_outgoing_files_to_record(array &$record, string $f
         }
 
         $createdUploadTargets[] = $target;
+        $visibility = $privateFiles ? 'private' : 'public';
+        $recordId = sanitize_text_field((string) ($record['id'] ?? ''), 160);
+        $accessKey = $privateFiles ? docs_create_outgoing_private_file_access_key() : '';
         $record['files'][] = [
             'originalName' => $originalName,
             'storedName' => $storedName,
             'size' => $size > 0 ? $size : (int) (filesize($target) ?: 0),
             'uploadedAt' => date('c'),
-            'url' => docs_build_outgoing_file_public_path($folder, $storedName),
+            'url' => $privateFiles && $recordId !== ''
+                ? docs_build_private_outgoing_file_url($folder, $recordId, $accessKey)
+                : docs_build_outgoing_file_public_path($folder, $storedName),
+            'accessKey' => $accessKey,
+            'visibility' => $visibility,
+            'uploadedBy' => $authorLabel !== '' ? $authorLabel : sanitize_text_field((string) ($record['updatedBy'] ?? ($record['createdBy'] ?? '')), 220),
+            'uploadedByKey' => $privateFiles ? $authorKey : ($authorKey !== '' ? $authorKey : sanitize_text_field((string) ($record['updatedByKey'] ?? ($record['createdByKey'] ?? '')), 200)),
         ];
     };
 
@@ -5413,6 +6012,707 @@ function docs_delete_outgoing_record_files(string $folder, array $record): void
         }
         docs_delete_outgoing_file_from_storage($folder, $file);
     }
+}
+
+function docs_user_can_manage_orders(array $accessContext, ?array $sessionAuth = null): bool
+{
+    return docs_user_can_manage_outgoing_records($accessContext, $sessionAuth);
+}
+
+function docs_create_order_record_id(): string
+{
+    try {
+        return 'order_' . bin2hex(random_bytes(8));
+    } catch (Throwable $exception) {
+        return 'order_' . str_replace('.', '', uniqid('', true));
+    }
+}
+
+function docs_build_order_file_url(string $folder, string $recordId, string $fileKey): string
+{
+    $params = [
+        'action' => 'orders_file',
+        'organization' => $folder,
+        'record_id' => $recordId,
+        'file' => $fileKey,
+    ];
+
+    return '/docs.php?' . http_build_query($params, '', '&', PHP_QUERY_RFC3986);
+}
+
+function docs_prepare_order_files_payload($value): array
+{
+    if (!is_array($value)) {
+        return [];
+    }
+
+    $files = [];
+    foreach ($value as $file) {
+        if (!is_array($file)) {
+            continue;
+        }
+
+        $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
+        $url = sanitize_text_field((string) ($file['url'] ?? ''), 500);
+        if ($storedName === '' && $url === '') {
+            continue;
+        }
+
+        $files[] = array_filter([
+            'originalName' => sanitize_text_field((string) ($file['originalName'] ?? ($file['name'] ?? $storedName)), 255),
+            'storedName' => $storedName,
+            'size' => isset($file['size']) ? max(0, (int) $file['size']) : 0,
+            'uploadedAt' => docs_normalize_datetime_iso(isset($file['uploadedAt']) ? (string) $file['uploadedAt'] : null) ?? '',
+            'url' => $url,
+            'uploadedBy' => sanitize_text_field((string) ($file['uploadedBy'] ?? ''), 220),
+            'uploadedByKey' => sanitize_text_field((string) ($file['uploadedByKey'] ?? ''), 200),
+        ], static function ($item) {
+            return $item !== '' && $item !== 0;
+        });
+    }
+
+    return $files;
+}
+
+function docs_prepare_order_record(array $record, bool $includeInternal = false): array
+{
+    $files = docs_prepare_order_files_payload($record['files'] ?? []);
+    $fileNames = [];
+    foreach ($files as $file) {
+        $fileName = sanitize_text_field((string) ($file['originalName'] ?? ($file['storedName'] ?? '')), 220);
+        if ($fileName !== '') {
+            $fileNames[] = $fileName;
+        }
+    }
+
+    $prepared = [
+        'id' => sanitize_text_field((string) ($record['id'] ?? ''), 160),
+        'source' => 'orders',
+        'orderNumber' => sanitize_text_field((string) ($record['orderNumber'] ?? ''), 160),
+        'orderDate' => sanitize_date_field(isset($record['orderDate']) ? (string) $record['orderDate'] : ''),
+        'summary' => sanitize_text_field((string) ($record['summary'] ?? ''), 1000),
+        'executor' => sanitize_text_field((string) ($record['executor'] ?? ''), 220),
+        'files' => $files,
+        'filesLabel' => !empty($fileNames)
+            ? sanitize_text_field(implode(', ', $fileNames), 500)
+            : sanitize_text_field((string) ($record['filesLabel'] ?? ''), 500),
+        'filesCount' => count($files),
+        'createdBy' => sanitize_text_field((string) ($record['createdBy'] ?? ''), 220),
+        'createdByKey' => sanitize_text_field((string) ($record['createdByKey'] ?? ''), 200),
+        'createdAt' => docs_normalize_datetime_iso(isset($record['createdAt']) ? (string) $record['createdAt'] : null) ?? '',
+        'updatedBy' => sanitize_text_field((string) ($record['updatedBy'] ?? ''), 220),
+        'updatedByKey' => sanitize_text_field((string) ($record['updatedByKey'] ?? ''), 200),
+        'updatedAt' => docs_normalize_datetime_iso(isset($record['updatedAt']) ? (string) $record['updatedAt'] : null) ?? '',
+        'deleted' => !empty($record['deleted']),
+    ];
+
+    if ($prepared['id'] === '') {
+        $prepared['id'] = docs_create_order_record_id();
+    }
+
+    if ($includeInternal && isset($record['editLock']) && is_array($record['editLock'])) {
+        $prepared['editLock'] = $record['editLock'];
+    }
+
+    return $prepared;
+}
+
+function docs_prepare_order_record_response(array $record, bool $canManageOrders, string $folder = ''): array
+{
+    $prepared = docs_prepare_order_record($record);
+    $recordId = sanitize_text_field((string) ($prepared['id'] ?? ''), 160);
+    $visibleFiles = [];
+
+    foreach (($prepared['files'] ?? []) as $file) {
+        if (!is_array($file)) {
+            continue;
+        }
+
+        $fileKey = sanitize_text_field((string) ($file['storedName'] ?? ($file['originalName'] ?? '')), 255);
+        if ($folder !== '' && $recordId !== '' && $fileKey !== '') {
+            $file['url'] = docs_build_order_file_url($folder, $recordId, $fileKey);
+        }
+        $file['visibility'] = 'public';
+        $visibleFiles[] = $file;
+    }
+
+    $prepared['files'] = $visibleFiles;
+    $prepared['filesCount'] = count($visibleFiles);
+    $fileNames = [];
+    foreach ($visibleFiles as $file) {
+        $fileName = sanitize_text_field((string) ($file['originalName'] ?? ($file['storedName'] ?? '')), 220);
+        if ($fileName !== '') {
+            $fileNames[] = $fileName;
+        }
+    }
+    $prepared['filesLabel'] = !empty($fileNames) ? sanitize_text_field(implode(', ', $fileNames), 500) : '';
+    $prepared['canEdit'] = $canManageOrders;
+    $prepared['canAttach'] = $canManageOrders;
+    $prepared['canDelete'] = $canManageOrders;
+
+    return $prepared;
+}
+
+function docs_prepare_order_records_response(array $records, bool $canManageOrders, string $folder = ''): array
+{
+    $prepared = [];
+    foreach ($records as $record) {
+        if (is_array($record)) {
+            $prepared[] = docs_prepare_order_record_response($record, $canManageOrders, $folder);
+        }
+    }
+
+    return $prepared;
+}
+
+function docs_load_orders_registry(string $folder): array
+{
+    $file = get_orders_registry_path($folder);
+    if (!is_file($file)) {
+        return [];
+    }
+
+    $raw = @file_get_contents($file);
+    if (!is_string($raw) || trim($raw) === '') {
+        return [];
+    }
+
+    $decoded = json_decode($raw, true);
+    if (!is_array($decoded)) {
+        log_docs_event('Orders registry decode error', [
+            'folder' => $folder,
+            'path' => $file,
+            'jsonError' => json_last_error_msg(),
+        ]);
+        return [];
+    }
+
+    $records = [];
+    foreach ($decoded as $record) {
+        if (is_array($record)) {
+            $records[] = docs_prepare_order_record($record);
+        }
+    }
+
+    return $records;
+}
+
+function docs_encode_orders_registry_records(array $records): ?string
+{
+    $prepared = [];
+    foreach ($records as $record) {
+        if (is_array($record)) {
+            $prepared[] = docs_prepare_order_record($record, true);
+        }
+    }
+
+    $json = json_encode(array_values($prepared), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+    return $json === false ? null : $json;
+}
+
+function docs_lock_orders_registry(string $folder): array
+{
+    $dir = ensure_organization_directory($folder);
+    $file = $dir . '/' . ORDERS_REGISTRY_FILENAME;
+    $handle = @fopen($file, 'c+');
+    if ($handle === false) {
+        log_docs_event('Orders registry file open failed', [
+            'file' => $file,
+            'folder' => $folder,
+        ]);
+        return [null, []];
+    }
+
+    if (!flock($handle, LOCK_EX)) {
+        log_docs_event('Orders registry file lock failed', [
+            'file' => $file,
+            'folder' => $folder,
+        ]);
+        fclose($handle);
+        return [null, []];
+    }
+
+    rewind($handle);
+    $raw = stream_get_contents($handle);
+    if ($raw === false || trim($raw) === '') {
+        $records = [];
+    } else {
+        $decoded = json_decode($raw, true);
+        if (!is_array($decoded)) {
+            log_docs_event('Orders registry decode error (locked)', [
+                'file' => $file,
+                'folder' => $folder,
+                'jsonError' => json_last_error_msg(),
+            ]);
+            $records = [];
+        } else {
+            $records = [];
+            foreach ($decoded as $record) {
+                if (is_array($record)) {
+                    $records[] = docs_prepare_order_record($record, true);
+                }
+            }
+        }
+    }
+
+    register_shutdown_function(function () use ($handle) {
+        if (is_resource($handle)) {
+            flock($handle, LOCK_UN);
+            fclose($handle);
+        }
+    });
+
+    return [$handle, $records];
+}
+
+function docs_save_orders_registry_locked($handle, array $records): bool
+{
+    if (!is_resource($handle)) {
+        return false;
+    }
+
+    $json = docs_encode_orders_registry_records($records);
+    if ($json === null) {
+        return false;
+    }
+
+    rewind($handle);
+    if (!ftruncate($handle, 0)) {
+        return false;
+    }
+
+    $written = fwrite($handle, $json . PHP_EOL);
+    if ($written === false) {
+        return false;
+    }
+
+    return fflush($handle);
+}
+
+function docs_unlock_orders_registry($handle): void
+{
+    if (!is_resource($handle)) {
+        return;
+    }
+
+    flock($handle, LOCK_UN);
+    fclose($handle);
+}
+
+function docs_normalize_order_number_for_unique(string $value): string
+{
+    $normalized = sanitize_text_field($value, 160);
+    $normalized = preg_replace('/\s+/u', ' ', trim($normalized));
+    if (!is_string($normalized) || $normalized === '') {
+        return '';
+    }
+
+    return function_exists('mb_strtolower') ? mb_strtolower($normalized, 'UTF-8') : strtolower($normalized);
+}
+
+function docs_order_number_exists(array $records, string $orderNumber, string $excludeId = ''): bool
+{
+    $normalizedNumber = docs_normalize_order_number_for_unique($orderNumber);
+    if ($normalizedNumber === '') {
+        return false;
+    }
+
+    foreach ($records as $record) {
+        if (!is_array($record)) {
+            continue;
+        }
+
+        $recordId = sanitize_text_field((string) ($record['id'] ?? ''), 160);
+        if ($excludeId !== '' && $recordId === $excludeId) {
+            continue;
+        }
+
+        $candidate = docs_normalize_order_number_for_unique((string) ($record['orderNumber'] ?? ''));
+        if ($candidate !== '' && $candidate === $normalizedNumber) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function docs_build_order_number_sort_key(string $value): array
+{
+    $normalized = docs_normalize_order_number_for_unique($value);
+    if ($normalized === '') {
+        return [
+            'hasNumber' => false,
+            'base' => 0,
+            'suffix' => 0,
+            'text' => '',
+        ];
+    }
+
+    if (preg_match('/^(\d+)(?:\D+(\d+))?/u', $normalized, $matches) === 1) {
+        return [
+            'hasNumber' => true,
+            'base' => (int) $matches[1],
+            'suffix' => isset($matches[2]) && $matches[2] !== '' ? (int) $matches[2] : 0,
+            'text' => $normalized,
+        ];
+    }
+
+    return [
+        'hasNumber' => false,
+        'base' => 0,
+        'suffix' => 0,
+        'text' => $normalized,
+    ];
+}
+
+function docs_compare_order_numbers_desc(string $left, string $right): int
+{
+    $leftKey = docs_build_order_number_sort_key($left);
+    $rightKey = docs_build_order_number_sort_key($right);
+
+    if ($leftKey['hasNumber'] !== $rightKey['hasNumber']) {
+        return $leftKey['hasNumber'] ? -1 : 1;
+    }
+
+    if ($leftKey['hasNumber'] && $rightKey['hasNumber']) {
+        $baseCompare = $rightKey['base'] <=> $leftKey['base'];
+        if ($baseCompare !== 0) {
+            return $baseCompare;
+        }
+        $suffixCompare = $rightKey['suffix'] <=> $leftKey['suffix'];
+        if ($suffixCompare !== 0) {
+            return $suffixCompare;
+        }
+    }
+
+    return strcmp((string) $rightKey['text'], (string) $leftKey['text']);
+}
+
+function docs_sort_order_records(array $records): array
+{
+    usort($records, static function (array $a, array $b): int {
+        $dateCompare = strcmp((string) ($b['orderDate'] ?? ''), (string) ($a['orderDate'] ?? ''));
+        if ($dateCompare !== 0) {
+            return $dateCompare;
+        }
+
+        return docs_compare_order_numbers_desc(
+            (string) ($a['orderNumber'] ?? ''),
+            (string) ($b['orderNumber'] ?? '')
+        );
+    });
+
+    return $records;
+}
+
+function docs_sanitize_order_record_payload(array $payload, ?array $existing, string $authorLabel, string $authorKey): array
+{
+    $now = date('c');
+    $base = is_array($existing) ? $existing : [];
+    $isNew = empty($base['id']);
+    $orderNumberFields = ['orderNumber', 'order_number', 'registryNumber', 'number'];
+    $orderDateFields = ['orderDate', 'order_date', 'registrationDate', 'date'];
+    $summaryFields = ['summary', 'content', 'description'];
+    $executorFields = ['executor'];
+
+    $record = [
+        'id' => $isNew ? docs_create_order_record_id() : sanitize_text_field((string) $base['id'], 160),
+        'source' => 'orders',
+        'orderNumber' => docs_payload_first_scalar_text($payload, $orderNumberFields, 160),
+        'orderDate' => docs_payload_first_date($payload, $orderDateFields),
+        'summary' => docs_payload_first_scalar_text($payload, $summaryFields, 1000),
+        'executor' => docs_payload_first_scalar_text($payload, $executorFields, 220),
+        'files' => docs_prepare_order_files_payload($base['files'] ?? []),
+        'createdBy' => $base['createdBy'] ?? $authorLabel,
+        'createdByKey' => $base['createdByKey'] ?? $authorKey,
+        'createdAt' => $base['createdAt'] ?? $now,
+        'updatedBy' => $authorLabel,
+        'updatedByKey' => $authorKey,
+        'updatedAt' => $now,
+        'deleted' => false,
+    ];
+
+    if (!$isNew) {
+        $fallbackFields = [
+            'orderNumber' => [$orderNumberFields, 160],
+            'orderDate' => [$orderDateFields, 0],
+            'summary' => [$summaryFields, 1000],
+            'executor' => [$executorFields, 220],
+        ];
+
+        foreach ($fallbackFields as $recordField => $config) {
+            [$fields, $maxLength] = $config;
+            if (!docs_payload_has_any_field($payload, $fields) && array_key_exists($recordField, $base)) {
+                $record[$recordField] = $recordField === 'orderDate'
+                    ? sanitize_date_field((string) $base[$recordField])
+                    : sanitize_text_field((string) $base[$recordField], (int) $maxLength);
+            }
+        }
+    }
+
+    return docs_prepare_order_record($record);
+}
+
+function docs_validate_order_record(array $record): ?string
+{
+    if (sanitize_text_field((string) ($record['orderNumber'] ?? ''), 160) === '') {
+        return 'Поле «№ приказа» обязательно для заполнения.';
+    }
+
+    if (sanitize_date_field((string) ($record['orderDate'] ?? '')) === '') {
+        return 'Поле «Дата» обязательно для заполнения.';
+    }
+
+    if (sanitize_text_field((string) ($record['summary'] ?? ''), 1000) === '') {
+        return 'Поле «Краткое содержание» обязательно для заполнения.';
+    }
+
+    return null;
+}
+
+function docs_order_validation_reason(string $message): string
+{
+    if (strpos($message, '№ приказа') !== false) {
+        return 'order_number_required';
+    }
+
+    if (strpos($message, 'Дата') !== false) {
+        return 'order_date_required';
+    }
+
+    if (strpos($message, 'Краткое содержание') !== false) {
+        return 'order_summary_required';
+    }
+
+    return 'order_validation_failed';
+}
+
+function docs_get_order_files_root(string $folder, bool $create = true): string
+{
+    $dir = ensure_organization_directory($folder) . '/Приказы';
+    if ($create && !is_dir($dir)) {
+        @mkdir($dir, 0775, true);
+    }
+
+    return $dir;
+}
+
+function docs_build_order_file_public_path(string $folder, string $storedName): string
+{
+    return build_public_path($folder, 'Приказы/' . $storedName);
+}
+
+function docs_normalize_order_file_name(string $originalName, array $record, int $sequence, string $folder = ''): string
+{
+    return normalize_file_name($originalName, [
+        'organization' => (string) ($record['organization'] ?? $folder),
+        'registryNumber' => (string) ($record['orderNumber'] ?? $record['id'] ?? 'order'),
+        'registrationDate' => (string) ($record['orderDate'] ?? ''),
+        'createdAt' => (string) ($record['createdAt'] ?? ''),
+    ], $sequence);
+}
+
+function docs_get_order_file_path_candidates(string $folder, array $file): array
+{
+    $paths = [];
+    $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
+    if ($storedName !== '') {
+        $paths[] = docs_get_order_files_root($folder, false) . '/' . $storedName;
+        $paths[] = ensure_organization_directory($folder) . '/Приказы/' . $storedName;
+    }
+
+    $url = sanitize_text_field((string) ($file['url'] ?? ''), 500);
+    if ($url !== '') {
+        $path = parse_url($url, PHP_URL_PATH);
+        if (is_string($path) && $path !== '') {
+            $decodedPath = rawurldecode($path);
+            $marker = '/documents/' . $folder . '/';
+            $position = strpos($decodedPath, $marker);
+            if ($position !== false) {
+                $relative = substr($decodedPath, $position + strlen($marker));
+                $relative = str_replace(['../', '..\\'], '', ltrim($relative, '/\\'));
+                if ($relative !== '') {
+                    $paths[] = ensure_organization_directory($folder) . '/' . $relative;
+                }
+            }
+        }
+    }
+
+    return array_values(array_unique(array_filter($paths, static function ($path): bool {
+        return is_string($path) && $path !== '';
+    })));
+}
+
+function docs_delete_order_file_from_storage(string $folder, array $file): void
+{
+    foreach (docs_get_order_file_path_candidates($folder, $file) as $path) {
+        if (is_file($path)) {
+            @unlink($path);
+        }
+    }
+}
+
+function docs_delete_order_record_files(string $folder, array $record): void
+{
+    if (empty($record['files']) || !is_array($record['files'])) {
+        return;
+    }
+
+    foreach ($record['files'] as $file) {
+        if (is_array($file)) {
+            docs_delete_order_file_from_storage($folder, $file);
+        }
+    }
+}
+
+function docs_apply_order_file_mutation(array &$record, string $folder, array $payload, ?array &$filesPendingDeletion = null): void
+{
+    if (!isset($record['files']) || !is_array($record['files'])) {
+        $record['files'] = [];
+    }
+
+    $deleteKeys = docs_decode_outgoing_file_key_list($payload['filesToDelete'] ?? []);
+    $hasRemainingPayload = array_key_exists('filesRemaining', $payload);
+    $remainingKeys = docs_decode_outgoing_file_key_list($payload['filesRemaining'] ?? []);
+    if (empty($deleteKeys) && !$hasRemainingPayload) {
+        return;
+    }
+
+    $deleteLookup = array_fill_keys($deleteKeys, true);
+    $remainingLookup = array_fill_keys($remainingKeys, true);
+    $nextFiles = [];
+
+    foreach ($record['files'] as $file) {
+        if (!is_array($file)) {
+            continue;
+        }
+
+        $shouldDelete = docs_outgoing_file_matches_keys($file, $deleteLookup);
+        if ($hasRemainingPayload && !docs_outgoing_file_matches_keys($file, $remainingLookup)) {
+            $shouldDelete = true;
+        }
+
+        if ($shouldDelete) {
+            if (is_array($filesPendingDeletion)) {
+                $filesPendingDeletion[] = $file;
+            } else {
+                docs_delete_order_file_from_storage($folder, $file);
+            }
+            continue;
+        }
+
+        $nextFiles[] = $file;
+    }
+
+    $record['files'] = $nextFiles;
+}
+
+function docs_attach_uploaded_order_files_to_record(array &$record, string $folder, string $errorPrefix, string $authorLabel = '', string $authorKey = ''): void
+{
+    if (empty($_FILES['attachments']) || !isset($_FILES['attachments']['name'])) {
+        return;
+    }
+
+    if (!isset($record['files']) || !is_array($record['files'])) {
+        $record['files'] = [];
+    }
+
+    $dir = docs_get_order_files_root($folder, true);
+    $names = $_FILES['attachments']['name'];
+    $tmpNames = $_FILES['attachments']['tmp_name'];
+    $errors = $_FILES['attachments']['error'];
+    $sizes = $_FILES['attachments']['size'];
+    $createdUploadTargets = [];
+
+    $failUpload = static function (string $message, int $status = 500, array $details = []) use (&$createdUploadTargets): void {
+        foreach ($createdUploadTargets as $createdUploadTarget) {
+            if (is_string($createdUploadTarget) && $createdUploadTarget !== '' && is_file($createdUploadTarget)) {
+                @unlink($createdUploadTarget);
+            }
+        }
+        respond_error($message, $status, $details);
+    };
+
+    $storeFile = static function (string $originalName, string $tmpPath, int $size) use (&$record, $folder, $dir, &$createdUploadTargets, $failUpload, $errorPrefix, $authorLabel, $authorKey): void {
+        $validationError = docs_validate_uploaded_attachment($originalName, $size);
+        if ($validationError !== null) {
+            $failUpload($errorPrefix . ': ' . $validationError, 422, ['reason' => 'invalid_attachment']);
+        }
+
+        if (!is_uploaded_file($tmpPath)) {
+            $failUpload(
+                $errorPrefix . ': сервер не получил файл «' . $originalName . '». Повторите сохранение.',
+                500,
+                ['reason' => 'upload_tmp_missing']
+            );
+        }
+
+        [$storedName, $target] = docs_resolve_unique_storage_target(
+            $dir,
+            docs_normalize_order_file_name($originalName, $record, count($record['files']) + 1, $folder)
+        );
+
+        if (!move_uploaded_file($tmpPath, $target)) {
+            $failUpload(
+                $errorPrefix . ': не удалось сохранить файл «' . $originalName . '» в хранилище.',
+                500,
+                ['reason' => 'upload_move_failed']
+            );
+        }
+
+        $createdUploadTargets[] = $target;
+        $recordId = sanitize_text_field((string) ($record['id'] ?? ''), 160);
+        $record['files'][] = [
+            'originalName' => $originalName,
+            'storedName' => $storedName,
+            'size' => $size > 0 ? $size : (int) (filesize($target) ?: 0),
+            'uploadedAt' => date('c'),
+            'url' => $recordId !== ''
+                ? docs_build_order_file_url($folder, $recordId, $storedName)
+                : docs_build_order_file_public_path($folder, $storedName),
+            'uploadedBy' => $authorLabel !== '' ? $authorLabel : sanitize_text_field((string) ($record['updatedBy'] ?? ($record['createdBy'] ?? '')), 220),
+            'uploadedByKey' => $authorKey !== '' ? $authorKey : sanitize_text_field((string) ($record['updatedByKey'] ?? ($record['createdByKey'] ?? '')), 200),
+        ];
+    };
+
+    if (is_array($names)) {
+        $count = count($names);
+        for ($i = 0; $i < $count; $i++) {
+            $uploadError = isset($errors[$i]) ? (int) $errors[$i] : UPLOAD_ERR_NO_FILE;
+            $uploadName = isset($names[$i]) ? docs_normalize_uploaded_filename((string) $names[$i]) : 'Файл';
+            if ($uploadError !== UPLOAD_ERR_OK) {
+                if ($uploadError === UPLOAD_ERR_NO_FILE && trim((string) ($names[$i] ?? '')) === '') {
+                    continue;
+                }
+                $failUpload(
+                    $errorPrefix . ': не удалось загрузить файл «' . $uploadName . '». Повторите сохранение.',
+                    500,
+                    ['reason' => 'upload_error', 'uploadError' => $uploadError]
+                );
+            }
+
+            $storeFile($uploadName, (string) ($tmpNames[$i] ?? ''), (int) ($sizes[$i] ?? 0));
+        }
+        return;
+    }
+
+    $uploadError = (int) $errors;
+    $uploadName = is_string($names) && trim($names) !== ''
+        ? docs_normalize_uploaded_filename($names)
+        : 'Файл';
+    if ($uploadError === UPLOAD_ERR_NO_FILE && (!is_string($names) || trim($names) === '')) {
+        return;
+    }
+    if ($uploadError !== UPLOAD_ERR_OK) {
+        $failUpload(
+            $errorPrefix . ': не удалось загрузить файл «' . $uploadName . '». Повторите сохранение.',
+            500,
+            ['reason' => 'upload_error', 'uploadError' => $uploadError]
+        );
+    }
+
+    $storeFile($uploadName, (string) $tmpNames, (int) $sizes);
 }
 
 function docs_get_organization_template_filename(string $folder): string
@@ -5517,6 +6817,64 @@ function docs_resolve_current_user_key(array $requestContext, ?array $sessionAut
     }
 
     return '';
+}
+
+function docs_resolve_outgoing_private_user_key(array $requestContext, ?array $sessionAuth = null): string
+{
+    if (is_array($sessionAuth)) {
+        $sessionCandidates = [
+            ['login', $sessionAuth['login'] ?? null],
+            ['id', $sessionAuth['telegramId'] ?? ($sessionAuth['telegram'] ?? ($sessionAuth['chatId'] ?? null))],
+            ['name', $sessionAuth['fullName'] ?? null],
+        ];
+
+        foreach ($sessionCandidates as [$prefix, $value]) {
+            if ($value === null) {
+                continue;
+            }
+            $normalized = trim((string) $value);
+            if ($normalized !== '') {
+                return $prefix . ':' . mb_strtolower($normalized, 'UTF-8');
+            }
+        }
+    }
+
+    return docs_resolve_current_user_key($requestContext, null);
+}
+
+function docs_resolve_outgoing_private_user_keys(array $requestContext, ?array $sessionAuth = null): array
+{
+    $keys = [];
+    $pushKey = static function (string $prefix, $value) use (&$keys): void {
+        if ($value === null) {
+            return;
+        }
+        $normalized = trim((string) $value);
+        if ($normalized !== '') {
+            $keys[] = $prefix . ':' . mb_strtolower($normalized, 'UTF-8');
+        }
+    };
+
+    if (is_array($sessionAuth)) {
+        $pushKey('login', $sessionAuth['login'] ?? null);
+        $pushKey('id', $sessionAuth['telegramId'] ?? null);
+        $pushKey('id', $sessionAuth['telegram'] ?? null);
+        $pushKey('id', $sessionAuth['chatId'] ?? null);
+        $pushKey('name', $sessionAuth['fullName'] ?? null);
+    }
+
+    $user = isset($requestContext['user']) && is_array($requestContext['user']) ? $requestContext['user'] : [];
+    $pushKey('id', $user['id'] ?? ($requestContext['primaryId'] ?? null));
+    $pushKey('username', $user['username'] ?? null);
+    $pushKey('name', $user['fullName'] ?? null);
+    $pushKey('login', $user['login'] ?? null);
+
+    $primaryKey = docs_resolve_outgoing_private_user_key($requestContext, $sessionAuth);
+    if ($primaryKey !== '') {
+        $keys[] = $primaryKey;
+    }
+
+    return docs_normalize_outgoing_user_keys($keys);
 }
 
 function docs_resolve_site_user_identity_for_responses(string $folder, array $requestContext, ?array $sessionAuth = null): array
@@ -6837,6 +8195,7 @@ function docs_lock_registry(string $folder): array
         return [null, []];
     }
 
+    rewind($handle);
     $raw = stream_get_contents($handle);
     if ($raw === false) {
         log_docs_event('Registry file read failed (locked)', [
@@ -6870,17 +8229,32 @@ function docs_lock_registry(string $folder): array
     return [$handle, $records];
 }
 
-function docs_save_registry_locked($handle, array $records): void
+function docs_save_registry_locked($handle, array $records): bool
 {
     if (!is_resource($handle)) {
-        return;
+        return false;
     }
 
     $json = json_encode(array_values($records), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if ($json === false) {
+        return false;
+    }
+
     rewind($handle);
-    ftruncate($handle, 0);
-    fwrite($handle, $json);
-    fflush($handle);
+    if (!ftruncate($handle, 0)) {
+        return false;
+    }
+
+    $written = fwrite($handle, $json);
+    if ($written === false) {
+        return false;
+    }
+
+    if (!fflush($handle)) {
+        return false;
+    }
+
+    return true;
 }
 
 function docs_unlock_registry($handle): void
@@ -7217,6 +8591,38 @@ function docs_sanitize_outgoing_column_order($input): array
     return $normalized;
 }
 
+function docs_sanitize_orders_column_order($input): array
+{
+    $defaults = DOCS_ORDERS_COLUMN_ORDER_DEFAULTS;
+    if (!is_array($input)) {
+        return $defaults;
+    }
+
+    $allowed = array_fill_keys($defaults, true);
+    $seen = [];
+    $normalized = [];
+
+    foreach ($input as $value) {
+        if (!is_string($value) && !is_int($value)) {
+            continue;
+        }
+        $key = trim((string) $value);
+        if ($key === '' || !isset($allowed[$key]) || isset($seen[$key])) {
+            continue;
+        }
+        $seen[$key] = true;
+        $normalized[] = $key;
+    }
+
+    foreach ($defaults as $key) {
+        if (!isset($seen[$key])) {
+            $normalized[] = $key;
+        }
+    }
+
+    return $normalized;
+}
+
 function docs_normalize_outgoing_column_order_user_key(string $userKey): string
 {
     $raw = trim($userKey);
@@ -7250,6 +8656,37 @@ function docs_normalize_outgoing_column_order_map($map): array
         $columnsPayload = isset($entryArray['columns']) ? $entryArray['columns'] : $entryArray;
         $normalizedEntry = [
             'columns' => docs_sanitize_outgoing_column_order($columnsPayload),
+        ];
+        if (isset($entryArray['updatedAt']) && is_string($entryArray['updatedAt']) && $entryArray['updatedAt'] !== '') {
+            $normalizedEntry['updatedAt'] = $entryArray['updatedAt'];
+        }
+        if (isset($entryArray['updatedBy']) && $entryArray['updatedBy'] !== '') {
+            $normalizedEntry['updatedBy'] = sanitize_text_field((string) $entryArray['updatedBy'], 200);
+        }
+        $normalized[$profileKey] = $normalizedEntry;
+    }
+
+    return $normalized;
+}
+
+function docs_normalize_orders_column_order_map($map): array
+{
+    if (!is_array($map)) {
+        return [];
+    }
+
+    $source = isset($map['orders']) && is_array($map['orders']) ? $map['orders'] : $map;
+    $normalized = [];
+
+    foreach ($source as $profile => $entry) {
+        if (!is_string($profile) || trim($profile) === '') {
+            continue;
+        }
+        $profileKey = docs_normalize_outgoing_column_order_user_key($profile);
+        $entryArray = is_array($entry) ? $entry : [];
+        $columnsPayload = isset($entryArray['columns']) ? $entryArray['columns'] : $entryArray;
+        $normalizedEntry = [
+            'columns' => docs_sanitize_orders_column_order($columnsPayload),
         ];
         if (isset($entryArray['updatedAt']) && is_string($entryArray['updatedAt']) && $entryArray['updatedAt'] !== '') {
             $normalizedEntry['updatedAt'] = $entryArray['updatedAt'];
@@ -7745,7 +9182,7 @@ function split_name_tokens(string $value): array
         }
 
         return mb_strtolower($token, 'UTF-8');
-    }, $parts)));    
+    }, $parts)));
 }
 
 function extract_assignee_filter_from_array(array $source): ?array
@@ -8548,6 +9985,7 @@ function load_admin_settings(string $folder): array
         'columnWidths' => [],
         'columnOrders' => [],
         'outgoingColumnOrders' => [],
+        'ordersColumnOrders' => [],
         'tablePreferences' => [],
     ];
 
@@ -8576,6 +10014,9 @@ function load_admin_settings(string $folder): array
     $sanitized['outgoingColumnOrders'] = isset($decoded['outgoingColumnOrders'])
         ? docs_normalize_outgoing_column_order_map($decoded['outgoingColumnOrders'])
         : [];
+    $sanitized['ordersColumnOrders'] = isset($decoded['ordersColumnOrders'])
+        ? docs_normalize_orders_column_order_map($decoded['ordersColumnOrders'])
+        : [];
     $sanitized['tablePreferences'] = isset($decoded['tablePreferences'])
         ? docs_normalize_table_preferences_map($decoded['tablePreferences'])
         : [];
@@ -8584,6 +10025,7 @@ function load_admin_settings(string $folder): array
         'columnWidths' => [],
         'columnOrders' => [],
         'outgoingColumnOrders' => [],
+        'ordersColumnOrders' => [],
         'tablePreferences' => [],
     ];
 }
@@ -9565,6 +11007,222 @@ function docs_get_subordinate_review_summary(array $record): array
         'accepted' => $accepted,
         'total' => $total,
         'allAccepted' => $total === 0 || $accepted >= $total,
+    ];
+}
+
+function docs_collect_current_responsible_assignment_entries(array $record): array
+{
+    $entries = [];
+    $seen = [];
+
+    $register = static function (array $entry, string $fallbackRole) use (&$entries, &$seen): void {
+        if (empty($entry)) {
+            return;
+        }
+
+        $role = docs_normalize_assignment_role((string) ($entry['role'] ?? ''));
+        if ($role === '') {
+            $role = docs_normalize_assignment_role($fallbackRole);
+        }
+        if (!in_array($role, ['responsible', 'subordinate'], true)) {
+            return;
+        }
+
+        $entry['role'] = $role;
+        $keys = docs_collect_assignee_index_keys($entry);
+        $primaryKey = '';
+        foreach ($keys as $key) {
+            if ($key !== '') {
+                $primaryKey = mb_strtolower($role . '::' . $key, 'UTF-8');
+                break;
+            }
+        }
+        if ($primaryKey === '') {
+            $primaryKey = 'entry::' . count($entries);
+        }
+        if (isset($seen[$primaryKey])) {
+            return;
+        }
+
+        $seen[$primaryKey] = true;
+        $entries[] = $entry;
+    };
+
+    foreach (docs_extract_assignees($record) as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+        $register($entry, 'responsible');
+    }
+
+    if (isset($record['responsibles']) && is_array($record['responsibles'])) {
+        foreach ($record['responsibles'] as $entry) {
+            if (is_array($entry)) {
+                $register($entry, 'responsible');
+            }
+        }
+    } elseif (isset($record['responsible']) && is_array($record['responsible'])) {
+        $register($record['responsible'], 'responsible');
+    }
+
+    if (isset($record['subordinates']) && is_array($record['subordinates'])) {
+        foreach ($record['subordinates'] as $entry) {
+            if (is_array($entry)) {
+                $register($entry, 'subordinate');
+            }
+        }
+    } elseif (isset($record['subordinate']) && is_array($record['subordinate'])) {
+        $register($record['subordinate'], 'subordinate');
+    }
+
+    return $entries;
+}
+
+function docs_assignment_entry_matches_current_user(
+    array $entry,
+    array $requestContext,
+    array $directories = [],
+    ?array $sessionAuth = null
+): bool {
+    $userCandidates = docs_collect_extended_assignment_author_candidates($requestContext, $directories, $sessionAuth);
+    if (empty($userCandidates['ids']) && empty($userCandidates['names'])) {
+        return false;
+    }
+
+    return docs_assignment_identity_candidates_intersect(
+        docs_collect_assignment_identity_candidates($entry),
+        $userCandidates
+    );
+}
+
+function docs_get_assignee_latest_status(array $record, array $entry): string
+{
+    $history = isset($record['assigneeStatusHistory']) && is_array($record['assigneeStatusHistory'])
+        ? docs_sanitize_assignee_status_history_collection($record['assigneeStatusHistory'])
+        : [];
+    if (empty($history)) {
+        return '';
+    }
+
+    $entryKeys = array_map(static function ($key): string {
+        return mb_strtolower((string) $key, 'UTF-8');
+    }, docs_collect_assignee_index_keys($entry));
+
+    if (empty($entryKeys)) {
+        return '';
+    }
+
+    $latest = null;
+    $latestTimestamp = null;
+    foreach ($history as $historyEntry) {
+        $historyKey = mb_strtolower((string) ($historyEntry['assigneeKey'] ?? ''), 'UTF-8');
+        if ($historyKey === '' || !in_array($historyKey, $entryKeys, true)) {
+            continue;
+        }
+        $entries = isset($historyEntry['entries']) && is_array($historyEntry['entries'])
+            ? $historyEntry['entries']
+            : [];
+        if (empty($entries)) {
+            continue;
+        }
+        $lastEntry = $entries[count($entries) - 1];
+        $timestamp = strtotime((string) ($lastEntry['changedAt'] ?? ''));
+        if ($latest === null || ($timestamp !== false && ($latestTimestamp === null || $timestamp > $latestTimestamp))) {
+            $latest = $lastEntry;
+            $latestTimestamp = $timestamp !== false ? $timestamp : $latestTimestamp;
+        }
+    }
+
+    return is_array($latest) ? sanitize_status((string) ($latest['status'] ?? ''), false) : '';
+}
+
+function docs_assignment_entry_completed_for_current_responsible(
+    array $record,
+    array $entry,
+    array $requestContext,
+    array $directories = [],
+    ?array $sessionAuth = null
+): bool {
+    if (docs_assignment_entry_matches_current_user($entry, $requestContext, $directories, $sessionAuth)) {
+        return true;
+    }
+
+    if (docs_normalize_subordinate_review_status($entry['reviewStatus'] ?? '') === 'accepted') {
+        return true;
+    }
+
+    $status = sanitize_status((string) ($entry['status'] ?? ''), false);
+    if (docs_status_key_from_status($status) === 'done') {
+        return true;
+    }
+
+    $latestStatus = docs_get_assignee_latest_status($record, $entry);
+    return docs_status_key_from_status($latestStatus) === 'done';
+}
+
+function docs_assignment_entry_display_name(array $entry): string
+{
+    foreach (['name', 'responsible', 'fullName', 'fio', 'displayName', 'login', 'email', 'telegram', 'chatId', 'id'] as $field) {
+        $value = sanitize_text_field((string) ($entry[$field] ?? ''), 200);
+        if ($value !== '') {
+            return $value;
+        }
+    }
+
+    return 'исполнитель';
+}
+
+function docs_build_current_responsible_assignment_block_message(array $pendingNames): string
+{
+    $names = array_values(array_unique(array_filter(array_map(static function ($name): string {
+        return sanitize_text_field((string) $name, 200);
+    }, $pendingNames))));
+    if (empty($names)) {
+        return 'Вы назначили исполнителя. Ему нужно завершить задачу.';
+    }
+    $list = implode(', ', array_slice($names, 0, 5));
+    if (count($names) > 5) {
+        $list .= ' +' . (count($names) - 5);
+    }
+
+    return 'Вы назначили: ' . $list . '. Ему нужно завершить задачу.';
+}
+
+function docs_get_current_responsible_assignment_completion_summary(
+    array $record,
+    array $requestContext,
+    array $directories = [],
+    ?array $sessionAuth = null
+): array {
+    $entries = docs_collect_current_responsible_assignment_entries($record);
+    $completed = 0;
+    $total = 0;
+    $pendingNames = [];
+
+    foreach ($entries as $entry) {
+        if (!is_array($entry) || empty($entry)) {
+            continue;
+        }
+
+        if (!docs_entry_assigned_by_current_user($entry, $requestContext, $directories, $sessionAuth)) {
+            continue;
+        }
+
+        $total++;
+        if (docs_assignment_entry_completed_for_current_responsible($record, $entry, $requestContext, $directories, $sessionAuth)) {
+            $completed++;
+            continue;
+        }
+
+        $pendingNames[] = docs_assignment_entry_display_name($entry);
+    }
+
+    return [
+        'completed' => $completed,
+        'total' => $total,
+        'allCompleted' => $total === 0 || $completed >= $total,
+        'pendingNames' => array_values(array_unique($pendingNames)),
+        'message' => docs_build_current_responsible_assignment_block_message($pendingNames),
     ];
 }
 
@@ -10652,6 +12310,11 @@ function save_admin_settings(string $folder, array $settings): void
         $settings['outgoingColumnOrders'] = docs_normalize_outgoing_column_order_map($settings['outgoingColumnOrders']);
     } elseif (isset($existing['outgoingColumnOrders']) && is_array($existing['outgoingColumnOrders'])) {
         $settings['outgoingColumnOrders'] = docs_normalize_outgoing_column_order_map($existing['outgoingColumnOrders']);
+    }
+    if (isset($settings['ordersColumnOrders'])) {
+        $settings['ordersColumnOrders'] = docs_normalize_orders_column_order_map($settings['ordersColumnOrders']);
+    } elseif (isset($existing['ordersColumnOrders']) && is_array($existing['ordersColumnOrders'])) {
+        $settings['ordersColumnOrders'] = docs_normalize_orders_column_order_map($existing['ordersColumnOrders']);
     }
     if (isset($settings['tablePreferences'])) {
         $settings['tablePreferences'] = docs_normalize_table_preferences_map($settings['tablePreferences']);
@@ -12048,7 +13711,12 @@ function build_public_path(string $folder, ?string $fileName = null): string
 {
     $parts = [$folder];
     if ($fileName !== null && $fileName !== '') {
-        $parts[] = $fileName;
+        $pathSegments = preg_split('#/+#', str_replace('\\', '/', $fileName), -1, PREG_SPLIT_NO_EMPTY);
+        if (is_array($pathSegments) && !empty($pathSegments)) {
+            foreach ($pathSegments as $pathSegment) {
+                $parts[] = $pathSegment;
+            }
+        }
     }
 
     $encodedParts = array_map(static function (string $part): string {
@@ -12080,6 +13748,7 @@ function docs_resolve_public_document_file(string $rawPath): ?array
         return null;
     }
 
+    $relative = rawurldecode(str_replace('\\', '/', $relative));
     $segments = preg_split('#/+#', $relative, -1, PREG_SPLIT_NO_EMPTY);
     if (!is_array($segments) || empty($segments)) {
         return null;
@@ -12087,7 +13756,7 @@ function docs_resolve_public_document_file(string $rawPath): ?array
 
     $safeSegments = [];
     foreach ($segments as $segment) {
-        $decoded = rawurldecode((string) $segment);
+        $decoded = (string) $segment;
         if ($decoded === '' || $decoded === '.' || $decoded === '..') {
             return null;
         }
@@ -12116,6 +13785,7 @@ function docs_resolve_public_document_file(string $rawPath): ?array
     return [
         'path' => $realPath,
         'name' => basename($realPath),
+        'folder' => (string) ($safeSegments[0] ?? ''),
     ];
 }
 
@@ -12135,8 +13805,38 @@ function docs_build_content_disposition_header(string $disposition, string $file
         . "; filename*=UTF-8''" . rawurlencode($fileName);
 }
 
+function docs_detect_mime_type_by_extension(string $path): string
+{
+    $extension = strtolower((string) pathinfo($path, PATHINFO_EXTENSION));
+    if ($extension === '') {
+        return '';
+    }
+
+    $map = [
+        'doc' => 'application/msword',
+        'docx' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'dot' => 'application/msword',
+        'dotx' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.template',
+        'rtf' => 'application/rtf',
+        'odt' => 'application/vnd.oasis.opendocument.text',
+        'xls' => 'application/vnd.ms-excel',
+        'xlsx' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'ods' => 'application/vnd.oasis.opendocument.spreadsheet',
+        'ppt' => 'application/vnd.ms-powerpoint',
+        'pptx' => 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        'odp' => 'application/vnd.oasis.opendocument.presentation',
+    ];
+
+    return $map[$extension] ?? '';
+}
+
 function docs_detect_download_mime_type(string $path): string
 {
+    $extensionMime = docs_detect_mime_type_by_extension($path);
+    if ($extensionMime !== '') {
+        return $extensionMime;
+    }
+
     if (function_exists('finfo_open')) {
         $finfo = @finfo_open(FILEINFO_MIME_TYPE);
         if ($finfo) {
@@ -12271,6 +13971,28 @@ function docs_handle_mini_app_download_file(string $method): void
     $resolved = docs_resolve_public_document_file($rawPath);
     if ($resolved === null) {
         respond_error('Файл не найден.', 404);
+    }
+
+    $resolvedFolder = sanitize_folder_name((string) ($resolved['folder'] ?? ''));
+    $privateOutgoingMatch = $resolvedFolder !== ''
+        ? docs_find_private_outgoing_file_by_real_path($resolvedFolder, (string) $resolved['path'])
+        : null;
+    if (is_array($privateOutgoingMatch) && isset($privateOutgoingMatch['file']) && is_array($privateOutgoingMatch['file'])) {
+        $accessContext = docs_resolve_access_context($resolvedFolder);
+        $sessionAuth = docs_get_session_auth();
+        $requestContext = docs_build_request_user_context();
+        $currentUserKeys = docs_resolve_outgoing_private_user_keys($requestContext, is_array($sessionAuth) ? $sessionAuth : null);
+        $canManageOutgoing = docs_user_can_manage_outgoing_records($accessContext, is_array($sessionAuth) ? $sessionAuth : null);
+
+        $privateOutgoingRecord = isset($privateOutgoingMatch['record']) && is_array($privateOutgoingMatch['record'])
+            ? $privateOutgoingMatch['record']
+            : [];
+        $hasInheritedOwner = docs_outgoing_file_has_inherited_private_owner($privateOutgoingMatch['file'], $privateOutgoingRecord);
+        if (($hasInheritedOwner && !$canManageOutgoing) || !docs_outgoing_file_user_can_access($privateOutgoingMatch['file'], $canManageOutgoing, $currentUserKeys)) {
+            respond_error('Доступ к приватному файлу запрещён.', 403, [
+                'reason' => 'outgoing_private_file_forbidden',
+            ]);
+        }
     }
 
     $fileName = isset($_GET['name']) && is_string($_GET['name'])
@@ -14331,6 +16053,7 @@ function docs_prepare_records_for_response(array $records, string $organization,
         if (!isset($record['organization']) || $record['organization'] === '') {
             $record['organization'] = $organization;
         }
+        $record['documentFolder'] = $folder;
 
         if (isset($record['instruction'])) {
             $record['instruction'] = sanitize_instruction((string) $record['instruction']);
@@ -14362,8 +16085,10 @@ function docs_prepare_records_for_response(array $records, string $organization,
                     continue;
                 }
 
-                if (isset($file['storedName']) && !isset($file['url'])) {
-                    $file['url'] = build_public_path($folder, (string) $file['storedName']);
+                $storedName = isset($file['storedName']) ? trim((string) $file['storedName']) : '';
+                $fileUrl = isset($file['url']) ? trim((string) $file['url']) : '';
+                if ($storedName !== '' && $fileUrl === '') {
+                    $file['url'] = build_public_path($folder, $storedName);
                 }
                 $normalizedAiBrief = '';
                 if (isset($file['aiBrief'])) {
@@ -18771,19 +20496,30 @@ switch ($action) {
             $isCompletedStatus = mb_stripos($nextStatus, 'выполн') !== false;
             $shouldCompleteReviewFlowTask = false;
             if ($isCompletedStatus && docs_review_flow_enabled($records[$recordIndex]) && !$isDirector) {
-                $reviewSummary = docs_get_subordinate_review_summary($records[$recordIndex]);
                 if (!$isTaskResponsible) {
                     respond_error('Закрыть задачу как выполненную может только ответственный.', 403, [
                         'requiresResponsible' => true,
                     ]);
                 }
-                if (empty($reviewSummary['allAccepted'])) {
-                    respond_error('Нельзя закрыть задачу: приняты не все подчинённые.', 422, [
-                        'acceptedSubordinates' => $reviewSummary['accepted'],
-                        'totalSubordinates' => $reviewSummary['total'],
+                $assignmentAuthorDirectories = [$responsibles, $subordinates, $block2];
+                $ownAssignmentSummary = docs_get_current_responsible_assignment_completion_summary(
+                    $records[$recordIndex],
+                    $requestContext,
+                    $assignmentAuthorDirectories,
+                    $sessionAuthArray
+                );
+                if (!empty($ownAssignmentSummary['total']) && empty($ownAssignmentSummary['allCompleted'])) {
+                    respond_error($ownAssignmentSummary['message'], 422, [
+                        'pendingAssignees' => $ownAssignmentSummary['pendingNames'],
+                        'completedAssignments' => $ownAssignmentSummary['completed'],
+                        'totalAssignments' => $ownAssignmentSummary['total'],
+                        'scope' => 'currentResponsibleAssignments',
                     ]);
                 }
-                $shouldCompleteReviewFlowTask = true;
+                $reviewSummary = docs_get_subordinate_review_summary($records[$recordIndex]);
+                $shouldCompleteReviewFlowTask = !empty($ownAssignmentSummary['total'])
+                    && !empty($reviewSummary['total'])
+                    && !empty($reviewSummary['allAccepted']);
             }
 
             $statusAuthor = $assignmentAuthor;
@@ -19106,7 +20842,6 @@ switch ($action) {
         if (!is_array($payload)) {
             $payload = [];
         }
-
         $requestedOrganization = docs_normalize_organization_candidate((string) ($payload['organization'] ?? ''));
         $accessContext = docs_resolve_access_context($requestedOrganization);
         docs_require_admin_session($accessContext);
@@ -19686,6 +21421,567 @@ switch ($action) {
         respond_success($response);
         break;
 
+    case 'orders_column_order_load':
+        if ($method !== 'GET') {
+            respond_error('Некорректный метод запроса.', 405);
+        }
+
+        $requestedOrganization = docs_normalize_organization_candidate((string) ($_GET['organization'] ?? ''));
+        if ($requestedOrganization === '') {
+            respond_error('Не указана организация.');
+        }
+
+        $accessContext = docs_resolve_access_context($requestedOrganization);
+        $sessionAuth = docs_get_session_auth();
+        if (!docs_user_can_manage_orders($accessContext, is_array($sessionAuth) ? $sessionAuth : null)) {
+            respond_error('Журнал приказов доступен только администраторам.', 403, [
+                'reason' => 'orders_admin_required',
+            ]);
+        }
+
+        $organization = $accessContext['active'];
+        $folder = sanitize_folder_name($organization);
+        $requestContext = docs_build_request_user_context();
+        $requestedUserKey = sanitize_text_field((string) ($_GET['user_key'] ?? ($_GET['userKey'] ?? '')), 240);
+        $resolvedUserKey = $requestedUserKey !== ''
+            ? $requestedUserKey
+            : docs_resolve_current_user_key($requestContext, is_array($sessionAuth) ? $sessionAuth : null);
+        $profile = docs_normalize_outgoing_column_order_user_key($resolvedUserKey);
+        $settings = load_admin_settings($folder);
+        $orders = isset($settings['ordersColumnOrders']) && is_array($settings['ordersColumnOrders'])
+            ? docs_normalize_orders_column_order_map($settings['ordersColumnOrders'])
+            : [];
+        $profileSettings = isset($orders[$profile]) && is_array($orders[$profile])
+            ? $orders[$profile]
+            : [];
+        $columns = isset($profileSettings['columns'])
+            ? docs_sanitize_orders_column_order($profileSettings['columns'])
+            : DOCS_ORDERS_COLUMN_ORDER_DEFAULTS;
+
+        $response = [
+            'organization' => $organization,
+            'profile' => $profile,
+            'columns' => $columns,
+            'settingsDisplayPath' => 'documents/' . $folder . '/' . SETTINGS_FILENAME,
+        ];
+        if (isset($profileSettings['updatedAt']) && is_string($profileSettings['updatedAt'])) {
+            $response['updatedAt'] = $profileSettings['updatedAt'];
+        }
+        if (isset($profileSettings['updatedBy']) && is_string($profileSettings['updatedBy']) && $profileSettings['updatedBy'] !== '') {
+            $response['updatedBy'] = $profileSettings['updatedBy'];
+        }
+
+        respond_success($response);
+        break;
+
+    case 'orders_column_order_save':
+        if ($method !== 'POST') {
+            respond_error('Некорректный метод запроса.', 405);
+        }
+
+        $payload = load_json_payload();
+        if (!is_array($payload) || empty($payload)) {
+            $payload = $_POST;
+        }
+        if (!is_array($payload)) {
+            $payload = [];
+        }
+
+        $requestedOrganization = docs_normalize_organization_candidate((string) ($payload['organization'] ?? ''));
+        if ($requestedOrganization === '') {
+            respond_error('Не указана организация.');
+        }
+
+        $accessContext = docs_resolve_access_context($requestedOrganization);
+        $sessionAuth = docs_get_session_auth();
+        if (!docs_user_can_manage_orders($accessContext, is_array($sessionAuth) ? $sessionAuth : null)) {
+            respond_error('Журнал приказов доступен только администраторам.', 403, [
+                'reason' => 'orders_admin_required',
+            ]);
+        }
+
+        $organization = $accessContext['active'];
+        $folder = sanitize_folder_name($organization);
+        $requestContext = docs_build_request_user_context();
+        $requestedUserKey = sanitize_text_field((string) ($payload['user_key'] ?? ($payload['userKey'] ?? '')), 240);
+        $resolvedUserKey = $requestedUserKey !== ''
+            ? $requestedUserKey
+            : docs_resolve_current_user_key($requestContext, is_array($sessionAuth) ? $sessionAuth : null);
+        $profile = docs_normalize_outgoing_column_order_user_key($resolvedUserKey);
+        $columnsPayload = isset($payload['columns']) && is_array($payload['columns']) ? $payload['columns'] : [];
+        $columns = docs_sanitize_orders_column_order($columnsPayload);
+        $settings = load_admin_settings($folder);
+        $orders = isset($settings['ordersColumnOrders']) && is_array($settings['ordersColumnOrders'])
+            ? docs_normalize_orders_column_order_map($settings['ordersColumnOrders'])
+            : [];
+        $entry = [
+            'columns' => $columns,
+            'updatedAt' => date('c'),
+        ];
+        $updatedBy = docs_build_assignment_author_label(is_array($sessionAuth) ? $sessionAuth : null);
+        if ($updatedBy !== '') {
+            $entry['updatedBy'] = $updatedBy;
+        }
+        $orders[$profile] = $entry;
+        $settings['ordersColumnOrders'] = docs_normalize_orders_column_order_map($orders);
+        save_admin_settings($folder, $settings);
+
+        $response = [
+            'organization' => $organization,
+            'profile' => $profile,
+            'columns' => $columns,
+            'updatedAt' => $entry['updatedAt'],
+            'settingsDisplayPath' => 'documents/' . $folder . '/' . SETTINGS_FILENAME,
+            'message' => 'Порядок столбцов журнала приказов сохранён.',
+        ];
+        if (isset($entry['updatedBy'])) {
+            $response['updatedBy'] = $entry['updatedBy'];
+        }
+
+        respond_success($response);
+        break;
+
+    case 'orders_file':
+        $method = strtoupper($method);
+        if ($method !== 'GET' && $method !== 'HEAD') {
+            respond_error('Некорректный метод запроса.', 405, ['allowedMethod' => 'GET']);
+        }
+
+        $requestedOrganization = docs_normalize_organization_candidate((string) ($_GET['organization'] ?? ''));
+        $accessContext = docs_resolve_access_context($requestedOrganization);
+        $organization = $accessContext['active'];
+        $folder = sanitize_folder_name($organization);
+        $sessionAuth = docs_get_session_auth();
+        if (!docs_user_can_manage_orders($accessContext, is_array($sessionAuth) ? $sessionAuth : null)) {
+            respond_error('Файлы приказов доступны только администраторам.', 403, [
+                'reason' => 'orders_admin_required',
+            ]);
+        }
+
+        $recordId = sanitize_text_field((string) ($_GET['record_id'] ?? ($_GET['id'] ?? '')), 160);
+        $fileKey = sanitize_text_field((string) ($_GET['file'] ?? ($_GET['storedName'] ?? '')), 500);
+        if ($recordId === '' || $fileKey === '') {
+            respond_error('Не указан файл приказа.', 400, [
+                'reason' => 'order_file_required',
+            ]);
+        }
+
+        $targetRecord = null;
+        foreach (docs_load_orders_registry($folder) as $record) {
+            if (is_array($record) && (string) ($record['id'] ?? '') === $recordId) {
+                $targetRecord = $record;
+                break;
+            }
+        }
+        if (!is_array($targetRecord)) {
+            respond_error('Запись приказа не найдена.', 404, [
+                'reason' => 'order_record_not_found',
+            ]);
+        }
+
+        $targetFile = null;
+        $fileLookup = array_fill_keys([$fileKey], true);
+        foreach (($targetRecord['files'] ?? []) as $file) {
+            if (is_array($file) && docs_outgoing_file_matches_keys($file, $fileLookup)) {
+                $targetFile = $file;
+                break;
+            }
+        }
+        if (!is_array($targetFile)) {
+            respond_error('Файл приказа не найден.', 404, [
+                'reason' => 'order_file_not_found',
+            ]);
+        }
+
+        $resolvedPath = '';
+        foreach (docs_get_order_file_path_candidates($folder, $targetFile) as $pathCandidate) {
+            if (is_file($pathCandidate) && is_readable($pathCandidate)) {
+                $resolvedPath = $pathCandidate;
+                break;
+            }
+        }
+        if ($resolvedPath === '') {
+            respond_error('Файл не найден.', 404, [
+                'reason' => 'order_file_storage_missing',
+            ]);
+        }
+
+        $fileName = sanitize_text_field((string) ($targetFile['originalName'] ?? ($targetFile['storedName'] ?? 'order')), 255);
+        $disposition = isset($_GET['disposition']) && is_string($_GET['disposition'])
+            ? $_GET['disposition']
+            : 'inline';
+
+        docs_stream_file_response($resolvedPath, $fileName, $disposition, $method);
+        break;
+
+    case 'orders_list':
+        $requestContext = docs_build_request_user_context();
+        $resolvedUserId = $requestContext['primaryId'] ?? null;
+        $requestedOrganization = docs_normalize_organization_candidate($_GET['organization'] ?? '');
+        $accessContext = docs_resolve_access_context($requestedOrganization);
+        $organization = $accessContext['active'];
+        $folder = sanitize_folder_name($organization);
+        $sessionAuth = docs_get_session_auth();
+        $canManageOrders = docs_user_can_manage_orders($accessContext, is_array($sessionAuth) ? $sessionAuth : null);
+        if (!$canManageOrders) {
+            respond_error('Журнал приказов доступен только администраторам.', 403, [
+                'reason' => 'orders_admin_required',
+            ]);
+        }
+
+        $orderRecords = docs_sort_order_records(docs_load_orders_registry($folder));
+        $orderRecordsResponse = docs_prepare_order_records_response($orderRecords, $canManageOrders, $folder);
+
+        log_docs_event('Orders registry prepared', [
+            'organization' => $organization,
+            'folder' => $folder,
+            'ordersTotal' => count($orderRecords),
+            'filterSource' => $accessContext['filterSource'] ?? null,
+            'userId' => $resolvedUserId,
+            'registryPath' => get_orders_registry_path($folder),
+        ]);
+
+        respond_success([
+            'organization' => $organization,
+            'organizations' => $accessContext['accessible'],
+            'records' => array_values($orderRecordsResponse),
+            'documentsCount' => count($orderRecords),
+            'manualCount' => count($orderRecords),
+            'registryDisplayPath' => 'documents/' . $folder . '/' . ORDERS_REGISTRY_FILENAME,
+            'filterSource' => $accessContext['filterSource'] ?? null,
+            'userId' => $resolvedUserId,
+            'canAddOrderRecords' => true,
+            'canManageOrderRecords' => $canManageOrders,
+        ]);
+        break;
+
+    case 'orders_save':
+        if ($method !== 'POST') {
+            respond_error('Некорректный метод запроса.', 405);
+        }
+
+        $payload = load_json_payload();
+        if (!is_array($payload) || empty($payload)) {
+            $payload = $_POST;
+        }
+        if (!is_array($payload)) {
+            $payload = [];
+        }
+        $payload = docs_normalize_outgoing_save_payload($payload);
+
+        $requestedOrganization = docs_normalize_organization_candidate((string) ($payload['organization'] ?? ''));
+        $accessContext = docs_resolve_access_context($requestedOrganization);
+        $organization = $accessContext['active'];
+        $folder = sanitize_folder_name($organization);
+        $sessionAuth = docs_get_session_auth();
+        $canManageOrders = docs_user_can_manage_orders($accessContext, is_array($sessionAuth) ? $sessionAuth : null);
+        if (!$canManageOrders) {
+            respond_error('Журнал приказов доступен только администраторам.', 403, [
+                'reason' => 'orders_admin_required',
+            ]);
+        }
+
+        $recordId = sanitize_text_field((string) ($payload['id'] ?? ''), 160);
+        $requestContext = docs_build_request_user_context();
+        $sessionAuthForIdentity = is_array($sessionAuth) ? $sessionAuth : null;
+        $authorLabel = docs_resolve_current_user_label($requestContext, $sessionAuthForIdentity);
+        $authorKey = docs_resolve_current_user_key($requestContext, $sessionAuthForIdentity);
+        if ($authorKey === '') {
+            $authorKey = 'name:' . mb_strtolower($authorLabel, 'UTF-8');
+        }
+
+        [$ordersRegistryHandle, $records] = docs_lock_orders_registry($folder);
+        if ($ordersRegistryHandle === null) {
+            respond_error('Не удалось заблокировать журнал приказов. Повторите сохранение.', 503, [
+                'reason' => 'orders_registry_lock_failed',
+            ]);
+        }
+        $failOrdersSave = static function (string $message, int $status = 400, array $details = []) use (&$ordersRegistryHandle): void {
+            if ($ordersRegistryHandle !== null) {
+                docs_unlock_orders_registry($ordersRegistryHandle);
+                $ordersRegistryHandle = null;
+            }
+            respond_error($message, $status, $details);
+        };
+        $savedRecord = null;
+        $orderFilesPendingDeletion = [];
+
+        if ($recordId === '') {
+            $savedRecord = docs_sanitize_order_record_payload($payload, null, $authorLabel, $authorKey);
+            $validationError = docs_validate_order_record($savedRecord);
+            if ($validationError !== null) {
+                $failOrdersSave($validationError, 422, [
+                    'reason' => docs_order_validation_reason($validationError),
+                ]);
+            }
+            if (docs_order_number_exists($records, (string) ($savedRecord['orderNumber'] ?? ''))) {
+                $failOrdersSave('№ приказа уже зарегистрирован.', 409, [
+                    'reason' => 'order_number_exists',
+                    'orderNumber' => $savedRecord['orderNumber'] ?? '',
+                ]);
+            }
+
+            docs_attach_uploaded_order_files_to_record(
+                $savedRecord,
+                $folder,
+                'Запись приказа не создана',
+                $authorLabel,
+                $authorKey
+            );
+            $records[] = $savedRecord;
+        } else {
+            $recordIndex = null;
+            foreach ($records as $index => $record) {
+                if (is_array($record) && (string) ($record['id'] ?? '') === $recordId) {
+                    $recordIndex = $index;
+                    break;
+                }
+            }
+            if ($recordIndex === null) {
+                $failOrdersSave('Запись приказа не найдена.', 404, [
+                    'reason' => 'order_record_not_found',
+                ]);
+            }
+
+            $savedRecord = docs_sanitize_order_record_payload($payload, $records[$recordIndex], $authorLabel, $authorKey);
+            $validationError = docs_validate_order_record($savedRecord);
+            if ($validationError !== null) {
+                $failOrdersSave($validationError, 422, [
+                    'reason' => docs_order_validation_reason($validationError),
+                ]);
+            }
+            if (docs_order_number_exists($records, (string) ($savedRecord['orderNumber'] ?? ''), $recordId)) {
+                $failOrdersSave('№ приказа уже зарегистрирован.', 409, [
+                    'reason' => 'order_number_exists',
+                    'orderNumber' => $savedRecord['orderNumber'] ?? '',
+                ]);
+            }
+
+            docs_apply_order_file_mutation($savedRecord, $folder, $payload, $orderFilesPendingDeletion);
+            docs_attach_uploaded_order_files_to_record(
+                $savedRecord,
+                $folder,
+                'Запись приказа не обновлена',
+                $authorLabel,
+                $authorKey
+            );
+            $records[$recordIndex] = $savedRecord;
+        }
+
+        if (!docs_save_orders_registry_locked($ordersRegistryHandle, $records)) {
+            $failOrdersSave('Не удалось сохранить журнал приказов. Повторите действие.', 500, [
+                'reason' => 'orders_registry_save_failed',
+            ]);
+        }
+        docs_unlock_orders_registry($ordersRegistryHandle);
+        $ordersRegistryHandle = null;
+        foreach ($orderFilesPendingDeletion as $filePendingDeletion) {
+            if (is_array($filePendingDeletion)) {
+                docs_delete_order_file_from_storage($folder, $filePendingDeletion);
+            }
+        }
+        $orderRecords = docs_sort_order_records($records);
+        $orderRecordsResponse = docs_prepare_order_records_response($orderRecords, $canManageOrders, $folder);
+
+        respond_success([
+            'message' => $recordId === '' ? 'Приказ добавлен.' : 'Приказ обновлён.',
+            'organization' => $organization,
+            'savedRecord' => docs_prepare_order_record_response($savedRecord, $canManageOrders, $folder),
+            'records' => array_values($orderRecordsResponse),
+            'documentsCount' => count($orderRecords),
+            'manualCount' => count($orderRecords),
+            'canAddOrderRecords' => true,
+            'canManageOrderRecords' => $canManageOrders,
+        ]);
+        break;
+
+    case 'orders_attach_files':
+        if ($method !== 'POST') {
+            respond_error('Некорректный метод запроса.', 405);
+        }
+
+        $payload = load_json_payload();
+        if (!is_array($payload) || empty($payload)) {
+            $payload = $_POST;
+        }
+        if (!is_array($payload)) {
+            $payload = [];
+        }
+
+        $requestedOrganization = docs_normalize_organization_candidate((string) ($payload['organization'] ?? ''));
+        $accessContext = docs_resolve_access_context($requestedOrganization);
+        $organization = $accessContext['active'];
+        $folder = sanitize_folder_name($organization);
+        $sessionAuth = docs_get_session_auth();
+        $canManageOrders = docs_user_can_manage_orders($accessContext, is_array($sessionAuth) ? $sessionAuth : null);
+        if (!$canManageOrders) {
+            respond_error('Журнал приказов доступен только администраторам.', 403, [
+                'reason' => 'orders_admin_required',
+            ]);
+        }
+
+        $recordId = sanitize_text_field((string) ($payload['id'] ?? ''), 160);
+        if ($recordId === '') {
+            respond_error('Не указан идентификатор записи приказа.', 400, [
+                'reason' => 'order_record_id_required',
+            ]);
+        }
+        if (empty($_FILES['attachments']) || !isset($_FILES['attachments']['name'])) {
+            respond_error('Выберите минимум один файл приказа.', 422, [
+                'reason' => 'order_attachment_required',
+            ]);
+        }
+
+        $requestContext = docs_build_request_user_context();
+        $sessionAuthForIdentity = is_array($sessionAuth) ? $sessionAuth : null;
+        $authorLabel = docs_resolve_current_user_label($requestContext, $sessionAuthForIdentity);
+        $authorKey = docs_resolve_current_user_key($requestContext, $sessionAuthForIdentity);
+        if ($authorKey === '') {
+            $authorKey = 'name:' . mb_strtolower($authorLabel, 'UTF-8');
+        }
+
+        [$ordersRegistryHandle, $records] = docs_lock_orders_registry($folder);
+        if ($ordersRegistryHandle === null) {
+            respond_error('Не удалось заблокировать журнал приказов. Повторите сохранение.', 503, [
+                'reason' => 'orders_registry_lock_failed',
+            ]);
+        }
+        $failOrdersAttach = static function (string $message, int $status = 400, array $details = []) use (&$ordersRegistryHandle): void {
+            if ($ordersRegistryHandle !== null) {
+                docs_unlock_orders_registry($ordersRegistryHandle);
+                $ordersRegistryHandle = null;
+            }
+            respond_error($message, $status, $details);
+        };
+
+        $recordIndex = null;
+        foreach ($records as $index => $record) {
+            if (is_array($record) && (string) ($record['id'] ?? '') === $recordId) {
+                $recordIndex = $index;
+                break;
+            }
+        }
+        if ($recordIndex === null) {
+            $failOrdersAttach('Запись приказа не найдена.', 404, [
+                'reason' => 'order_record_not_found',
+            ]);
+        }
+
+        $savedRecord = docs_prepare_order_record($records[$recordIndex] ?? [], true);
+        $savedRecord['updatedBy'] = $authorLabel;
+        $savedRecord['updatedByKey'] = $authorKey;
+        $savedRecord['updatedAt'] = date('c');
+        docs_attach_uploaded_order_files_to_record(
+            $savedRecord,
+            $folder,
+            'Файлы приказа не прикреплены',
+            $authorLabel,
+            $authorKey
+        );
+        $records[$recordIndex] = $savedRecord;
+
+        if (!docs_save_orders_registry_locked($ordersRegistryHandle, $records)) {
+            $failOrdersAttach('Не удалось сохранить журнал приказов. Повторите действие.', 500, [
+                'reason' => 'orders_registry_save_failed',
+            ]);
+        }
+        docs_unlock_orders_registry($ordersRegistryHandle);
+        $ordersRegistryHandle = null;
+        $orderRecords = docs_sort_order_records($records);
+        $orderRecordsResponse = docs_prepare_order_records_response($orderRecords, $canManageOrders, $folder);
+
+        respond_success([
+            'message' => 'Файлы приказа прикреплены.',
+            'organization' => $organization,
+            'savedRecord' => docs_prepare_order_record_response($savedRecord, $canManageOrders, $folder),
+            'records' => array_values($orderRecordsResponse),
+            'documentsCount' => count($orderRecords),
+            'manualCount' => count($orderRecords),
+            'canAddOrderRecords' => true,
+            'canManageOrderRecords' => $canManageOrders,
+        ]);
+        break;
+
+    case 'orders_delete':
+        if ($method !== 'POST') {
+            respond_error('Некорректный метод запроса.', 405);
+        }
+
+        $payload = load_json_payload();
+        if (!is_array($payload) || empty($payload)) {
+            $payload = $_POST;
+        }
+        if (!is_array($payload)) {
+            $payload = [];
+        }
+
+        $requestedOrganization = docs_normalize_organization_candidate((string) ($payload['organization'] ?? ''));
+        $accessContext = docs_resolve_access_context($requestedOrganization);
+        $sessionAuth = docs_get_session_auth();
+        $canManageOrders = docs_user_can_manage_orders($accessContext, is_array($sessionAuth) ? $sessionAuth : null);
+        if (!$canManageOrders) {
+            respond_error('Удаление приказов доступно только администраторам.', 403, [
+                'reason' => 'orders_admin_required',
+            ]);
+        }
+        $organization = $accessContext['active'];
+        $folder = sanitize_folder_name($organization);
+        $recordId = sanitize_text_field((string) ($payload['id'] ?? ''), 160);
+        if ($recordId === '') {
+            respond_error('Не указан идентификатор записи приказа.');
+        }
+
+        [$ordersRegistryHandle, $records] = docs_lock_orders_registry($folder);
+        if ($ordersRegistryHandle === null) {
+            respond_error('Не удалось заблокировать журнал приказов. Повторите удаление.', 503, [
+                'reason' => 'orders_registry_lock_failed',
+            ]);
+        }
+        $found = false;
+        $recordPendingFileDeletion = null;
+        foreach ($records as $index => $record) {
+            if (!is_array($record) || (string) ($record['id'] ?? '') !== $recordId) {
+                continue;
+            }
+
+            $recordPendingFileDeletion = $record;
+            unset($records[$index]);
+            $found = true;
+            break;
+        }
+        if (!$found) {
+            docs_unlock_orders_registry($ordersRegistryHandle);
+            respond_error('Запись приказа не найдена.', 404, [
+                'reason' => 'order_record_not_found',
+            ]);
+        }
+
+        if (!docs_save_orders_registry_locked($ordersRegistryHandle, $records)) {
+            docs_unlock_orders_registry($ordersRegistryHandle);
+            respond_error('Не удалось сохранить журнал приказов. Повторите действие.', 500, [
+                'reason' => 'orders_registry_save_failed',
+            ]);
+        }
+        docs_unlock_orders_registry($ordersRegistryHandle);
+        if (is_array($recordPendingFileDeletion)) {
+            docs_delete_order_record_files($folder, $recordPendingFileDeletion);
+        }
+        $orderRecords = docs_sort_order_records($records);
+        $orderRecordsResponse = docs_prepare_order_records_response($orderRecords, $canManageOrders, $folder);
+
+        respond_success([
+            'message' => 'Приказ удалён.',
+            'organization' => $organization,
+            'records' => array_values($orderRecordsResponse),
+            'deletedRecordId' => $recordId,
+            'documentsCount' => count($orderRecords),
+            'manualCount' => count($orderRecords),
+            'canAddOrderRecords' => true,
+            'canManageOrderRecords' => $canManageOrders,
+            'adminScope' => is_array($sessionAuth) ? ($sessionAuth['adminScope'] ?? null) : null,
+        ]);
+        break;
+
     case 'outgoing_column_order_load':
         if ($method !== 'GET') {
             respond_error('Некорректный метод запроса.', 405);
@@ -19794,6 +22090,91 @@ switch ($action) {
         respond_success($response);
         break;
 
+    case 'outgoing_file':
+        $method = strtoupper($method);
+        if ($method !== 'GET' && $method !== 'HEAD') {
+            respond_error('Некорректный метод запроса.', 405, ['allowedMethod' => 'GET']);
+        }
+
+        $requestedOrganization = docs_normalize_organization_candidate((string) ($_GET['organization'] ?? ''));
+        $accessContext = docs_resolve_access_context($requestedOrganization);
+        $organization = $accessContext['active'];
+        $folder = sanitize_folder_name($organization);
+        $sessionAuth = docs_get_session_auth();
+        $canManageOutgoing = docs_user_can_manage_outgoing_records($accessContext, is_array($sessionAuth) ? $sessionAuth : null);
+        $requestContext = docs_build_request_user_context();
+        $currentUserKeys = docs_resolve_outgoing_private_user_keys($requestContext, is_array($sessionAuth) ? $sessionAuth : null);
+        $recordId = sanitize_text_field((string) ($_GET['record_id'] ?? ($_GET['id'] ?? '')), 160);
+        $fileKey = sanitize_text_field((string) ($_GET['file'] ?? ($_GET['storedName'] ?? '')), 500);
+
+        if ($recordId === '' || $fileKey === '') {
+            respond_error('Не указан файл исходящей корреспонденции.', 400, [
+                'reason' => 'outgoing_file_required',
+            ]);
+        }
+
+        $targetRecord = null;
+        foreach (docs_load_outgoing_registry($folder) as $record) {
+            if (is_array($record) && (string) ($record['id'] ?? '') === $recordId) {
+                $targetRecord = $record;
+                break;
+            }
+        }
+
+        if (!is_array($targetRecord)) {
+            respond_error('Запись исходящей корреспонденции не найдена.', 404, [
+                'reason' => 'outgoing_record_not_found',
+            ]);
+        }
+
+        $targetFile = null;
+        $fileLookup = array_fill_keys([$fileKey], true);
+        foreach (($targetRecord['files'] ?? []) as $file) {
+            if (is_array($file) && docs_outgoing_file_matches_keys($file, $fileLookup)) {
+                $targetFile = $file;
+                break;
+            }
+        }
+
+        if (!is_array($targetFile)) {
+            respond_error('Файл исходящей корреспонденции не найден.', 404, [
+                'reason' => 'outgoing_file_not_found',
+            ]);
+        }
+
+        $hasSignedAccess = docs_outgoing_file_key_is_signed_access($targetFile, $fileKey);
+        $hasInheritedOwner = docs_outgoing_file_has_inherited_private_owner($targetFile, $targetRecord);
+        if (
+            !$hasSignedAccess
+            && (($hasInheritedOwner && !$canManageOutgoing) || !docs_outgoing_file_user_can_access($targetFile, $canManageOutgoing, $currentUserKeys))
+        ) {
+            respond_error('Доступ к приватному файлу запрещён.', 403, [
+                'reason' => 'outgoing_private_file_forbidden',
+            ]);
+        }
+
+        $resolvedPath = '';
+        foreach (docs_get_outgoing_file_path_candidates($folder, $targetFile) as $pathCandidate) {
+            if (is_file($pathCandidate) && is_readable($pathCandidate)) {
+                $resolvedPath = $pathCandidate;
+                break;
+            }
+        }
+
+        if ($resolvedPath === '') {
+            respond_error('Файл не найден.', 404, [
+                'reason' => 'outgoing_file_storage_missing',
+            ]);
+        }
+
+        $fileName = sanitize_text_field((string) ($targetFile['originalName'] ?? ($targetFile['storedName'] ?? 'document')), 255);
+        $disposition = isset($_GET['disposition']) && is_string($_GET['disposition'])
+            ? $_GET['disposition']
+            : 'inline';
+
+        docs_stream_file_response($resolvedPath, $fileName, $disposition, $method);
+        break;
+
     case 'outgoing_list':
         $requestContext = docs_build_request_user_context();
         $resolvedUserId = $requestContext['primaryId'] ?? null;
@@ -19802,8 +22183,11 @@ switch ($action) {
         $organization = $accessContext['active'];
         $folder = sanitize_folder_name($organization);
         $sessionAuth = docs_get_session_auth();
-        $canManageOutgoing = docs_user_can_manage_outgoing_records($accessContext, $sessionAuth);
+        $canManageOutgoing = docs_user_can_manage_outgoing_records($accessContext, is_array($sessionAuth) ? $sessionAuth : null);
+        $sessionAuthForIdentity = is_array($sessionAuth) ? $sessionAuth : null;
+        $currentUserKeys = docs_resolve_outgoing_private_user_keys($requestContext, $sessionAuthForIdentity);
         $outgoingRecords = docs_sort_outgoing_records(docs_load_outgoing_registry($folder));
+        $outgoingRecordsResponse = docs_prepare_outgoing_records_response($outgoingRecords, $canManageOutgoing, $currentUserKeys, $folder);
 
         log_docs_event('Outgoing registry prepared', [
             'organization' => $organization,
@@ -19817,7 +22201,7 @@ switch ($action) {
         respond_success([
             'organization' => $organization,
             'organizations' => $accessContext['accessible'],
-            'records' => array_values($outgoingRecords),
+            'records' => array_values($outgoingRecordsResponse),
             'documentsCount' => count($outgoingRecords),
             'manualCount' => count($outgoingRecords),
             'registryDisplayPath' => 'documents/' . $folder . '/' . OUTGOING_REGISTRY_FILENAME,
@@ -19844,11 +22228,7 @@ switch ($action) {
         $requestedOrganization = docs_normalize_organization_candidate((string) ($payload['organization'] ?? ''));
         $accessContext = docs_resolve_access_context($requestedOrganization);
         $sessionAuth = docs_get_session_auth();
-        if (!docs_user_can_manage_outgoing_records($accessContext, $sessionAuth)) {
-            respond_error('Изменение записей доступно только администратору.', 403, [
-                'reason' => 'outgoing_update_admin_required',
-            ]);
-        }
+        $canManageOutgoing = docs_user_can_manage_outgoing_records($accessContext, is_array($sessionAuth) ? $sessionAuth : null);
 
         $recordId = sanitize_text_field((string) ($payload['id'] ?? ''), 160);
         if ($recordId === '') {
@@ -19859,6 +22239,7 @@ switch ($action) {
         $sessionAuthForIdentity = is_array($sessionAuth) ? $sessionAuth : null;
         $userLabel = docs_resolve_current_user_label($requestContext, $sessionAuthForIdentity);
         $userKey = docs_resolve_current_user_key($requestContext, $sessionAuthForIdentity);
+        $userKeys = docs_resolve_outgoing_private_user_keys($requestContext, $sessionAuthForIdentity);
         if ($userKey === '') {
             $userKey = 'name:' . mb_strtolower($userLabel, 'UTF-8');
         }
@@ -19867,7 +22248,9 @@ switch ($action) {
             sanitize_folder_name($accessContext['active']),
             $recordId,
             $userLabel,
-            $userKey
+            $userKey,
+            $canManageOutgoing,
+            $userKeys
         );
         if (empty($lockResult['ok'])) {
             respond_error(
@@ -19920,6 +22303,7 @@ switch ($action) {
         if (!is_array($payload)) {
             $payload = [];
         }
+        $payload = docs_normalize_outgoing_save_payload($payload);
 
         $requestedOrganization = docs_normalize_organization_candidate((string) ($payload['organization'] ?? ''));
         $accessContext = docs_resolve_access_context($requestedOrganization);
@@ -19931,13 +22315,8 @@ switch ($action) {
         $requestContext = docs_build_request_user_context();
         $sessionAuthForIdentity = is_array($sessionAuth) ? $sessionAuth : null;
         $authorLabel = docs_resolve_current_user_label($requestContext, $sessionAuthForIdentity);
-        $authorKey = docs_resolve_current_user_key($requestContext, $sessionAuthForIdentity);
-
-        if ($recordId !== '' && !$canManageOutgoing) {
-            respond_error('Изменение записей доступно только администратору.', 403, [
-                'reason' => 'outgoing_update_admin_required',
-            ]);
-        }
+        $authorKey = docs_resolve_outgoing_private_user_key($requestContext, $sessionAuthForIdentity);
+        $authorKeys = docs_resolve_outgoing_private_user_keys($requestContext, $sessionAuthForIdentity);
 
         [$outgoingRegistryHandle, $records] = docs_lock_outgoing_registry($folder);
         if ($outgoingRegistryHandle === null) {
@@ -19953,12 +22332,15 @@ switch ($action) {
             respond_error($message, $status, $details);
         };
         $savedRecord = null;
+        $outgoingFilesPendingDeletion = [];
 
         if ($recordId === '') {
             $savedRecord = docs_sanitize_outgoing_record_payload($payload, null, $authorLabel, $authorKey);
             $validationError = docs_validate_outgoing_record($savedRecord);
             if ($validationError !== null) {
-                $failOutgoingSave($validationError, 422);
+                $failOutgoingSave($validationError, 422, [
+                    'reason' => docs_outgoing_validation_reason($validationError),
+                ]);
             }
             if (docs_outgoing_number_exists($records, (string) ($savedRecord['outgoingNumber'] ?? ''))) {
                 $failOutgoingSave('Исходящий номер уже зарегистрирован.', 409, [
@@ -19970,7 +22352,10 @@ switch ($action) {
             docs_attach_uploaded_outgoing_files_to_record(
                 $savedRecord,
                 $folder,
-                'Запись исходящей корреспонденции не создана'
+                'Запись исходящей корреспонденции не создана',
+                $authorLabel,
+                $authorKey,
+                docs_payload_requests_private_outgoing_files($payload)
             );
             $records[] = $savedRecord;
         } else {
@@ -19984,6 +22369,12 @@ switch ($action) {
 
             if ($recordIndex === null) {
                 $failOutgoingSave('Запись исходящей корреспонденции не найдена.', 404);
+            }
+
+            if (!docs_outgoing_record_user_can_edit($records[$recordIndex], $canManageOutgoing, $authorKeys)) {
+                $failOutgoingSave('Редактировать можно только записи, которые вы добавили.', 403, [
+                    'reason' => 'outgoing_update_forbidden',
+                ]);
             }
 
             $editLockToken = sanitize_text_field((string) ($payload['editLockToken'] ?? ''), 120);
@@ -20005,7 +22396,9 @@ switch ($action) {
             $savedRecord = docs_sanitize_outgoing_record_payload($payload, $records[$recordIndex], $authorLabel, $authorKey);
             $validationError = docs_validate_outgoing_record($savedRecord);
             if ($validationError !== null) {
-                $failOutgoingSave($validationError, 422);
+                $failOutgoingSave($validationError, 422, [
+                    'reason' => docs_outgoing_validation_reason($validationError),
+                ]);
             }
             if (docs_outgoing_number_exists($records, (string) ($savedRecord['outgoingNumber'] ?? ''), $recordId)) {
                 $failOutgoingSave('Исходящий номер уже зарегистрирован.', 409, [
@@ -20014,11 +22407,14 @@ switch ($action) {
                 ]);
             }
 
-            docs_apply_outgoing_file_mutation($savedRecord, $folder, $payload);
+            docs_apply_outgoing_file_mutation($savedRecord, $folder, $payload, $outgoingFilesPendingDeletion);
             docs_attach_uploaded_outgoing_files_to_record(
                 $savedRecord,
                 $folder,
-                'Запись исходящей корреспонденции не обновлена'
+                'Запись исходящей корреспонденции не обновлена',
+                $authorLabel,
+                $authorKey,
+                docs_payload_requests_private_outgoing_files($payload)
             );
             unset($savedRecord['editLock']);
             $records[$recordIndex] = $savedRecord;
@@ -20031,13 +22427,147 @@ switch ($action) {
         }
         docs_unlock_outgoing_registry($outgoingRegistryHandle);
         $outgoingRegistryHandle = null;
+        foreach ($outgoingFilesPendingDeletion as $filePendingDeletion) {
+            if (is_array($filePendingDeletion)) {
+                docs_delete_outgoing_file_from_storage($folder, $filePendingDeletion);
+            }
+        }
         $outgoingRecords = docs_sort_outgoing_records($records);
-        $outgoingRecordsResponse = docs_prepare_outgoing_records_response($outgoingRecords);
+        $outgoingRecordsResponse = docs_prepare_outgoing_records_response($outgoingRecords, $canManageOutgoing, $authorKeys, $folder);
 
         respond_success([
             'message' => $recordId === '' ? 'Запись добавлена.' : 'Запись обновлена.',
             'organization' => $organization,
-            'savedRecord' => docs_prepare_outgoing_record($savedRecord),
+            'savedRecord' => docs_prepare_outgoing_record_response($savedRecord, $canManageOutgoing, $authorKeys, $folder),
+            'records' => array_values($outgoingRecordsResponse),
+            'documentsCount' => count($outgoingRecords),
+            'manualCount' => count($outgoingRecords),
+            'canAddOutgoingRecords' => true,
+            'canManageOutgoingRecords' => $canManageOutgoing,
+        ]);
+        break;
+
+    case 'outgoing_attach_files':
+        if ($method !== 'POST') {
+            respond_error('Некорректный метод запроса.', 405);
+        }
+
+        $payload = load_json_payload();
+        if (!is_array($payload) || empty($payload)) {
+            $payload = $_POST;
+        }
+        if (!is_array($payload)) {
+            $payload = [];
+        }
+
+        $requestedOrganization = docs_normalize_organization_candidate((string) ($payload['organization'] ?? ''));
+        $accessContext = docs_resolve_access_context($requestedOrganization);
+        $organization = $accessContext['active'];
+        $folder = sanitize_folder_name($organization);
+        $sessionAuth = docs_get_session_auth();
+        $canManageOutgoing = docs_user_can_manage_outgoing_records($accessContext, $sessionAuth);
+        $recordId = sanitize_text_field((string) ($payload['id'] ?? ''), 160);
+        if ($recordId === '') {
+            respond_error('Не указан идентификатор записи.', 400, [
+                'reason' => 'outgoing_record_id_required',
+            ]);
+        }
+
+        if (empty($_FILES['attachments']) || !isset($_FILES['attachments']['name'])) {
+            respond_error('Выберите минимум один файл для прикрепления.', 422, [
+                'reason' => 'outgoing_attachment_required',
+            ]);
+        }
+
+        $attachmentNames = $_FILES['attachments']['name'];
+        $attachmentErrors = $_FILES['attachments']['error'] ?? UPLOAD_ERR_NO_FILE;
+        $hasAttachmentCandidate = false;
+        if (is_array($attachmentNames)) {
+            $attachmentCount = count($attachmentNames);
+            for ($i = 0; $i < $attachmentCount; $i++) {
+                $candidateName = trim((string) ($attachmentNames[$i] ?? ''));
+                $candidateError = isset($attachmentErrors[$i]) ? (int) $attachmentErrors[$i] : UPLOAD_ERR_NO_FILE;
+                if ($candidateName !== '' || $candidateError !== UPLOAD_ERR_NO_FILE) {
+                    $hasAttachmentCandidate = true;
+                    break;
+                }
+            }
+        } else {
+            $hasAttachmentCandidate = trim((string) $attachmentNames) !== ''
+                || (int) $attachmentErrors !== UPLOAD_ERR_NO_FILE;
+        }
+        if (!$hasAttachmentCandidate) {
+            respond_error('Выберите минимум один файл для прикрепления.', 422, [
+                'reason' => 'outgoing_attachment_required',
+            ]);
+        }
+
+        $requestContext = docs_build_request_user_context();
+        $sessionAuthForIdentity = is_array($sessionAuth) ? $sessionAuth : null;
+        $authorLabel = docs_resolve_current_user_label($requestContext, $sessionAuthForIdentity);
+        $authorKey = docs_resolve_outgoing_private_user_key($requestContext, $sessionAuthForIdentity);
+        $authorKeys = docs_resolve_outgoing_private_user_keys($requestContext, $sessionAuthForIdentity);
+
+        [$outgoingRegistryHandle, $records] = docs_lock_outgoing_registry($folder);
+        if ($outgoingRegistryHandle === null) {
+            respond_error('Не удалось заблокировать реестр исходящей корреспонденции. Повторите сохранение.', 503, [
+                'reason' => 'outgoing_registry_lock_failed',
+            ]);
+        }
+
+        $failOutgoingAttach = static function (string $message, int $status = 400, array $details = []) use (&$outgoingRegistryHandle): void {
+            if ($outgoingRegistryHandle !== null) {
+                docs_unlock_outgoing_registry($outgoingRegistryHandle);
+                $outgoingRegistryHandle = null;
+            }
+            respond_error($message, $status, $details);
+        };
+
+        $recordIndex = null;
+        foreach ($records as $index => $record) {
+            if (is_array($record) && (string) ($record['id'] ?? '') === $recordId) {
+                $recordIndex = $index;
+                break;
+            }
+        }
+
+        if ($recordIndex === null) {
+            $failOutgoingAttach('Запись исходящей корреспонденции не найдена.', 404, [
+                'reason' => 'outgoing_record_not_found',
+            ]);
+        }
+
+        $savedRecord = docs_prepare_outgoing_record($records[$recordIndex] ?? [], 'outgoing', true);
+        $savedRecord['updatedBy'] = $authorLabel;
+        $savedRecord['updatedByKey'] = $authorKey;
+        $savedRecord['updatedAt'] = date('c');
+
+        docs_attach_uploaded_outgoing_files_to_record(
+            $savedRecord,
+            $folder,
+            'Файлы исходящей корреспонденции не прикреплены',
+            $authorLabel,
+            $authorKey,
+            docs_payload_requests_private_outgoing_files($payload)
+        );
+
+        $records[$recordIndex] = $savedRecord;
+
+        if (!docs_save_outgoing_registry_locked($outgoingRegistryHandle, $records)) {
+            $failOutgoingAttach('Не удалось сохранить реестр исходящей корреспонденции. Повторите действие.', 500, [
+                'reason' => 'outgoing_registry_save_failed',
+            ]);
+        }
+        docs_unlock_outgoing_registry($outgoingRegistryHandle);
+        $outgoingRegistryHandle = null;
+
+        $outgoingRecords = docs_sort_outgoing_records($records);
+        $outgoingRecordsResponse = docs_prepare_outgoing_records_response($outgoingRecords, $canManageOutgoing, $authorKeys, $folder);
+
+        respond_success([
+            'message' => 'Файлы прикреплены.',
+            'organization' => $organization,
+            'savedRecord' => docs_prepare_outgoing_record_response($savedRecord, $canManageOutgoing, $authorKeys, $folder),
             'records' => array_values($outgoingRecordsResponse),
             'documentsCount' => count($outgoingRecords),
             'manualCount' => count($outgoingRecords),
@@ -20082,12 +22612,13 @@ switch ($action) {
             ]);
         }
         $found = false;
+        $recordPendingFileDeletion = null;
         foreach ($records as $index => $record) {
             if (!is_array($record) || (string) ($record['id'] ?? '') !== $recordId) {
                 continue;
             }
 
-            docs_delete_outgoing_record_files($folder, $record);
+            $recordPendingFileDeletion = $record;
             unset($records[$index]);
             $found = true;
             break;
@@ -20105,8 +22636,14 @@ switch ($action) {
             ]);
         }
         docs_unlock_outgoing_registry($outgoingRegistryHandle);
+        if (is_array($recordPendingFileDeletion)) {
+            docs_delete_outgoing_record_files($folder, $recordPendingFileDeletion);
+        }
         $outgoingRecords = docs_sort_outgoing_records($records);
-        $outgoingRecordsResponse = docs_prepare_outgoing_records_response($outgoingRecords);
+        $requestContext = docs_build_request_user_context();
+        $sessionAuthForIdentity = is_array($sessionAuth) ? $sessionAuth : null;
+        $currentUserKeys = docs_resolve_outgoing_private_user_keys($requestContext, $sessionAuthForIdentity);
+        $outgoingRecordsResponse = docs_prepare_outgoing_records_response($outgoingRecords, $canManageOutgoing, $currentUserKeys, $folder);
 
         respond_success([
             'message' => 'Запись удалена.',
@@ -20447,8 +22984,10 @@ switch ($action) {
                         );
                     }
 
-                    $storedName = normalize_file_name($originalName, $record, count($record['files']) + 1);
-                    $target = $dir . '/' . $storedName;
+                    [$storedName, $target] = docs_resolve_unique_storage_target(
+                        $dir,
+                        normalize_file_name($originalName, $record, count($record['files']) + 1)
+                    );
 
                     if (move_uploaded_file($tmpPath, $target)) {
                         $createdUploadTargets[] = $target;
@@ -20497,8 +23036,10 @@ switch ($action) {
                 }
                 $tmpPathSingle = (string) $tmpNames;
                 if (is_uploaded_file($tmpPathSingle)) {
-                    $storedNameSingle = normalize_file_name($originalNameSingle, $record, count($record['files']) + 1);
-                    $targetSingle = $dir . '/' . $storedNameSingle;
+                    [$storedNameSingle, $targetSingle] = docs_resolve_unique_storage_target(
+                        $dir,
+                        normalize_file_name($originalNameSingle, $record, count($record['files']) + 1)
+                    );
                     if (move_uploaded_file($tmpPathSingle, $targetSingle)) {
                         $createdUploadTargets[] = $targetSingle;
                         $aiBriefSingle = isset($attachmentsAiBrief[0]) ? trim((string) $attachmentsAiBrief[0]) : '';
@@ -20568,7 +23109,17 @@ switch ($action) {
 
         $records[] = $record;
         if ($registryHandle !== null) {
-            docs_save_registry_locked($registryHandle, $records);
+            if (!docs_save_registry_locked($registryHandle, $records)) {
+                foreach ($createdUploadTargets as $createdUploadTarget) {
+                    if (is_string($createdUploadTarget) && $createdUploadTarget !== '' && is_file($createdUploadTarget)) {
+                        @unlink($createdUploadTarget);
+                    }
+                }
+                docs_unlock_registry($registryHandle);
+                respond_error('Не удалось сохранить реестр документов. Повторите действие.', 500, [
+                    'reason' => 'registry_save_failed',
+                ]);
+            }
             docs_unlock_registry($registryHandle);
         } else {
             save_registry($folder, $records);
@@ -21148,7 +23699,10 @@ switch ($action) {
         }
 
         $folder = sanitize_folder_name($organization);
-        $records = load_registry($folder);
+        [$registryHandle, $records] = docs_lock_registry($folder);
+        if ($registryHandle === null) {
+            $records = load_registry($folder);
+        }
         $settings = load_admin_settings($folder);
         $responsibles = isset($settings['responsibles']) && is_array($settings['responsibles'])
             ? $settings['responsibles']
@@ -21191,6 +23745,8 @@ switch ($action) {
         $assignmentNotifications = [];
         $assignmentNotificationIndex = [];
         $updatedRecordSanitized = null;
+        $documentFilesPendingDeletion = [];
+        $documentFilesCreatedDuringUpdate = [];
         $filesToDelete = [];
         $filesRemaining = [];
         $hasFilesRemainingPayload = array_key_exists('filesRemaining', $payload);
@@ -21291,7 +23847,6 @@ switch ($action) {
             'hasFilesRemainingPayload' => $hasFilesRemainingPayload,
         ]);
 
-        $registryHandle = null;
         foreach ($records as &$record) {
             if (!is_array($record) || !isset($record['id']) || (string) $record['id'] !== $documentId) {
                 continue;
@@ -21980,6 +24535,7 @@ switch ($action) {
                             'hasFilesRemainingPayload' => $hasFilesRemainingPayload,
                         ]);
                         if ($matchesDelete || !$matchesRemaining) {
+                            $documentFilesPendingDeletion[] = $file;
                             docs_log_file_debug('files:update file removed from record', [
                                 'documentId' => $documentId,
                                 'storedName' => $storedName,
@@ -22004,6 +24560,18 @@ switch ($action) {
 
                 if (!empty($_FILES['attachments']) && isset($_FILES['attachments']['name'])) {
                     $dir = ensure_organization_directory($folder);
+                    $failUpdateUpload = static function (string $message, int $status = 500, array $details = []) use (&$documentFilesCreatedDuringUpdate, &$registryHandle): void {
+                        foreach ($documentFilesCreatedDuringUpdate as $createdUploadTarget) {
+                            if (is_string($createdUploadTarget) && $createdUploadTarget !== '' && is_file($createdUploadTarget)) {
+                                @unlink($createdUploadTarget);
+                            }
+                        }
+                        if ($registryHandle !== null) {
+                            docs_unlock_registry($registryHandle);
+                            $registryHandle = null;
+                        }
+                        respond_error($message, $status, $details);
+                    };
                     $attachmentsAiBriefRaw = $_POST['attachmentsAiBrief'] ?? [];
                     if (!is_array($attachmentsAiBriefRaw)) {
                         $attachmentsAiBriefRaw = [$attachmentsAiBriefRaw];
@@ -22032,13 +24600,22 @@ switch ($action) {
                         $count = count($names);
                         for ($i = 0; $i < $count; $i++) {
                             if (!isset($errors[$i]) || $errors[$i] !== UPLOAD_ERR_OK) {
+                                $uploadError = isset($errors[$i]) ? (int) $errors[$i] : UPLOAD_ERR_NO_FILE;
+                                $uploadName = isset($names[$i]) ? docs_normalize_uploaded_filename((string) $names[$i]) : 'Файл';
                                 docs_log_file_debug('files:update skipped upload error', [
                                     'documentId' => $documentId,
                                     'index' => $i,
                                     'name' => $names[$i] ?? '',
-                                    'error' => $errors[$i] ?? null,
+                                    'error' => $uploadError,
                                 ]);
-                                continue;
+                                if ($uploadError === UPLOAD_ERR_NO_FILE && trim((string) ($names[$i] ?? '')) === '') {
+                                    continue;
+                                }
+                                $failUpdateUpload(
+                                    'Документ не обновлён: не удалось загрузить файл «' . $uploadName . '». Повторите сохранение.',
+                                    500,
+                                    ['reason' => 'upload_error', 'uploadError' => $uploadError]
+                                );
                             }
 
                             $originalName = docs_normalize_uploaded_filename((string) $names[$i]);
@@ -22051,10 +24628,7 @@ switch ($action) {
                                     'size' => $sizes[$i] ?? null,
                                     'error' => $validationError,
                                 ]);
-                                if ($registryHandle !== null) {
-                                    docs_unlock_registry($registryHandle);
-                                }
-                                respond_error($validationError, 422, ['reason' => 'invalid_attachment']);
+                                $failUpdateUpload('Документ не обновлён: ' . $validationError, 422, ['reason' => 'invalid_attachment']);
                             }
                             $tmpPath = (string) $tmpNames[$i];
                             if (!is_uploaded_file($tmpPath)) {
@@ -22064,13 +24638,20 @@ switch ($action) {
                                     'name' => $originalName,
                                     'tmpPath' => $tmpPath,
                                 ]);
-                                continue;
+                                $failUpdateUpload(
+                                    'Документ не обновлён: сервер не получил файл «' . $originalName . '». Повторите сохранение.',
+                                    500,
+                                    ['reason' => 'upload_tmp_missing']
+                                );
                             }
 
-                            $storedName = normalize_file_name($originalName, $record, $existingFileCount + $i + 1);
-                            $target = $dir . '/' . $storedName;
+                            [$storedName, $target] = docs_resolve_unique_storage_target(
+                                $dir,
+                                normalize_file_name($originalName, $record, $existingFileCount + $i + 1)
+                            );
 
                             if (move_uploaded_file($tmpPath, $target)) {
+                                $documentFilesCreatedDuringUpdate[] = $target;
                                 $aiBrief = isset($attachmentsAiBrief[$i]) ? trim((string) $attachmentsAiBrief[$i]) : '';
                                 $record['files'][] = [
                                     'originalName' => $originalName,
@@ -22096,6 +24677,11 @@ switch ($action) {
                                     'storedName' => $storedName,
                                     'target' => $target,
                                 ]);
+                                $failUpdateUpload(
+                                    'Документ не обновлён: не удалось сохранить файл «' . $originalName . '» в хранилище.',
+                                    500,
+                                    ['reason' => 'upload_move_failed']
+                                );
                             }
                         }
                     } elseif ($errors === UPLOAD_ERR_OK) {
@@ -22108,16 +24694,16 @@ switch ($action) {
                                 'size' => $sizes ?? null,
                                 'error' => $validationErrorSingle,
                             ]);
-                            if ($registryHandle !== null) {
-                                docs_unlock_registry($registryHandle);
-                            }
-                            respond_error($validationErrorSingle, 422, ['reason' => 'invalid_attachment']);
+                            $failUpdateUpload('Документ не обновлён: ' . $validationErrorSingle, 422, ['reason' => 'invalid_attachment']);
                         }
                         $tmpPathSingle = (string) $tmpNames;
                         if (is_uploaded_file($tmpPathSingle)) {
-                            $storedNameSingle = normalize_file_name($originalNameSingle, $record, $existingFileCount + 1);
-                            $targetSingle = $dir . '/' . $storedNameSingle;
+                            [$storedNameSingle, $targetSingle] = docs_resolve_unique_storage_target(
+                                $dir,
+                                normalize_file_name($originalNameSingle, $record, $existingFileCount + 1)
+                            );
                             if (move_uploaded_file($tmpPathSingle, $targetSingle)) {
+                                $documentFilesCreatedDuringUpdate[] = $targetSingle;
                                 $aiBriefSingle = isset($attachmentsAiBrief[0]) ? trim((string) $attachmentsAiBrief[0]) : '';
                                 $record['files'][] = [
                                     'originalName' => $originalNameSingle,
@@ -22141,6 +24727,11 @@ switch ($action) {
                                     'storedName' => $storedNameSingle,
                                     'target' => $targetSingle,
                                 ]);
+                                $failUpdateUpload(
+                                    'Документ не обновлён: не удалось сохранить файл «' . $originalNameSingle . '» в хранилище.',
+                                    500,
+                                    ['reason' => 'upload_move_failed']
+                                );
                             }
                         } else {
                             docs_log_file_debug('files:update temp file missing single', [
@@ -22148,13 +24739,29 @@ switch ($action) {
                                 'name' => $originalNameSingle,
                                 'tmpPath' => $tmpPathSingle,
                             ]);
+                            $failUpdateUpload(
+                                'Документ не обновлён: сервер не получил файл «' . $originalNameSingle . '». Повторите сохранение.',
+                                500,
+                                ['reason' => 'upload_tmp_missing']
+                            );
                         }
                     } else {
+                        $uploadErrorSingle = (int) $errors;
+                        $uploadNameSingle = is_string($names) && trim($names) !== ''
+                            ? docs_normalize_uploaded_filename($names)
+                            : 'Файл';
                         docs_log_file_debug('files:update skipped upload error single', [
                             'documentId' => $documentId,
                             'name' => is_string($names) ? $names : '',
-                            'error' => $errors,
+                            'error' => $uploadErrorSingle,
                         ]);
+                        if ($uploadErrorSingle !== UPLOAD_ERR_NO_FILE || (is_string($names) && trim($names) !== '')) {
+                            $failUpdateUpload(
+                                'Документ не обновлён: не удалось загрузить файл «' . $uploadNameSingle . '». Повторите сохранение.',
+                                500,
+                                ['reason' => 'upload_error', 'uploadError' => $uploadErrorSingle]
+                            );
+                        }
                     }
                 }
             }
@@ -22180,10 +24787,25 @@ switch ($action) {
         }
 
         if ($registryHandle !== null) {
-            docs_save_registry_locked($registryHandle, $records);
+            if (!docs_save_registry_locked($registryHandle, $records)) {
+                foreach ($documentFilesCreatedDuringUpdate as $createdUploadTarget) {
+                    if (is_string($createdUploadTarget) && $createdUploadTarget !== '' && is_file($createdUploadTarget)) {
+                        @unlink($createdUploadTarget);
+                    }
+                }
+                docs_unlock_registry($registryHandle);
+                respond_error('Не удалось сохранить реестр документов. Повторите действие.', 500, [
+                    'reason' => 'registry_save_failed',
+                ]);
+            }
             docs_unlock_registry($registryHandle);
         } else {
             save_registry($folder, $records);
+        }
+        foreach ($documentFilesPendingDeletion as $filePendingDeletion) {
+            if (is_array($filePendingDeletion)) {
+                docs_delete_document_file_from_storage($folder, $filePendingDeletion);
+            }
         }
 
         $preparedRecords = docs_prepare_records_for_response($records, $organization, $folder);

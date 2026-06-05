@@ -889,6 +889,7 @@ const INSTRUCTION_OPTIONS = ['В работу', 'Для информации', '
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'heic', 'heif', 'avif', 'tif', 'tiff', 'ico', 'jfif', 'jxl']);
 const VIDEO_EXTENSIONS = new Set(['mp4', 'mov', 'webm', 'mkv', 'avi', 'm4v', '3gp', 'ogv', 'mpeg', 'mpg']);
 const OFFICE_EXTENSIONS = new Set(['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods']);
+const OFFICE_WORD_EXTENSIONS = new Set(['doc', 'docx', 'odt']);
 const MINI_APP_PDF_LIB_URL = 'https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js';
 const MINI_APP_PDF_FONTKIT_URL = 'https://cdn.jsdelivr.net/npm/@pdf-lib/fontkit@1.1.1/dist/fontkit.umd.min.js';
 const MINI_APP_PDF_FONT_REGULAR_URL = '/shrift/Roboto-Regular.ttf';
@@ -1089,10 +1090,10 @@ function logViewerDebugDeep(event, ...details) {
 }
 
 function logDownloadConsole(step, details = {}) {
-  if (typeof console === 'undefined' || !console || typeof console.log !== 'function') {
-    return;
-  }
-  console.log(`[appdosc download] ${step}`, details);
+  logViewFlow('download_console', {
+    step: step || '',
+    details: details && typeof details === 'object' ? details : {}
+  });
 }
 
 function logViewerModeDecision(mode, reason, details = {}) {
@@ -3210,6 +3211,7 @@ const STATUS_CLASSES = {
   success: 'appdosc__status-message--success',
   error: 'appdosc__status-message--error',
   info: 'appdosc__status-message--info',
+  warning: 'appdosc__status-message--warning',
 };
 const STATUS_TOAST_DEFAULT_DURATION_MS = 6500;
 const STATUS_TOAST_LONG_DURATION_MS = 9500;
@@ -8125,14 +8127,6 @@ function updateVisibleTasks() {
 
   state.visibleTasks = applyCompactFilters(visible);
 
-  if (typeof console !== 'undefined' && console && typeof console.debug === 'function') {
-    console.debug('[folders] visible tasks recalculated', {
-      activeFolderId,
-      totalTasks: Array.isArray(state.tasks) ? state.tasks.length : 0,
-      folderScopedCount: folderScopedTasks.length,
-      visibleCountAfterFilters: Array.isArray(state.visibleTasks) ? state.visibleTasks.length : 0,
-    });
-  }
 }
 
 function truncateText(value, limit = 140) {
@@ -10450,6 +10444,39 @@ function triggerDownloadFromUrl(url, filename, options = {}) {
   }
 }
 
+function isDocumentsPublicPath(value) {
+  const normalized = normalizeValue(value).replace(/^\/+/, '');
+  return normalized.toLowerCase().startsWith('documents/');
+}
+
+function normalizeDocumentsPublicPathForEndpoint(value) {
+  const normalized = normalizeValue(value).replace(/^\/+/, '');
+  if (!isDocumentsPublicPath(normalized)) {
+    return normalized;
+  }
+
+  const relativePath = normalized.slice('documents/'.length);
+  let decodedPath = relativePath;
+  try {
+    decodedPath = decodeURIComponent(relativePath);
+  } catch (error) {
+    decodedPath = relativePath;
+  }
+
+  const segments = decodedPath
+    .split(/[\\/]+/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+
+  if (!segments.length || segments.some((segment) => segment === '.' || segment === '..')) {
+    return normalized;
+  }
+
+  return ['documents']
+    .concat(segments.map((segment) => encodeURIComponent(segment)))
+    .join('/');
+}
+
 function createDownloadFileAccessUrl(rawUrl, fileName = '', disposition = 'attachment') {
   const normalizedUrl = normalizeValue(rawUrl);
   if (!normalizedUrl || typeof window === 'undefined') {
@@ -10462,7 +10489,7 @@ function createDownloadFileAccessUrl(rawUrl, fileName = '', disposition = 'attac
       return absoluteUrl.toString();
     }
 
-    const publicPath = absoluteUrl.pathname.replace(/^\/+/, '');
+    const publicPath = normalizeDocumentsPublicPathForEndpoint(absoluteUrl.pathname);
     if (!publicPath || !publicPath.toLowerCase().startsWith('documents/')) {
       return absoluteUrl.toString();
     }
@@ -10981,7 +11008,80 @@ function buildTasksSignature(visibleTasks) {
   return `${normalizeTaskListMode(state.taskListMode)}|${parts.join('|')}`;
 }
 
-function resolveFilePreviewSource(file) {
+function hasUrlScheme(value) {
+  return /^[a-z][a-z0-9+.-]*:/i.test(normalizeValue(value));
+}
+
+function isBareFileReference(value) {
+  const normalized = normalizeValue(value);
+  return Boolean(
+    normalized
+      && !hasUrlScheme(normalized)
+      && !normalized.startsWith('/')
+      && !normalized.includes('/')
+      && !normalized.includes('\\')
+      && !normalized.includes('?')
+      && !normalized.includes('#')
+  );
+}
+
+function encodeDocumentsRelativePath(value) {
+  const normalized = normalizeValue(value).replace(/^\/+/, '');
+  if (!normalized) {
+    return '';
+  }
+
+  const withoutDocumentsPrefix = normalized.replace(/^documents\/+/i, '');
+  let decodedPath = withoutDocumentsPrefix;
+  try {
+    decodedPath = decodeURIComponent(withoutDocumentsPrefix);
+  } catch (error) {
+    decodedPath = withoutDocumentsPrefix;
+  }
+
+  const segments = decodedPath
+    .split(/[\\/]+/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+
+  if (!segments.length || segments.some((segment) => segment === '.' || segment === '..')) {
+    return '';
+  }
+
+  return segments.map((segment) => encodeURIComponent(segment)).join('/');
+}
+
+function buildStoredDocumentPublicUrl(file, task = null) {
+  if (!file || typeof file !== 'object') {
+    return '';
+  }
+
+  const storedName = normalizeValue(file.storedName || file.stored_name || file.storageName);
+  if (!storedName || hasUrlScheme(storedName)) {
+    return '';
+  }
+
+  if (isDocumentsPublicPath(storedName)) {
+    return resolveDocumentUrl(normalizeDocumentsPublicPathForEndpoint(storedName));
+  }
+
+  const folder = normalizeValue(file.documentFolder)
+    || normalizeValue(file.storageFolder)
+    || normalizeValue(task && task.documentFolder)
+    || normalizeValue(task && task.storageFolder)
+    || normalizeValue(task && task.folder)
+    || normalizeValue(file.folder);
+  const organization = folder || getTaskOrganization(task);
+  const encodedFolder = encodeDocumentsRelativePath(organization);
+  const encodedStoredName = encodeDocumentsRelativePath(storedName);
+  if (!encodedFolder || !encodedStoredName) {
+    return '';
+  }
+
+  return resolveDocumentUrl(`documents/${encodedFolder}/${encodedStoredName}`);
+}
+
+function resolveFilePreviewSource(file, task = null) {
   if (!file || typeof file !== 'object') {
     return null;
   }
@@ -10994,7 +11094,6 @@ function resolveFilePreviewSource(file) {
     file.previewUrl,
     file.preview,
     file.url,
-    file.storedName,
   ];
 
   for (let index = 0; index < candidates.length; index += 1) {
@@ -11002,11 +11101,19 @@ function resolveFilePreviewSource(file) {
     if (!value) {
       continue;
     }
+    if (isBareFileReference(value)) {
+      continue;
+    }
 
     const resolved = resolveDocumentUrl(value);
     if (resolved) {
       return { raw: value, resolved };
     }
+  }
+
+  const storedUrl = buildStoredDocumentPublicUrl(file, task);
+  if (storedUrl) {
+    return { raw: storedUrl, resolved: storedUrl };
   }
 
   return null;
@@ -11043,7 +11150,7 @@ function resolveTaskViewerFiles(task) {
     if (!file || typeof file !== 'object') {
       return;
     }
-    const preview = resolveFilePreviewSource(file);
+    const preview = resolveFilePreviewSource(file, task);
     if (!preview) {
       return;
     }
@@ -11198,7 +11305,49 @@ function isSameOriginUrl(url) {
 }
 
 function isOfficePreviewUrl(url) {
-  return typeof url === 'string' && url.includes('view.officeapps.live.com/op/embed.aspx');
+  return typeof url === 'string' && /view\.officeapps\.live\.com\/op\/(?:embed|view)\.aspx/i.test(url);
+}
+
+function getOfficePreviewSourceUrl(url) {
+  if (!isOfficePreviewUrl(url)) {
+    return normalizeValue(url);
+  }
+  try {
+    const parsed = new URL(url);
+    return normalizeValue(parsed.searchParams.get('src'));
+  } catch (error) {
+    return normalizeValue(url);
+  }
+}
+
+function buildOfficePreviewUrl(resolvedUrl, fileName = '', mode = 'embed') {
+  const source = getOfficePreviewSourceUrl(resolvedUrl);
+  if (!source) {
+    return '';
+  }
+
+  const normalized = toAbsoluteUrl(String(source).trim());
+  if (normalized.startsWith('blob:') || normalized.startsWith('data:')) {
+    return normalized;
+  }
+
+  const extension = getFileExtension(fileName || normalized);
+  if (!OFFICE_EXTENSIONS.has(extension) && !isOfficePreviewUrl(resolvedUrl)) {
+    return normalized;
+  }
+
+  try {
+    const normalizedWithVersion = appendCacheBuster(normalized);
+    const endpoint = mode === 'view' ? 'view.aspx' : 'embed.aspx';
+    const previewUrl = new URL(`https://view.officeapps.live.com/op/${endpoint}`);
+    previewUrl.searchParams.set('src', normalizedWithVersion);
+    previewUrl.searchParams.set('wdStartOn', '1');
+    previewUrl.searchParams.set('wdPrint', '0');
+    previewUrl.searchParams.set('wdEmbedCode', '0');
+    return previewUrl.toString();
+  } catch (error) {
+    return normalized;
+  }
 }
 
 function buildPreviewUrl(resolvedUrl, fileName = '') {
@@ -11226,12 +11375,7 @@ function buildPreviewUrl(resolvedUrl, fileName = '') {
   }
 
   if (OFFICE_EXTENSIONS.has(extension)) {
-    try {
-      const encoded = encodeURIComponent(normalizedWithVersion);
-      return `https://view.officeapps.live.com/op/embed.aspx?src=${encoded}`;
-    } catch (error) {
-      return normalizedWithVersion;
-    }
+    return buildOfficePreviewUrl(normalizedWithVersion, fileName, 'embed');
   }
 
   return normalizedWithVersion;
@@ -12492,19 +12636,20 @@ function getViewerFileToDownload() {
   return null;
 }
 
-function resolveTaskFileDownloadSource(file) {
+function resolveTaskFileDownloadSource(file, task = null) {
   if (!file || typeof file !== 'object') {
     return '';
   }
 
   const candidates = [
+    file.resolvedUrl,
     file.url,
     file.sourceUrl,
     file.downloadUrl,
     file.fileUrl,
     file.file,
     file.path,
-    file.storedName,
+    file.previewUrl,
   ];
 
   for (let index = 0; index < candidates.length; index += 1) {
@@ -12512,10 +12657,18 @@ function resolveTaskFileDownloadSource(file) {
     if (!source) {
       continue;
     }
+    if (isBareFileReference(source)) {
+      continue;
+    }
     const resolved = resolveDocumentUrl(source);
     if (resolved) {
       return resolved;
     }
+  }
+
+  const storedUrl = buildStoredDocumentPublicUrl(file, task);
+  if (storedUrl) {
+    return storedUrl;
   }
 
   return '';
@@ -13288,12 +13441,16 @@ async function openDocumentLink(rawUrl, fileName, task, preferredPreviewUrl, vie
   };
   const effectiveViewerOptions = {
     ...viewerOptions,
+    fileName,
+    extension,
     isPdf,
     ...(shouldForceFrame ? { forceFrame: true } : {}),
     ...(isPdf ? { forceCanvas: true } : {}),
   };
   const pdfViewerOptions = {
     ...viewerOptions,
+    fileName,
+    extension,
     isPdf: true,
     forceCanvas: true,
   };
@@ -13352,6 +13509,7 @@ async function openDocumentLink(rawUrl, fileName, task, preferredPreviewUrl, vie
     platform: isWebPlatform,
     userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
   });
+
   const logExternalPromptDiagnostics = (reason = '') => {
     const externalPromptContext = buildPdfDiagnosticsRequiredFields(task, traceContext, {
       fileName: fileName || '',
@@ -13936,7 +14094,7 @@ async function openDocumentLink(rawUrl, fileName, task, preferredPreviewUrl, vie
     ...baseDetails,
     url: absolutePreviewUrl,
     isPdf,
-    forceFrame,
+    forceFrame: shouldForceFrame,
     disallowFrameForPdf,
     disallowFrameForWeb,
   });
@@ -14082,16 +14240,20 @@ async function openViewerFile(file, task, options = {}) {
     });
     updateViewerLoaderStep(isHeic ? 'Подготовка HEIC…' : 'Подготовка Office…', 10);
     docLoadStep(isHeic ? 'подготовка heic' : 'подготовка office');
-    const officeSource = file && (file.resolvedUrl || file.url || file.previewUrl);
-    const resolvedOfficeUrl = resolveDocumentUrl(officeSource || '');
     fileName = getAttachmentName(file);
+    const officeSource = isOffice
+      ? (resolveTaskFileDownloadSource(file, task) || (file && (file.resolvedUrl || file.url || file.previewUrl)))
+      : (file && (file.resolvedUrl || file.url || file.previewUrl));
+    const resolvedOfficeUrl = resolveDocumentUrl(officeSource || '');
     if (resolvedOfficeUrl) {
-      rawUrl = resolvedOfficeUrl;
+      rawUrl = isOffice
+        ? createDownloadFileAccessUrl(toAbsoluteUrl(resolvedOfficeUrl), fileName, 'inline')
+        : resolvedOfficeUrl;
       isOfficePreview = isOffice;
       sendOfficeViewerLog(isHeic ? 'start_heic' : 'start', {
         ...buildTaskViewLogDetails(task),
         fileName,
-        url: resolvedOfficeUrl,
+        url: rawUrl,
         source: isHeic ? 'heic' : 'office',
       });
     } else {
@@ -14254,14 +14416,19 @@ async function openViewerFile(file, task, options = {}) {
     if (notify) {
       if (mode === 'inline') {
         if (!hasMultiple) {
-          setStatus('info', 'Файл открыт во встроенном просмотрщике. Используйте жесты для масштабирования.');
+          setStatus(
+            'info',
+            isOffice
+              ? 'Документ открыт через Office во встроенном просмотрщике.'
+              : 'Файл открыт во встроенном просмотрщике. Используйте жесты для масштабирования.',
+          );
         }
       } else if (mode === 'external_prompt') {
         // статус уже показан в openDocumentLink
       } else if (mode === 'telegram') {
         setStatus(
           'info',
-          'Документ открыт внутри Telegram в формате PDF.',
+          isOffice ? 'Документ открыт через Office.' : 'Документ открыт внутри Telegram в формате PDF.',
         );
       } else {
         setStatus('info', 'Документ открыт в новой вкладке.');
@@ -15162,29 +15329,42 @@ function setupStatusControls(card, task) {
   const currentStatus = getTaskStatusValue(task);
   const normalizedCurrent = normalizeName(currentStatus);
   const reviewFlowActive = taskHasResponsibleSubordinateReviewFlow(task);
-  const reviewSummary = getSubordinateReviewSummary(task);
+  const currentUserResponsible = userIsResponsibleForTask(task);
+  const ownAssignmentSummary = currentUserResponsible ? getCurrentResponsibleAssignmentCompletionSummary(task) : {
+    completed: 0,
+    total: 0,
+    allCompleted: true,
+    label: '0/0',
+    pendingNames: [],
+    badgeText: 'Мои назначения: нет',
+    message: '',
+  };
   const canCloseByReview = currentUserCanReviewSubordinates(task);
   const statusLabel = container.querySelector('.appdosc-card__status-label');
   optionsContainer.innerHTML = '';
 
   if (statusLabel) {
     statusLabel.textContent = 'Статус задачи';
-    if (reviewFlowActive && reviewSummary.total > 0) {
-      const reviewCounter = document.createElement('span');
-      reviewCounter.className = 'appdosc-card__status-review-counter';
-      reviewCounter.title = `Принято подчинённых: ${reviewSummary.label}`;
-      reviewCounter.setAttribute('aria-label', `Принято подчинённых: ${reviewSummary.label}`);
+    if (currentUserResponsible) {
+      const assignmentCounter = document.createElement('span');
+      assignmentCounter.className = 'appdosc-card__status-assignment-counter';
+      assignmentCounter.title = ownAssignmentSummary.total > 0 && ownAssignmentSummary.pendingNames.length
+        ? ownAssignmentSummary.message
+        : ownAssignmentSummary.badgeText;
+      assignmentCounter.setAttribute('aria-label', ownAssignmentSummary.badgeText);
+      assignmentCounter.dataset.empty = ownAssignmentSummary.total > 0 ? 'false' : 'true';
+      assignmentCounter.dataset.completed = ownAssignmentSummary.allCompleted ? 'true' : 'false';
 
-      const icon = document.createElement('i');
-      icon.className = 'fa-solid fa-user-check appdosc-card__status-review-counter-icon';
-      icon.setAttribute('aria-hidden', 'true');
+      const assignmentIcon = document.createElement('i');
+      assignmentIcon.className = 'fa-solid fa-user-clock appdosc-card__status-assignment-counter-icon';
+      assignmentIcon.setAttribute('aria-hidden', 'true');
 
-      const value = document.createElement('span');
-      value.className = 'appdosc-card__status-review-counter-value';
-      value.textContent = reviewSummary.label;
+      const assignmentValue = document.createElement('span');
+      assignmentValue.className = 'appdosc-card__status-assignment-counter-value';
+      assignmentValue.textContent = ownAssignmentSummary.badgeText;
 
-      reviewCounter.append(icon, value);
-      statusLabel.appendChild(reviewCounter);
+      assignmentCounter.append(assignmentIcon, assignmentValue);
+      statusLabel.appendChild(assignmentCounter);
     }
   }
 
@@ -15212,12 +15392,15 @@ function setupStatusControls(card, task) {
     button.append(iconWrap, text);
     const isActive = normalizedCurrent !== '' && normalizeName(option) === normalizedCurrent;
     const isDoneOption = getStatusSummaryKey(option) === 'done';
-    if (reviewFlowActive && isDoneOption && (!canCloseByReview || !reviewSummary.allAccepted)) {
-      button.disabled = true;
+    const ownAssignmentsBlockDone = currentUserResponsible
+      && ownAssignmentSummary.total > 0
+      && !ownAssignmentSummary.allCompleted;
+    if (isDoneOption && (ownAssignmentsBlockDone || (reviewFlowActive && !canCloseByReview))) {
       button.dataset.statusDisabled = 'true';
-      button.title = !canCloseByReview
-        ? 'Закрыть задачу как выполненную может только ответственный.'
-        : `Сначала примите всех подчинённых: ${reviewSummary.label}.`;
+      button.setAttribute('aria-disabled', 'true');
+      button.title = ownAssignmentsBlockDone
+        ? ownAssignmentSummary.message
+        : 'Закрыть задачу как выполненную может только ответственный.';
     }
     button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
     button.addEventListener('click', () => handleStatusButtonClick(optionsContainer, button, task, option));
@@ -15325,7 +15508,7 @@ function setStatusButtonsLoading(container, isLoading, activeButton) {
       if (btn.dataset.loading === 'true') {
         delete btn.dataset.loading;
       }
-      if (!isCustom && btn.dataset.statusDisabled !== 'true') {
+      if (!isCustom) {
         btn.disabled = false;
       }
     }
@@ -15363,6 +15546,23 @@ async function handleStatusButtonClick(container, button, task, status) {
   const targetStatusKey = getStatusSummaryKey(targetStatus);
   if (targetStatusKey && currentStatusKey && targetStatusKey === currentStatusKey) {
     return;
+  }
+
+  if (button.dataset.statusDisabled === 'true') {
+    setStatus('warning', button.title || 'Этот статус сейчас недоступен.');
+    return;
+  }
+
+  if (
+    targetStatusKey === 'done'
+    && userIsResponsibleForTask(task)
+    && !userIsDirectorForOrganization(getTaskOrganization(task))
+  ) {
+    const ownAssignmentSummary = getCurrentResponsibleAssignmentCompletionSummary(task);
+    if (ownAssignmentSummary.total > 0 && !ownAssignmentSummary.allCompleted) {
+      setStatus('warning', ownAssignmentSummary.message);
+      return;
+    }
   }
 
   const organization = getTaskOrganization(task);
@@ -15933,6 +16133,79 @@ async function sendTaskMutation(update) {
   });
 
   return data;
+}
+
+const TASK_MUTATION_RESPONSE_SYNC_FIELDS = [
+  'assignee',
+  'assignees',
+  'responsible',
+  'responsibles',
+  'subordinate',
+  'subordinates',
+  'assigneeStatusHistory',
+  'reviewFlow',
+  'status',
+  'statusUpdatedAt',
+  'completedAt',
+  'updatedAt',
+];
+
+function applyTaskMutationResponse(task, response) {
+  const serverTask = response && response.task && typeof response.task === 'object'
+    ? response.task
+    : null;
+  if (!serverTask) {
+    return false;
+  }
+
+  const incomingId = normalizeValue(serverTask.id);
+  const localId = normalizeValue(task && task.id);
+  if (incomingId && localId && incomingId !== localId) {
+    return false;
+  }
+
+  const incomingOrganization = getTaskOrganization(serverTask);
+  const localOrganization = getTaskOrganization(task);
+  const taskId = incomingId || localId;
+  const organization = incomingOrganization || localOrganization;
+  const stateTask = Array.isArray(state.tasks)
+    ? state.tasks.find((candidate) => {
+      if (!candidate || typeof candidate !== 'object') {
+        return false;
+      }
+      const candidateId = normalizeValue(candidate.id);
+      if (taskId && candidateId && candidateId !== taskId) {
+        return false;
+      }
+      const candidateOrganization = getTaskOrganization(candidate);
+      return !organization || !candidateOrganization || candidateOrganization === organization;
+    })
+    : null;
+  const target = stateTask || task;
+  if (!target || typeof target !== 'object') {
+    return false;
+  }
+
+  TASK_MUTATION_RESPONSE_SYNC_FIELDS.forEach((field) => {
+    if (!Object.prototype.hasOwnProperty.call(serverTask, field)
+      && Object.prototype.hasOwnProperty.call(target, field)) {
+      delete target[field];
+    }
+  });
+  Object.assign(target, serverTask);
+
+  if (task && target !== task) {
+    TASK_MUTATION_RESPONSE_SYNC_FIELDS.forEach((field) => {
+      if (!Object.prototype.hasOwnProperty.call(target, field)
+        && Object.prototype.hasOwnProperty.call(task, field)) {
+        delete task[field];
+      }
+    });
+    Object.assign(task, target);
+  }
+
+  lastRenderedTasksSignature = '';
+  return true;
 }
 
 function normalizeValue(value) {
@@ -17328,8 +17601,9 @@ function getSubordinateWorkflowStatusLabel(status) {
   return SUBORDINATE_WORKFLOW_STATUS_LABELS[status] || SUBORDINATE_WORKFLOW_STATUS_LABELS.pending;
 }
 
-function getSubordinateReviewSummary(task) {
-  const entries = collectTaskAssignments(task, 'subordinate');
+function getSubordinateReviewSummary(task, filterEntry) {
+  const entries = collectTaskAssignments(task, 'subordinate')
+    .filter((entry) => (typeof filterEntry === 'function' ? filterEntry(entry) : true));
   const accepted = entries.reduce((count, entry) => (
     normalizeSubordinateReviewStatus(entry && entry.reviewStatus) === 'accepted'
       ? count + 1
@@ -17342,6 +17616,244 @@ function getSubordinateReviewSummary(task) {
     total,
     allAccepted: total === 0 || accepted >= total,
     label: `${accepted}/${total}`,
+  };
+}
+
+function normalizeAssignmentRole(value) {
+  const normalized = normalizeValue(value).toLowerCase();
+  if (!normalized) {
+    return '';
+  }
+
+  const roleMap = {
+    director: 'director',
+    'директор': 'director',
+    'руководитель': 'director',
+    admin: 'admin',
+    administrator: 'admin',
+    'администратор': 'admin',
+    'админ': 'admin',
+    responsible: 'responsible',
+    'ответственный': 'responsible',
+    subordinate: 'subordinate',
+    'подчиненный': 'subordinate',
+    'подчинённый': 'subordinate',
+  };
+
+  return roleMap[normalized] || '';
+}
+
+function assignmentEntryAssignedByCurrentUser(entry) {
+  if (!entry || typeof entry !== 'object') {
+    return false;
+  }
+
+  const { ids, names } = getUserIdentifierCandidates();
+  if (!ids.length && !names.length) {
+    return false;
+  }
+
+  const idSet = new Set(ids);
+  const nameSet = new Set(names);
+  const candidates = [
+    entry.assignedBy,
+    entry.assigned_by,
+    entry.assignedByTelegram,
+    entry.assigned_by_telegram,
+    entry.assignedById,
+    entry.assigned_by_id,
+    entry.assignedByLogin,
+    entry.assigned_by_login,
+    entry.assignmentAuthor,
+    entry.assignmentAuthorId,
+    entry.assignmentAuthorName,
+  ];
+
+  return candidates.some((candidate) => {
+    const normalizedId = normalizeIdentifier(candidate);
+    if (normalizedId && idSet.has(normalizedId)) {
+      return true;
+    }
+
+    const normalizedName = normalizeName(candidate);
+    return Boolean(normalizedName && nameSet.has(normalizedName));
+  });
+}
+
+function collectStatusHistoryKeysForAssignment(entry) {
+  const keys = new Set();
+  const addId = (candidate) => {
+    const normalized = normalizeIdentifier(candidate);
+    if (normalized) {
+      keys.add(`id::${normalized}`);
+      keys.add(normalized);
+    }
+  };
+  const addName = (candidate) => {
+    const normalized = normalizeName(candidate);
+    if (normalized) {
+      keys.add(`name::${normalized}`);
+      keys.add(normalized);
+    }
+  };
+
+  if (entry && typeof entry === 'object') {
+    [
+      entry.id,
+      entry.userId,
+      entry.telegram,
+      entry.telegramId,
+      entry.telegram_id,
+      entry.chatId,
+      entry.chat_id,
+      entry.number,
+      entry.responsibleNumber,
+      entry.responsible_number,
+      entry.email,
+      entry.login,
+      entry.username,
+      entry.subordinateId,
+      entry.subordinate,
+    ].forEach(addId);
+    [
+      entry.name,
+      entry.responsible,
+      entry.fullName,
+      entry.fio,
+      entry.displayName,
+    ].forEach(addName);
+  }
+
+  return keys;
+}
+
+function resolveLatestAssignmentStatus(task, entry) {
+  if (!task || typeof task !== 'object' || !entry || typeof entry !== 'object') {
+    return '';
+  }
+
+  const history = Array.isArray(task.assigneeStatusHistory) ? task.assigneeStatusHistory : [];
+  if (!history.length) {
+    return '';
+  }
+
+  const entryKeys = collectStatusHistoryKeysForAssignment(entry);
+  if (!entryKeys.size) {
+    return '';
+  }
+
+  let latest = null;
+  let latestTimestamp = 0;
+  history.forEach((record) => {
+    if (!record || typeof record !== 'object') {
+      return;
+    }
+    const rawKey = normalizeValue(record.assigneeKey).toLowerCase();
+    if (!rawKey || !entryKeys.has(rawKey)) {
+      return;
+    }
+    const entries = Array.isArray(record.entries) ? record.entries : [];
+    if (!entries.length) {
+      return;
+    }
+    const lastEntry = entries[entries.length - 1];
+    const timestamp = Date.parse(lastEntry.changedAt || '');
+    if (!latest || (Number.isFinite(timestamp) && timestamp > latestTimestamp)) {
+      latest = lastEntry;
+      latestTimestamp = Number.isFinite(timestamp) ? timestamp : latestTimestamp;
+    }
+  });
+
+  return normalizeValue(latest && latest.status);
+}
+
+function assignmentEntryCompletedForCurrentResponsible(task, entry) {
+  if (!entry || typeof entry !== 'object') {
+    return false;
+  }
+  if (currentUserMatchesAssignmentEntry(entry)) {
+    return true;
+  }
+  if (normalizeSubordinateReviewStatus(entry.reviewStatus) === 'accepted') {
+    return true;
+  }
+  if (getStatusSummaryKey(entry.status) === 'done') {
+    return true;
+  }
+  return getStatusSummaryKey(resolveLatestAssignmentStatus(task, entry)) === 'done';
+}
+
+function buildCurrentResponsibleAssignmentsBlockMessage(pendingNames) {
+  const names = [];
+  const seen = new Set();
+  if (Array.isArray(pendingNames)) {
+    pendingNames.forEach((name) => {
+      const value = normalizeValue(name);
+      const key = value.toLowerCase();
+      if (!value || seen.has(key)) {
+        return;
+      }
+      seen.add(key);
+      names.push(value);
+    });
+  }
+  if (!names.length) {
+    return 'Вы назначили исполнителя. Ему нужно завершить задачу.';
+  }
+  let label = names.slice(0, 5).join(', ');
+  if (names.length > 5) {
+    label += ` +${names.length - 5}`;
+  }
+  return `Вы назначили: ${label}. Ему нужно завершить задачу.`;
+}
+
+function buildCurrentResponsibleAssignmentBadgeText(summary) {
+  const total = Number(summary && summary.total) || 0;
+  const completed = Number(summary && summary.completed) || 0;
+  if (total <= 0) {
+    return 'Мои назначения: нет';
+  }
+  return `Мои назначения: выполнено ${completed}/${total}`;
+}
+
+function getCurrentResponsibleAssignmentCompletionSummary(task) {
+  const entries = [
+    ...collectTaskAssignments(task, 'responsible'),
+    ...collectTaskAssignments(task, 'subordinate'),
+  ];
+  let completed = 0;
+  let total = 0;
+  const pendingNames = [];
+  const seen = new Set();
+
+  entries.forEach((entry) => {
+    if (!entry || typeof entry !== 'object' || !assignmentEntryAssignedByCurrentUser(entry)) {
+      return;
+    }
+    const role = normalizeAssignmentRole(entry.role || 'responsible') || 'responsible';
+    const keys = collectStatusHistoryKeysForAssignment(entry);
+    const primaryKey = Array.from(keys)[0] || normalizeName(resolveAssignmentSortName(entry)) || total;
+    const dedupeKey = `${role}:${primaryKey}`;
+    if (seen.has(dedupeKey)) {
+      return;
+    }
+    seen.add(dedupeKey);
+    total += 1;
+    if (assignmentEntryCompletedForCurrentResponsible(task, entry)) {
+      completed += 1;
+      return;
+    }
+    pendingNames.push(resolveAssignmentSortName(entry) || 'исполнитель');
+  });
+
+  return {
+    completed,
+    total,
+    allCompleted: total === 0 || completed >= total,
+    pendingNames,
+    label: total > 0 ? `${completed}/${total}` : 'нет',
+    badgeText: buildCurrentResponsibleAssignmentBadgeText({ completed, total }),
+    message: buildCurrentResponsibleAssignmentsBlockMessage(pendingNames),
   };
 }
 
@@ -17652,12 +18164,7 @@ function resolveAssigneeRole(entry, fallback = 'responsible') {
     return fallback;
   }
 
-  const rawRole = normalizeValue(entry.role);
-  if (!rawRole) {
-    return fallback;
-  }
-
-  const normalizedRole = rawRole.toLowerCase();
+  const normalizedRole = normalizeAssignmentRole(entry.role);
   if (normalizedRole === 'subordinate') {
     return 'subordinate';
   }
@@ -22107,7 +22614,7 @@ function resolveResponseViewerFilesForEntry(task, entry, fallbackValue = '') {
       return;
     }
 
-    const preview = resolveFilePreviewSource(file);
+    const preview = resolveFilePreviewSource(file, task);
     if (!preview) {
       return;
     }
@@ -24413,13 +24920,14 @@ function setupAssignmentControls(card, task) {
     });
 
     try {
-      await sendTaskMutation({
+      const response = await sendTaskMutation({
         updateType: 'assign_add',
         organization,
         documentId: task.id,
         assignees: payloadAssignments,
         subordinates: buildMutationSnapshotEntries(task, 'subordinate'),
       });
+      const taskSyncedFromServer = applyTaskMutationResponse(task, response);
 
       logClientEvent('task_assign_success', {
         taskId: task.id || null,
@@ -24440,8 +24948,10 @@ function setupAssignmentControls(card, task) {
           assignmentCandidates,
           normalizeIdentifier(assigneeValue) || assigneeValue.toLowerCase(),
         );
-        if (assignment) {
+        if (assignment && !taskSyncedFromServer) {
           addOptimisticAssignmentToTask(task, 'responsible', assignment, referenceEntry);
+        }
+        if (assignment) {
           registerRenderedEntryKeys(referenceEntry, assigneeValue, normalizeIdentifier(assigneeValue));
           registerAssignedEntry(referenceEntry || assignment);
         }
@@ -25501,13 +26011,14 @@ function setupSubordinateControls(card, task) {
     });
 
     try {
-      await sendTaskMutation({
+      const response = await sendTaskMutation({
         updateType: 'subordinates_add',
         organization,
         documentId: task.id,
         subordinates: payloadAssignments,
         assignees: buildMutationSnapshotEntries(task, 'responsible'),
       });
+      const taskSyncedFromServer = applyTaskMutationResponse(task, response);
 
       logClientEvent('task_subordinate_assign_success', {
         taskId: task.id || null,
@@ -25528,8 +26039,10 @@ function setupSubordinateControls(card, task) {
           assignmentCandidates,
           normalizeIdentifier(assigneeValue) || assigneeValue.toLowerCase(),
         );
-        if (assignment) {
+        if (assignment && !taskSyncedFromServer) {
           addOptimisticAssignmentToTask(task, 'subordinate', assignment, referenceEntry);
+        }
+        if (assignment) {
           registerRenderedEntry(referenceEntry || assignment, assigneeValue, normalizeIdentifier(assigneeValue));
         }
       });
