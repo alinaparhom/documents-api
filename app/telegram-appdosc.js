@@ -8984,20 +8984,21 @@ async function fallbackDownloadViewerFile(task, file, fileName, downloadUrl, isS
       ? await ensureTaskSummaryPreview(task, file)
       : await ensureTaskAttachmentPreview(task, file);
     if (preview && preview.blob) {
-      if (await shareFileViaNativeShare(preview.blob, preview.fileName || resolvedName)) {
+      const previewDownloadName = isSummary ? (preview.fileName || resolvedName) : resolvedName;
+      if (await shareFileViaNativeShare(preview.blob, previewDownloadName)) {
         sendDownloadLog('viewer_download_success', buildViewerDownloadLogDetails(task, file, {
           method: directMode ? 'direct_native_share' : 'telegram_forward_fallback_native_share',
           previewUrl: preview.previewUrl || '',
-          fileName: preview.fileName || resolvedName,
+          fileName: previewDownloadName,
         }));
         setStatus('success', 'Файл передан в системное меню сохранения.');
         return true;
       }
-      downloadBlob(preview.blob, preview.fileName || resolvedName);
+      downloadBlob(preview.blob, previewDownloadName);
       sendDownloadLog('viewer_download_success', buildViewerDownloadLogDetails(task, file, {
         method: directMode ? 'direct_preview' : 'telegram_forward_fallback_preview',
         previewUrl: preview.previewUrl || '',
-        fileName: preview.fileName || resolvedName,
+        fileName: previewDownloadName,
       }));
       setStatus('success', 'Файл подготовлен для скачивания.');
       return true;
@@ -9599,6 +9600,17 @@ function getAttachmentName(file, index) {
     || normalizeValueString(file.storedName)
     || normalizeValueString(file.url)
     || `Файл ${index || 1}`;
+}
+
+function getOriginalAttachmentTransferName(file, fallback = 'document') {
+  if (!file || typeof file !== 'object') {
+    return normalizeValueString(fallback) || 'document';
+  }
+  return normalizeValueString(file.originalName)
+    || normalizeValueString(file.name)
+    || normalizeValueString(file.storedName)
+    || normalizeValueString(fallback)
+    || 'document';
 }
 
 function buildTaskSummaryRows(task, attachments) {
@@ -10614,17 +10626,107 @@ async function shareDownloadUrlViaNativeShare(url, fileName) {
 }
 
 
-function shareFileViaTelegramLink(url, fileName) {
+function truncateTelegramShareLine(value, maxLength = 180) {
+  const normalized = normalizeValue(value);
+  if (!normalized || normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, Math.max(0, maxLength - 1)).trim()}…`;
+}
+
+function buildTelegramFileShareText(task, file, fileName) {
+  const lines = [];
+  const addLine = (label, value, maxLength = 180) => {
+    const normalized = truncateTelegramShareLine(value, maxLength);
+    if (!normalized || normalized === '—') {
+      return;
+    }
+    lines.push(`${label}: ${normalized}`);
+  };
+
+  const resolvedFileName = normalizeValue(fileName) || getAttachmentName(file);
+  addLine('Файл', resolvedFileName, 220);
+
+  if (task && typeof task === 'object') {
+    const entryNumber = normalizeValue(task.entryNumber);
+    const registryNumber = normalizeValue(task.registryNumber);
+    const documentNumber = normalizeValue(task.documentNumber);
+    const numberParts = [];
+    if (entryNumber) {
+      numberParts.push(`запись ${entryNumber}`);
+    }
+    if (registryNumber && registryNumber !== entryNumber) {
+      numberParts.push(`рег. ${registryNumber}`);
+    }
+    if (documentNumber && documentNumber !== entryNumber && documentNumber !== registryNumber) {
+      numberParts.push(`док. ${documentNumber}`);
+    }
+
+    addLine('Документ', normalizeValue(task.document) || normalizeValue(task.summary), 260);
+    addLine('Номер', numberParts.join(', '), 180);
+    addLine('Организация', getTaskOrganization(task), 180);
+    addLine('Корреспондент', resolveCompactCorrespondent(task), 180);
+    addLine('Дата', formatDate(task.registrationDate), 80);
+    addLine('Срок', formatDate(task.dueDate), 80);
+    addLine('Статус', getTaskStatusValue(task), 120);
+  }
+
+  return lines.join('\n').slice(0, 900);
+}
+
+function isTelegramShareableUrl(url) {
+  return /^https?:\/\//i.test(normalizeValue(url));
+}
+
+function buildTelegramShareLink(url, fileName, shareText = '') {
   const normalizedUrl = normalizeValue(url);
-  if (!normalizedUrl) {
+  if (!isTelegramShareableUrl(normalizedUrl)) {
+    return '';
+  }
+  const resolvedShareText = normalizeValue(shareText) || (fileName ? `Файл: ${fileName}` : 'Файл');
+  return `https://t.me/share/url?url=${encodeURIComponent(normalizedUrl)}&text=${encodeURIComponent(resolvedShareText)}`;
+}
+
+async function isTelegramShareUrlReachable(url) {
+  const normalizedUrl = normalizeValue(url);
+  if (!isTelegramShareableUrl(normalizedUrl)) {
     return false;
   }
-  const shareText = fileName ? `Файл: ${fileName}` : 'Файл';
-  const telegramShareUrl = `https://t.me/share/url?url=${encodeURIComponent(normalizedUrl)}&text=${encodeURIComponent(shareText)}`;
+  if (!isSameOriginUrl(normalizedUrl) || typeof fetch !== 'function') {
+    return true;
+  }
+
+  try {
+    const response = await fetch(normalizedUrl, {
+      method: 'HEAD',
+      credentials: 'omit',
+      cache: 'no-store',
+    });
+    if (response.ok) {
+      return true;
+    }
+    if (response.status === 405) {
+      return true;
+    }
+    return false;
+  } catch (error) {
+    return false;
+  }
+}
+
+function shareFileViaTelegramLink(url, fileName, shareText = '') {
+  const telegramShareUrl = buildTelegramShareLink(url, fileName, shareText);
+  if (!telegramShareUrl) {
+    return false;
+  }
   try {
     const webApp = getTelegramWebApp();
     if (webApp && typeof webApp.openTelegramLink === 'function') {
       webApp.openTelegramLink(telegramShareUrl);
+      return true;
+    }
+    if (webApp && typeof webApp.openLink === 'function') {
+      webApp.openLink(telegramShareUrl);
       return true;
     }
   } catch (error) {
@@ -10644,7 +10746,7 @@ function shareFileViaTelegramLink(url, fileName) {
 
 async function resolveShareUrlForTelegram(task, file, fileName, downloadUrl) {
   const primaryUrl = normalizeValue(downloadUrl);
-  if (primaryUrl) {
+  if (isTelegramShareableUrl(primaryUrl) && await isTelegramShareUrlReachable(primaryUrl)) {
     return primaryUrl;
   }
 
@@ -10655,12 +10757,15 @@ async function resolveShareUrlForTelegram(task, file, fileName, downloadUrl) {
       : await ensureTaskAttachmentPreview(task, file);
 
     const previewUrl = normalizeValue(preview && (preview.remoteUrl || preview.previewUrl));
-    if (previewUrl && /^https?:\/\//i.test(previewUrl)) {
+    if (isTelegramShareableUrl(previewUrl) && await isTelegramShareUrlReachable(previewUrl)) {
       return previewUrl;
     }
 
     if (preview && preview.blob) {
-      const uploadedUrl = await uploadPdfPreview(preview.blob, (preview.fileName || fileName || 'document.pdf'));
+      const uploadName = isSummary
+        ? (preview.fileName || fileName || 'document.pdf')
+        : getOriginalAttachmentTransferName(file, fileName || preview.fileName || 'document');
+      const uploadedUrl = await uploadPdfPreview(preview.blob, uploadName);
       if (uploadedUrl) {
         return uploadedUrl;
       }
@@ -10806,7 +10911,7 @@ async function ensureTaskAttachmentPreview(task, file) {
           previewPdfPromise: file.previewPdfPromise || null,
         });
       }
-      void uploadPdfPreview(blob, file.previewPdf.fileName)
+      void uploadPdfPreview(blob, getOriginalAttachmentTransferName(file, file.previewPdf.fileName))
         .then((remoteUrl) => {
           if (remoteUrl) {
             file.previewRemoteUrl = remoteUrl;
@@ -12741,9 +12846,12 @@ function buildTelegramShareUrl(file) {
   if (!file || typeof file !== 'object') {
     return '';
   }
-  const source = file.resolvedUrl || file.url || file.previewUrl || '';
+  const source = normalizeValue(file.resolvedUrl || file.url || file.previewUrl || '');
+  if (!source || source.startsWith('blob:') || source.startsWith('data:')) {
+    return '';
+  }
   const resolved = resolveDocumentUrl(source);
-  if (!resolved) {
+  if (!isTelegramShareableUrl(resolved)) {
     return '';
   }
   const fileName = getAttachmentName(file)
@@ -12751,7 +12859,8 @@ function buildTelegramShareUrl(file) {
     || normalizeValue(file.storedName)
     || 'document';
 
-  return createDownloadFileAccessUrl(toAbsoluteUrl(resolved), fileName, 'inline');
+  const shareUrl = createDownloadFileAccessUrl(toAbsoluteUrl(resolved), fileName, 'inline');
+  return isTelegramShareableUrl(shareUrl) ? shareUrl : '';
 }
 
 function getDownloadPlatformType() {
@@ -13303,8 +13412,9 @@ async function handleViewerDownloadClick() {
   try {
     if (isTelegramWebAppAvailable()) {
       setStatus('info', 'Открываем пересылку в Telegram...');
+      const telegramShareText = buildTelegramFileShareText(task, file, fileName);
       const quickShareUrl = buildTelegramShareUrl(file);
-      const shareUrl = quickShareUrl || await resolveShareUrlForTelegram(task, file, fileName, downloadUrl);
+      const shareUrl = await resolveShareUrlForTelegram(task, file, fileName, quickShareUrl || downloadUrl);
       if (!shareUrl) {
         logDownloadConsole('telegram_forward_url_missing', { fileName, downloadUrl });
         sendDownloadLog('viewer_download_error', buildViewerDownloadLogDetails(task, file, {
@@ -13315,15 +13425,33 @@ async function handleViewerDownloadClick() {
         return;
       }
 
-      const sharedInTelegram = shareFileViaTelegramLink(shareUrl, fileName);
+      const sharedInTelegram = shareFileViaTelegramLink(shareUrl, fileName, telegramShareText);
       if (sharedInTelegram) {
-        logDownloadConsole('telegram_share_success', { fileName, shareUrl, downloadUrl });
+        logDownloadConsole('telegram_share_success', {
+          fileName,
+          shareUrl,
+          downloadUrl,
+          hasShareText: Boolean(telegramShareText),
+          shareTextLength: telegramShareText.length,
+        });
         sendDownloadLog('viewer_download_success', buildViewerDownloadLogDetails(task, file, {
           method: 'telegram_forward_link',
           downloadUrl: shareUrl,
+          originalDownloadUrl: downloadUrl,
+          quickShareUrl,
           fileName,
+          hasShareText: Boolean(telegramShareText),
+          shareTextLength: telegramShareText.length,
         }));
-        setStatus('success', 'Открылся выбор чата в Telegram. Выберите получателя.');
+        setStatusAction(
+          'success',
+          'Открылся выбор чата в Telegram. Если Telegram не показал список чатов, скачайте файл напрямую.',
+          'Скачать',
+          () => {
+            void fallbackDownloadViewerFile(task, file, fileName, downloadUrl || shareUrl, isSummary, { direct: true });
+          },
+          { toast: true, durationMs: STATUS_TOAST_LONG_DURATION_MS }
+        );
         return;
       }
 
