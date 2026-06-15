@@ -4662,36 +4662,35 @@
     var style = document.createElement('style');
     style.id = 'documents-outgoing-registry-style';
     style.textContent = '' +
-      '.documents-outgoing-modal{position:fixed;inset:0;z-index:2800;display:flex;align-items:stretch;justify-content:stretch;padding:0;background:linear-gradient(135deg,rgba(15,23,42,.28),rgba(14,165,233,.16) 42%,rgba(16,185,129,.14));backdrop-filter:blur(18px) saturate(1.35);-webkit-backdrop-filter:blur(18px) saturate(1.35);box-sizing:border-box;}' +
-      '.documents-outgoing-modal__panel{width:100%;height:100vh;max-height:100vh;height:100dvh;max-height:100dvh;display:flex;flex-direction:column;overflow:hidden;border:1px solid rgba(255,255,255,.52);border-radius:0;background:linear-gradient(180deg,rgba(255,255,255,.86),rgba(248,251,255,.78));box-shadow:inset 0 1px 0 rgba(255,255,255,.72),0 24px 70px rgba(15,23,42,.18);color:#172554;backdrop-filter:blur(22px) saturate(1.28);-webkit-backdrop-filter:blur(22px) saturate(1.28);}' +
-      '.documents-outgoing-modal__header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;border-bottom:1px solid rgba(148,163,184,.28);padding:14px 18px 12px;background:linear-gradient(180deg,rgba(255,255,255,.74),rgba(255,255,255,.48));box-shadow:inset 0 1px 0 rgba(255,255,255,.82);}' +
+      '.documents-outgoing-modal{position:fixed;inset:0;z-index:2800;display:flex;align-items:stretch;justify-content:stretch;padding:0;background:rgba(15,23,42,.32);backdrop-filter:blur(10px);box-sizing:border-box;}' +
+      '.documents-outgoing-modal__panel{width:100%;height:100vh;max-height:100vh;height:100dvh;max-height:100dvh;display:flex;flex-direction:column;overflow:hidden;border:0;border-radius:0;background:#fff;box-shadow:none;color:#172554;}' +
+      '.documents-outgoing-modal__header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;border-bottom:1px solid #e2e8f0;padding:14px 18px 12px;}' +
       '.documents-outgoing-modal__title{margin:0;color:#0f172a;font-size:20px;line-height:1.2;font-weight:900;}' +
       '.documents-outgoing-modal__summary{margin:6px 0 0;color:#64748b;font-size:13px;line-height:1.4;font-weight:700;}' +
       '.documents-outgoing-modal__actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex:0 0 auto;}' +
-      '.documents-outgoing-modal__notice{display:none;margin:12px 18px 0;padding:11px 13px;border:1px solid rgba(245,158,11,.38);border-radius:10px;background:rgba(255,251,235,.78);color:#92400e;font-size:13px;font-weight:800;line-height:1.4;box-shadow:0 10px 22px rgba(146,64,14,.08);backdrop-filter:blur(14px) saturate(1.25);-webkit-backdrop-filter:blur(14px) saturate(1.25);}' +
+      '.documents-outgoing-modal__notice{display:none;margin:12px 18px 0;padding:11px 13px;border:1px solid #fde68a;border-radius:10px;background:#fffbeb;color:#92400e;font-size:13px;font-weight:800;line-height:1.4;box-shadow:0 10px 22px rgba(146,64,14,.08);}' +
       '.documents-outgoing-modal__notice--visible{display:block;}' +
       '.documents-outgoing-modal__notice--error{border-color:#fecaca;background:#fff1f2;color:#9f1239;}' +
       '.documents-outgoing-modal__notice--success{border-color:#bbf7d0;background:#ecfdf5;color:#047857;}' +
-      '.documents-outgoing-modal__add{min-height:36px;border:1px solid rgba(36,88,255,.44);border-radius:10px;background:rgba(36,88,255,.88);color:#fff;padding:0 12px;font:inherit;font-size:12px;font-weight:900;cursor:pointer;box-shadow:inset 0 1px 0 rgba(255,255,255,.28),0 10px 24px rgba(37,99,235,.16);transition:background .16s ease,border-color .16s ease,transform .16s ease,box-shadow .16s ease;}' +
-      '.documents-outgoing-modal__add:hover,.documents-outgoing-modal__add:focus-visible{border-color:#1f4fdc;background:#1f4fdc;box-shadow:inset 0 1px 0 rgba(255,255,255,.32),0 14px 28px rgba(37,99,235,.22);outline:0;transform:translateY(-1px);}' +
-      '.documents-outgoing-modal__add:disabled{opacity:.52;cursor:not-allowed;transform:none;box-shadow:none;}' +
-      '.documents-outgoing-modal__close{width:36px;height:36px;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;border:1px solid rgba(203,216,236,.72);border-radius:10px;background:rgba(255,255,255,.62);color:#334155;font-size:22px;line-height:1;cursor:pointer;box-shadow:inset 0 1px 0 rgba(255,255,255,.8);transition:background .16s ease,border-color .16s ease,color .16s ease,transform .16s ease;}' +
-      '.documents-outgoing-modal__close:hover,.documents-outgoing-modal__close:focus-visible{border-color:#93c5fd;background:rgba(239,246,255,.86);color:#1d4ed8;outline:0;transform:translateY(-1px);}' +
-      '.documents-outgoing-modal__body{position:relative;flex:1 1 auto;min-height:0;overflow:auto;overflow-x:auto;scrollbar-gutter:stable both-edges;scroll-behavior:smooth;padding:12px 18px 18px;contain:layout paint;}' +
-      '.documents-outgoing-table{width:100%;min-width:1080px;border-collapse:separate;border-spacing:0;border:1px solid rgba(191,219,254,.78);border-radius:12px;overflow:hidden;background:rgba(255,255,255,.68);font-size:12px;box-shadow:inset 0 1px 0 rgba(255,255,255,.86),0 18px 44px rgba(15,23,42,.08);}' +
-      '.documents-outgoing-table th,.documents-outgoing-table td{border-bottom:1px solid rgba(226,232,240,.82);border-right:1px solid rgba(237,242,247,.86);padding:9px 11px;text-align:left;vertical-align:top;}' +
+      '.documents-outgoing-modal__add{min-height:36px;border:1px solid #2458ff;border-radius:10px;background:#2458ff;color:#fff;padding:0 12px;font:inherit;font-size:12px;font-weight:900;cursor:pointer;transition:background .16s ease,border-color .16s ease,transform .16s ease;}' +
+      '.documents-outgoing-modal__add:hover,.documents-outgoing-modal__add:focus-visible{border-color:#1f4fdc;background:#1f4fdc;outline:0;transform:translateY(-1px);}' +
+      '.documents-outgoing-modal__close{width:36px;height:36px;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;border:1px solid #dbeafe;border-radius:10px;background:#fff;color:#334155;font-size:22px;line-height:1;cursor:pointer;transition:background .16s ease,border-color .16s ease,color .16s ease;}' +
+      '.documents-outgoing-modal__close:hover,.documents-outgoing-modal__close:focus-visible{border-color:#93c5fd;background:#eff6ff;color:#1d4ed8;outline:0;}' +
+      '.documents-outgoing-modal__body{position:relative;flex:1 1 auto;min-height:0;overflow:auto;padding:12px 18px 18px;}' +
+      '.documents-outgoing-table{width:100%;min-width:1080px;border-collapse:separate;border-spacing:0;border:1px solid #dbeafe;border-radius:12px;overflow:hidden;background:#fff;font-size:12px;}' +
+      '.documents-outgoing-table th,.documents-outgoing-table td{border-bottom:1px solid #e2e8f0;border-right:1px solid #edf2f7;padding:10px 12px;text-align:left;vertical-align:top;}' +
       '.documents-outgoing-table th:last-child,.documents-outgoing-table td:last-child{border-right:0;}' +
       '.documents-outgoing-table tr:last-child td{border-bottom:0;}' +
-      '.documents-outgoing-table th{position:sticky;top:0;z-index:1;background:rgba(248,250,252,.88);color:#475569;font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:.02em;backdrop-filter:blur(16px) saturate(1.2);-webkit-backdrop-filter:blur(16px) saturate(1.2);}' +
+      '.documents-outgoing-table th{position:sticky;top:0;z-index:1;background:#f8fafc;color:#475569;font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:.02em;}' +
       '.documents-outgoing-table__header{display:flex;align-items:center;justify-content:space-between;gap:6px;min-width:0;}' +
       '.documents-outgoing-table__header-label{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;}' +
       '.documents-outgoing-table__filter{display:flex;align-items:center;justify-content:space-between;gap:8px;flex:1 1 auto;min-width:0;min-height:24px;padding:0;border:0;background:transparent;color:inherit;font:inherit;text-align:left;text-transform:inherit;letter-spacing:inherit;cursor:pointer;}' +
       '.documents-outgoing-table__filter:hover,.documents-outgoing-table__filter:focus-visible{color:#1d4ed8;outline:none;}' +
       '.documents-outgoing-table__filter-label{min-width:0;overflow:hidden;text-overflow:ellipsis;}' +
-      '.documents-outgoing-table__filter-icon{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:18px;height:18px;border:1px solid rgba(219,234,254,.82);border-radius:6px;background:rgba(255,255,255,.74);color:#94a3b8;font-size:11px;line-height:1;box-shadow:inset 0 1px 0 rgba(255,255,255,.9);}' +
-      '.documents-outgoing-table__filter.is-active .documents-outgoing-table__filter-icon{border-color:#93c5fd;background:rgba(239,246,255,.9);color:#2563eb;}' +
-      '.documents-outgoing-column-drag{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:22px;height:22px;border:1px solid rgba(219,234,254,.82);border-radius:7px;background:rgba(255,255,255,.72);color:#94a3b8;font-size:12px;font-weight:900;line-height:1;cursor:grab;touch-action:none;box-shadow:inset 0 1px 0 rgba(255,255,255,.86);}' +
-      '.documents-outgoing-column-drag:hover,.documents-outgoing-column-drag:focus-visible{border-color:#93c5fd;background:rgba(239,246,255,.88);color:#2563eb;outline:0;}' +
+      '.documents-outgoing-table__filter-icon{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:18px;height:18px;border:1px solid #dbeafe;border-radius:6px;background:#fff;color:#94a3b8;font-size:11px;line-height:1;}' +
+      '.documents-outgoing-table__filter.is-active .documents-outgoing-table__filter-icon{border-color:#93c5fd;background:#eff6ff;color:#2563eb;}' +
+      '.documents-outgoing-column-drag{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:22px;height:22px;border:1px solid #dbeafe;border-radius:7px;background:#fff;color:#94a3b8;font-size:12px;font-weight:900;line-height:1;cursor:grab;touch-action:none;}' +
+      '.documents-outgoing-column-drag:hover,.documents-outgoing-column-drag:focus-visible{border-color:#93c5fd;background:#eff6ff;color:#2563eb;outline:0;}' +
       '.documents-outgoing-column-drag.is-dragging{cursor:grabbing;border-color:#2458ff;color:#2458ff;background:#eff6ff;}' +
       '.documents-outgoing-column-ghost{position:fixed;z-index:33000;pointer-events:none;padding:8px 10px;border:1px solid #bfdbfe;border-radius:10px;background:rgba(255,255,255,.92);box-shadow:0 16px 32px rgba(15,23,42,.2);color:#172554;font-size:12px;font-weight:900;}' +
       '.documents-outgoing-column-drop-line{position:absolute;top:0;width:2px;height:100%;z-index:5;display:none;pointer-events:none;background:#2458ff;box-shadow:0 0 0 1px rgba(255,255,255,.8);}' +
@@ -4700,7 +4699,7 @@
       '.documents-outgoing-table__empty{padding:22px;text-align:center;color:#64748b;font-weight:800;}' +
       '.documents-outgoing-table__summary{max-width:320px;}' +
       '.documents-outgoing-table__actions{display:flex;align-items:center;justify-content:center;gap:5px;flex-wrap:nowrap;min-width:0;}' +
-      '.documents-outgoing-table__action{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:30px;height:30px;min-width:30px;min-height:30px;border:1px solid rgba(219,234,254,.84);border-radius:9px;background:rgba(255,255,255,.66);color:#172554;padding:0;font:inherit;cursor:pointer;box-shadow:inset 0 1px 0 rgba(255,255,255,.88),0 5px 14px rgba(37,99,235,.08);transition:background .16s ease,border-color .16s ease,color .16s ease,box-shadow .16s ease,transform .16s ease;}' +
+      '.documents-outgoing-table__action{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:30px;height:30px;min-width:30px;min-height:30px;border:1px solid #dbeafe;border-radius:9px;background:#fff;color:#172554;padding:0;font:inherit;cursor:pointer;box-shadow:0 5px 14px rgba(37,99,235,.08);transition:background .16s ease,border-color .16s ease,color .16s ease,box-shadow .16s ease,transform .16s ease;}' +
       '.documents-outgoing-table__action-icon{display:block;width:15px;height:15px;flex:0 0 auto;}' +
       '.documents-outgoing-table__action:hover,.documents-outgoing-table__action:focus-visible{border-color:#93c5fd;background:#eff6ff;color:#1d4ed8;box-shadow:0 8px 18px rgba(37,99,235,.16);outline:0;transform:translateY(-1px);}' +
       '.documents-outgoing-table__action--attach{border-color:#bae6fd;color:#0369a1;background:#f0f9ff;}' +
@@ -4709,7 +4708,7 @@
       '.documents-outgoing-table__action--danger:hover,.documents-outgoing-table__action--danger:focus-visible{border-color:#fca5a5;background:#fff1f0;color:#b91c1c;}' +
       '.documents-outgoing-file-list{display:flex;flex-direction:column;gap:5px;min-width:0;}' +
       '.documents-outgoing-file-item{display:block;min-width:0;}' +
-      '.documents-outgoing-file-link{display:grid;grid-template-columns:24px minmax(0,1fr) auto;align-items:center;gap:5px;min-width:0;padding:5px 6px;border:1px solid rgba(226,232,240,.86);border-radius:6px;background:rgba(255,255,255,.72);color:#172554;text-decoration:none;transition:background .16s ease,border-color .16s ease,box-shadow .16s ease;}' +
+      '.documents-outgoing-file-link{display:grid;grid-template-columns:24px minmax(0,1fr) auto;align-items:center;gap:5px;min-width:0;padding:5px 6px;border:1px solid #e2e8f0;border-radius:6px;background:#fff;color:#172554;text-decoration:none;transition:background .16s ease,border-color .16s ease,box-shadow .16s ease;}' +
       '.documents-orders-file-link{grid-template-columns:24px minmax(0,1fr);}' +
       '.documents-outgoing-file-link:hover,.documents-outgoing-file-link:focus-visible{background:#f8fbff;border-color:#bfdbfe;box-shadow:0 6px 16px rgba(37,99,235,.12);outline:0;}' +
       '.documents-outgoing-file-link--locked{cursor:not-allowed;border-color:#fecaca;background:#fff7f7;color:#7f1d1d;}' +
@@ -4723,7 +4722,7 @@
       '.documents-outgoing-private-badge--private{border-color:#fed7aa;background:#fff7ed;color:#c2410c;}' +
       '.documents-outgoing-private-badge--public{border-color:#bbf7d0;background:#f0fdf4;color:#15803d;}' +
       '.documents-outgoing-private-badge--locked{border-color:#fecaca;background:#fee2e2;color:#991b1b;}' +
-      '.documents-outgoing-filter-popover{position:fixed;z-index:31000;width:min(340px,calc(100vw - 24px));max-height:min(520px,calc(100vh - 24px));display:flex;flex-direction:column;gap:10px;padding:12px;border:1px solid rgba(203,216,236,.76);border-radius:12px;background:rgba(255,255,255,.84);box-shadow:inset 0 1px 0 rgba(255,255,255,.85),0 22px 54px rgba(15,23,42,.2);box-sizing:border-box;color:#172554;backdrop-filter:blur(18px) saturate(1.26);-webkit-backdrop-filter:blur(18px) saturate(1.26);}' +
+      '.documents-outgoing-filter-popover{position:fixed;z-index:31000;width:min(340px,calc(100vw - 24px));max-height:min(520px,calc(100vh - 24px));display:flex;flex-direction:column;gap:10px;padding:12px;border:1px solid #cbd8ec;border-radius:12px;background:#fff;box-shadow:0 22px 54px rgba(15,23,42,.2);box-sizing:border-box;color:#172554;}' +
       '.documents-outgoing-filter-popover__title{font-size:13px;font-weight:900;line-height:1.3;color:#0f172a;}' +
       '.documents-outgoing-filter-popover__input{width:100%;height:34px;box-sizing:border-box;border:1px solid #cbd8ec;border-radius:8px;background:#fff;color:#0f172a;padding:0 10px;font:inherit;font-size:13px;outline:0;}' +
       '.documents-outgoing-filter-popover__input:focus{border-color:#2458ff;box-shadow:0 0 0 3px rgba(36,88,255,.13);}' +
@@ -23003,7 +23002,7 @@
     }, 0);
   }
 
-  function createOutgoingActionIconButton(iconName, label, variantClass, actionName) {
+  function createOutgoingActionIconButton(iconName, label, variantClass) {
     var className = 'documents-outgoing-table__action';
     if (variantClass) {
       className += ' ' + variantClass;
@@ -23013,9 +23012,6 @@
     button.type = 'button';
     button.title = label;
     button.setAttribute('aria-label', label);
-    if (actionName) {
-      button.dataset.action = actionName;
-    }
     button.appendChild(createSvgIcon(iconName, 'documents-outgoing-table__action-icon'));
 
     return button;
@@ -23037,12 +23033,8 @@
       return;
     }
 
-    var fragment = document.createDocumentFragment();
     list.forEach(function(record) {
       var row = document.createElement('tr');
-      if (record && record.id) {
-        row.dataset.recordId = String(record.id);
-      }
       columns.forEach(function(column) {
         var cell = document.createElement('td');
         if (column.key === 'actions') {
@@ -23053,27 +23045,39 @@
             var attachButton = createOutgoingActionIconButton(
               'paperclip',
               'Прикрепить файл к записи исходящей корреспонденции',
-              'documents-outgoing-table__action--attach',
-              'attach'
+              'documents-outgoing-table__action--attach'
             );
+            attachButton.addEventListener('click', function() {
+              if (typeof config.onAttach === 'function') {
+                config.onAttach(record);
+              }
+            });
             actions.appendChild(attachButton);
           }
           if (canEditRecord && record && record.id) {
             var editButton = createOutgoingActionIconButton(
               'pencil',
               'Редактировать запись исходящей корреспонденции',
-              'documents-outgoing-table__action--edit',
-              'edit'
+              'documents-outgoing-table__action--edit'
             );
+            editButton.addEventListener('click', function() {
+              if (typeof config.onEdit === 'function') {
+                config.onEdit(record);
+              }
+            });
             actions.appendChild(editButton);
           }
           if (canManage && record && record.id) {
             var deleteButton = createOutgoingActionIconButton(
               'trash',
               'Удалить запись исходящей корреспонденции',
-              'documents-outgoing-table__action--danger',
-              'delete'
+              'documents-outgoing-table__action--danger'
             );
+            deleteButton.addEventListener('click', function() {
+              if (typeof config.onDelete === 'function') {
+                config.onDelete(record);
+              }
+            });
             actions.appendChild(deleteButton);
           }
           if (!actions.childNodes.length) {
@@ -23098,9 +23102,8 @@
         cell.textContent = value;
         row.appendChild(cell);
       });
-      fragment.appendChild(row);
+      tbody.appendChild(row);
     });
-    tbody.appendChild(fragment);
   }
 
   function postOutgoingRegistryAction(action, payload) {
@@ -23935,19 +23938,6 @@
     };
     var columnDragState = null;
 
-    function findOutgoingVisibleRecord(recordId) {
-      var id = String(recordId || '');
-      if (!id) {
-        return null;
-      }
-      for (var i = 0; i < modalState.records.length; i += 1) {
-        if (String(modalState.records[i] && modalState.records[i].id || '') === id) {
-          return modalState.records[i];
-        }
-      }
-      return null;
-    }
-
     function showOutgoingNotice(type, text) {
       var message = text ? String(text).trim() : '';
       notice.textContent = message;
@@ -23978,7 +23968,37 @@
       renderOutgoingRegistryRows(tbody, filteredRecords, {
         canManage: modalState.canManage,
         columnOrder: modalState.columnOrder,
-        emptyMessage: hasFilters ? 'По выбранным фильтрам записей нет.' : 'Записей исходящей корреспонденции пока нет.'
+        emptyMessage: hasFilters ? 'По выбранным фильтрам записей нет.' : 'Записей исходящей корреспонденции пока нет.',
+        onAttach: function(row) {
+          showOutgoingNotice('', '');
+          openOutgoingAttachFilesModal(row, syncOutgoingRows);
+        },
+        onEdit: function(row) {
+          showOutgoingNotice('', '');
+          acquireOutgoingRecordEditLock(row)
+            .then(function(data) {
+              if (!data || !data.lockToken) {
+                var openErrorMessage = 'Не удалось открыть запись для редактирования. Повторите действие.';
+                showOutgoingNotice('error', openErrorMessage);
+                showMessage('error', openErrorMessage);
+                return;
+              }
+              openOutgoingRecordForm(row, syncOutgoingRows, modalState.records, {
+                token: data.lockToken
+              });
+            })
+            .catch(function(error) {
+              var message = error && error.message
+                ? error.message
+                : 'Эту строку сейчас редактирует другой пользователь. Подождите.';
+              var messageType = error && error.reason === 'outgoing_record_locked' ? 'warning' : 'error';
+              showOutgoingNotice(messageType, message);
+              showMessage(messageType, message, MESSAGE_LONG_DURATION_MS);
+            });
+        },
+        onDelete: function(row) {
+          deleteOutgoingRecord(row, syncOutgoingRows);
+        }
       });
       renderOutgoingHeader();
     }
@@ -24154,53 +24174,6 @@
 
     addRecordButton.addEventListener('click', function() {
       openOutgoingRecordForm(null, syncOutgoingRows, modalState.records);
-    });
-    tbody.addEventListener('click', function(event) {
-      var actionButton = event.target && event.target.closest
-        ? event.target.closest('.documents-outgoing-table__action[data-action]')
-        : null;
-      if (!actionButton || !tbody.contains(actionButton)) {
-        return;
-      }
-      var rowNode = actionButton.closest('tr[data-record-id]');
-      var record = rowNode ? findOutgoingVisibleRecord(rowNode.dataset.recordId) : null;
-      if (!record) {
-        return;
-      }
-      event.preventDefault();
-      var action = actionButton.dataset.action || '';
-      if (action === 'attach') {
-        showOutgoingNotice('', '');
-        openOutgoingAttachFilesModal(record, syncOutgoingRows);
-        return;
-      }
-      if (action === 'edit') {
-        showOutgoingNotice('', '');
-        acquireOutgoingRecordEditLock(record)
-          .then(function(data) {
-            if (!data || !data.lockToken) {
-              var openErrorMessage = 'Не удалось открыть запись для редактирования. Повторите действие.';
-              showOutgoingNotice('error', openErrorMessage);
-              showMessage('error', openErrorMessage);
-              return;
-            }
-            openOutgoingRecordForm(record, syncOutgoingRows, modalState.records, {
-              token: data.lockToken
-            });
-          })
-          .catch(function(error) {
-            var message = error && error.message
-              ? error.message
-              : 'Эту строку сейчас редактирует другой пользователь. Подождите.';
-            var messageType = error && error.reason === 'outgoing_record_locked' ? 'warning' : 'error';
-            showOutgoingNotice(messageType, message);
-            showMessage(messageType, message, MESSAGE_LONG_DURATION_MS);
-          });
-        return;
-      }
-      if (action === 'delete') {
-        deleteOutgoingRecord(record, syncOutgoingRows);
-      }
     });
     closeButton.addEventListener('click', function() {
       stopOutgoingColumnDrag();
@@ -24734,22 +24707,33 @@
       return;
     }
 
-    var fragment = document.createDocumentFragment();
     list.forEach(function(record) {
       var row = document.createElement('tr');
-      if (record && record.id) {
-        row.dataset.recordId = String(record.id);
-      }
       columns.forEach(function(column) {
         var cell = document.createElement('td');
         if (column.key === 'actions') {
           var actions = createElement('div', 'documents-outgoing-table__actions');
           if (canManage && record && record.id) {
-            var attachButton = createOutgoingActionIconButton('paperclip', 'Прикрепить файл приказа', 'documents-outgoing-table__action--attach', 'attach');
+            var attachButton = createOutgoingActionIconButton('paperclip', 'Прикрепить файл приказа', 'documents-outgoing-table__action--attach');
+            attachButton.addEventListener('click', function() {
+              if (typeof config.onAttach === 'function') {
+                config.onAttach(record);
+              }
+            });
             actions.appendChild(attachButton);
-            var editButton = createOutgoingActionIconButton('pencil', 'Редактировать приказ', 'documents-outgoing-table__action--edit', 'edit');
+            var editButton = createOutgoingActionIconButton('pencil', 'Редактировать приказ', 'documents-outgoing-table__action--edit');
+            editButton.addEventListener('click', function() {
+              if (typeof config.onEdit === 'function') {
+                config.onEdit(record);
+              }
+            });
             actions.appendChild(editButton);
-            var deleteButton = createOutgoingActionIconButton('trash', 'Удалить приказ', 'documents-outgoing-table__action--danger', 'delete');
+            var deleteButton = createOutgoingActionIconButton('trash', 'Удалить приказ', 'documents-outgoing-table__action--danger');
+            deleteButton.addEventListener('click', function() {
+              if (typeof config.onDelete === 'function') {
+                config.onDelete(record);
+              }
+            });
             actions.appendChild(deleteButton);
           }
           if (!actions.childNodes.length) {
@@ -24774,9 +24758,8 @@
         cell.textContent = value;
         row.appendChild(cell);
       });
-      fragment.appendChild(row);
+      tbody.appendChild(row);
     });
-    tbody.appendChild(fragment);
   }
 
   function renderOrderFilesCell(cell, record) {
@@ -25395,19 +25378,6 @@
     };
     var columnDragState = null;
 
-    function findOrderVisibleRecord(recordId) {
-      var id = String(recordId || '');
-      if (!id) {
-        return null;
-      }
-      for (var i = 0; i < modalState.records.length; i += 1) {
-        if (String(modalState.records[i] && modalState.records[i].id || '') === id) {
-          return modalState.records[i];
-        }
-      }
-      return null;
-    }
-
     function showOrdersNotice(type, text) {
       var message = text ? String(text).trim() : '';
       notice.textContent = message;
@@ -25436,7 +25406,18 @@
       renderOrdersRegistryRows(tbody, sortedRecords, {
         canManage: modalState.canManage,
         columnOrder: modalState.columnOrder,
-        emptyMessage: hasFilters ? 'По выбранным фильтрам приказов нет.' : 'Записей приказов пока нет.'
+        emptyMessage: hasFilters ? 'По выбранным фильтрам приказов нет.' : 'Записей приказов пока нет.',
+        onAttach: function(row) {
+          showOrdersNotice('', '');
+          openOrdersAttachFilesModal(row, syncOrdersRows);
+        },
+        onEdit: function(row) {
+          showOrdersNotice('', '');
+          openOrdersRecordForm(row, syncOrdersRows, modalState.records);
+        },
+        onDelete: function(row) {
+          deleteOrderRecord(row, syncOrdersRows);
+        }
       });
       renderOrdersHeader();
     }
@@ -25632,34 +25613,6 @@
     });
     addRecordButton.addEventListener('click', function() {
       openOrdersRecordForm(null, syncOrdersRows, modalState.records);
-    });
-    tbody.addEventListener('click', function(event) {
-      var actionButton = event.target && event.target.closest
-        ? event.target.closest('.documents-outgoing-table__action[data-action]')
-        : null;
-      if (!actionButton || !tbody.contains(actionButton)) {
-        return;
-      }
-      var rowNode = actionButton.closest('tr[data-record-id]');
-      var record = rowNode ? findOrderVisibleRecord(rowNode.dataset.recordId) : null;
-      if (!record) {
-        return;
-      }
-      event.preventDefault();
-      var action = actionButton.dataset.action || '';
-      if (action === 'attach') {
-        showOrdersNotice('', '');
-        openOrdersAttachFilesModal(record, syncOrdersRows);
-        return;
-      }
-      if (action === 'edit') {
-        showOrdersNotice('', '');
-        openOrdersRecordForm(record, syncOrdersRows, modalState.records);
-        return;
-      }
-      if (action === 'delete') {
-        deleteOrderRecord(record, syncOrdersRows);
-      }
     });
     closeButton.addEventListener('click', function() {
       stopOrdersColumnDrag();
