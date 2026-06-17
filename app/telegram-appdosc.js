@@ -885,7 +885,9 @@ const BULK_ASSIGN_FEEDBACK_TIMEOUT_MS = 2400;
 const TELEGRAM_MISSING_MESSAGE = 'У пользователя нет ID Telegram. Обратитесь к администратору.';
 const RESPONSIBLE_PANEL_TITLE = 'Назначенные задачи по ответственным';
 const SUBORDINATE_PANEL_TITLE = 'Назначенные задачи на подчинённых';
-const INSTRUCTION_OPTIONS = ['В работу', 'Для информации', 'Для участия', 'Пояснить', 'Предоставить объяснение', 'Предоставить информацию'];
+const WORK_INSTRUCTION_LABEL = 'Подготовить ответ';
+const WORK_INSTRUCTION_KEYS = new Set(['в работу', 'подготовить ответ']);
+const INSTRUCTION_OPTIONS = [WORK_INSTRUCTION_LABEL, 'Для информации', 'Для участия', 'Пояснить', 'Предоставить объяснение', 'Предоставить информацию'];
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'heic', 'heif', 'avif', 'tif', 'tiff', 'ico', 'jfif', 'jxl']);
 const VIDEO_EXTENSIONS = new Set(['mp4', 'mov', 'webm', 'mkv', 'avi', 'm4v', '3gp', 'ogv', 'mpeg', 'mpg']);
 const OFFICE_EXTENSIONS = new Set(['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods']);
@@ -15489,7 +15491,19 @@ function setupStatusControls(card, task) {
 
       const assignmentValue = document.createElement('span');
       assignmentValue.className = 'appdosc-card__status-assignment-counter-value';
-      assignmentValue.textContent = ownAssignmentSummary.badgeText;
+      const assignmentText = document.createElement('span');
+      assignmentText.className = 'appdosc-card__status-assignment-counter-text';
+      assignmentText.textContent = 'Мои назначения';
+
+      const assignmentCount = document.createElement('span');
+      assignmentCount.className = 'appdosc-card__status-assignment-counter-count';
+      assignmentCount.textContent = ownAssignmentSummary.label;
+
+      const assignmentState = document.createElement('span');
+      assignmentState.className = 'appdosc-card__status-assignment-counter-state';
+      assignmentState.textContent = ownAssignmentSummary.total > 0 ? 'выполнено' : 'нет активных';
+
+      assignmentValue.append(assignmentText, assignmentCount, assignmentState);
 
       assignmentCounter.append(assignmentIcon, assignmentValue);
       statusLabel.appendChild(assignmentCounter);
@@ -16020,6 +16034,10 @@ async function sendTaskMutation(update) {
           }
         }
 
+        if (Object.prototype.hasOwnProperty.call(entry, 'assignmentInstruction')) {
+          snapshot.assignmentInstruction = normalizeAssignmentInstruction(entry.assignmentInstruction);
+        }
+
         return snapshot;
       })
       .filter((entry) => entry);
@@ -16546,18 +16564,31 @@ function normalizeAssignmentInstruction(value) {
     return '';
   }
 
+  const normalized = normalizeAssignmentInstructionKey(trimmed);
+  if (normalized === 'в работу') {
+    return WORK_INSTRUCTION_LABEL;
+  }
+
   return trimmed.slice(0, 600);
+}
+
+function normalizeAssignmentInstructionKey(value) {
+  if (value === null || value === undefined) {
+    return '';
+  }
+
+  return String(value).trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase()
+    .replace(/ё/g, 'е');
 }
 
 function assignmentInstructionRequiresWork(entry) {
   if (!entry || typeof entry !== 'object') {
     return false;
   }
-  const normalized = normalizeAssignmentInstruction(entry.assignmentInstruction)
-    .replace(/\s+/g, ' ')
-    .toLowerCase()
-    .replace(/ё/g, 'е');
-  return normalized === 'в работу';
+
+  return WORK_INSTRUCTION_KEYS.has(normalizeAssignmentInstructionKey(entry.assignmentInstruction));
 }
 
 function buildTaskUpdateAssignmentPreview(entries, maxItems = 3) {
@@ -18491,6 +18522,57 @@ function getTaskSubordinateDueDates(task) {
   }
 
   return dueDates;
+}
+
+function getTaskSubordinateInstructions(task) {
+  const instructions = new Map();
+
+  const registerEntry = (entry) => {
+    if (!entry || typeof entry !== 'object') {
+      return;
+    }
+
+    const hasInstructionField = Object.prototype.hasOwnProperty.call(entry, 'assignmentInstruction');
+    const instructionValue = normalizeAssignmentInstruction(entry.assignmentInstruction);
+    if (!hasInstructionField && !instructionValue) {
+      return;
+    }
+
+    const candidates = collectSubordinateCommentKeyCandidates(entry, entry && entry.id ? entry.id : null);
+    if (!candidates.length) {
+      return;
+    }
+
+    registerAssignmentDetail(instructions, candidates, instructionValue);
+  };
+
+  if (!task || typeof task !== 'object') {
+    return instructions;
+  }
+
+  if (Array.isArray(task.subordinates)) {
+    task.subordinates.forEach(registerEntry);
+  }
+
+  if (task.subordinate && typeof task.subordinate === 'object') {
+    registerEntry(task.subordinate);
+  }
+
+  if (Array.isArray(task.assignees)) {
+    task.assignees.forEach((entry) => {
+      if (resolveAssigneeRole(entry, 'responsible') === 'subordinate') {
+        registerEntry(entry);
+      }
+    });
+  }
+
+  if (task.assignee && typeof task.assignee === 'object') {
+    if (resolveAssigneeRole(task.assignee, 'responsible') === 'subordinate') {
+      registerEntry(task.assignee);
+    }
+  }
+
+  return instructions;
 }
 
 function collectResponsibleAssignmentKeyCandidates(entry, fallbackValue) {
@@ -22384,11 +22466,9 @@ function buildMutationSnapshotEntries(task, role) {
       if (dueDate) {
         snapshot.assignmentDueDate = dueDate;
       }
-      if (normalizedRole === 'responsible') {
-        const instruction = normalizeAssignmentInstruction(entry.assignmentInstruction || entry.instruction);
-        if (instruction) {
-          snapshot.assignmentInstruction = instruction;
-        }
+      const instruction = normalizeAssignmentInstruction(entry.assignmentInstruction || entry.instruction);
+      if (instruction) {
+        snapshot.assignmentInstruction = instruction;
       }
       return snapshot;
     })
@@ -22495,7 +22575,7 @@ function buildOptimisticAssignmentEntry(role, assignment, referenceEntry = null)
       delete entry.assignmentDueDate;
     }
   }
-  if (normalizedRole === 'responsible' && assignment && Object.prototype.hasOwnProperty.call(assignment, 'assignmentInstruction')) {
+  if (assignment && Object.prototype.hasOwnProperty.call(assignment, 'assignmentInstruction')) {
     const instruction = normalizeAssignmentInstruction(assignment.assignmentInstruction);
     if (instruction) {
       entry.assignmentInstruction = instruction;
@@ -22505,6 +22585,53 @@ function buildOptimisticAssignmentEntry(role, assignment, referenceEntry = null)
   }
 
   return entry;
+}
+
+function updateOptimisticAssignmentInTask(task, role, assignment) {
+  if (!task || typeof task !== 'object' || !assignment || !assignment.id) {
+    return false;
+  }
+
+  const entries = collectTaskAssignments(task, role);
+  let updated = false;
+
+  entries.forEach((entry) => {
+    if (!assignmentEntryMatchesValue(entry, assignment.id)) {
+      return;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(assignment, 'assignmentComment')) {
+      const comment = normalizeAssignmentComment(assignment.assignmentComment);
+      if (comment) {
+        entry.assignmentComment = comment;
+      } else {
+        delete entry.assignmentComment;
+      }
+      updated = true;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(assignment, 'assignmentDueDate')) {
+      const dueDate = normalizeAssignmentDueDate(assignment.assignmentDueDate);
+      if (dueDate) {
+        entry.assignmentDueDate = dueDate;
+      } else {
+        delete entry.assignmentDueDate;
+      }
+      updated = true;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(assignment, 'assignmentInstruction')) {
+      const instruction = normalizeAssignmentInstruction(assignment.assignmentInstruction);
+      if (instruction) {
+        entry.assignmentInstruction = instruction;
+      } else {
+        delete entry.assignmentInstruction;
+      }
+      updated = true;
+    }
+  });
+
+  return updated;
 }
 
 function cloneAssignmentValue(value) {
@@ -24229,12 +24356,14 @@ function setupAssignmentControls(card, task) {
 
   const canManageResponsibles = userIsDirectorForOrganization(organization)
     || userIsResponsibleForTask(task);
-  const canViewResponsibles = canManageResponsibles || userIsSubordinateForTask(task);
 
   const responsibles = getResponsiblesForOrganization(organization);
   const subordinates = getSubordinatesForOrganization(organization);
   const assignmentCandidates = buildAssignmentCandidateList(responsibles, subordinates);
   const assignedEntries = collectTaskAssignments(task, 'responsible');
+  const canAuthorResponsibles = assignedEntries.some((entry) => canCurrentUserRevokeAssignmentEntry(entry));
+  const canUseResponsibleAuthorScope = canManageResponsibles || canAuthorResponsibles;
+  const canViewResponsibles = canUseResponsibleAuthorScope || userIsSubordinateForTask(task);
   if (!canViewResponsibles || (assignedEntries.length === 0 && !assignmentCandidates.length)) {
     container.remove();
     return;
@@ -24297,6 +24426,23 @@ function setupAssignmentControls(card, task) {
     bulkCount.textContent = String(selection.size);
     bulkButton.disabled = selection.size === 0;
     if (bulkButton.dataset.feedback === 'true') {
+      return;
+    }
+    let selectedAssignedCount = 0;
+    let selectedNewCount = 0;
+    selection.forEach((row) => {
+      if (row && row.dataset && row.dataset.assigned === 'true') {
+        selectedAssignedCount += 1;
+      } else {
+        selectedNewCount += 1;
+      }
+    });
+    if (selectedAssignedCount > 0 && selectedNewCount === 0) {
+      bulkButton.textContent = selection.size > 1 ? `Сохранить ${selection.size}` : 'Сохранить изменения';
+      return;
+    }
+    if (selectedAssignedCount > 0 && selectedNewCount > 0) {
+      bulkButton.textContent = `Сохранить ${selection.size}`;
       return;
     }
     bulkButton.textContent = selection.size > 1 ? `Назначить ${selection.size}` : 'Назначить выбранных';
@@ -24658,6 +24804,7 @@ function setupAssignmentControls(card, task) {
     if (!key || findAssignmentRow(entriesContainer, key)) {
       return null;
     }
+    const canEditRow = canManageResponsibles || !assigned || canCurrentUserRevokeAssignmentEntry(referenceEntry);
 
     const row = document.createElement('div');
     row.className = 'appdosc-card__assign-row';
@@ -24725,7 +24872,7 @@ function setupAssignmentControls(card, task) {
     const instructionSelect = document.createElement('select');
     instructionSelect.className = 'appdosc-card__assign-instruction-select';
     populateInstructionSelect(instructionSelect, instruction || '');
-    instructionSelect.disabled = !canManageResponsibles;
+    instructionSelect.disabled = !canEditRow;
     instructionBlock.appendChild(instructionSelect);
 
     info.appendChild(instructionBlock);
@@ -24744,8 +24891,8 @@ function setupAssignmentControls(card, task) {
     if (dueDate) {
       deadlineInput.value = dueDate;
     }
-    commentInput.readOnly = !canManageResponsibles;
-    deadlineInput.disabled = !canManageResponsibles;
+    commentInput.readOnly = !canEditRow;
+    deadlineInput.disabled = !canEditRow;
     deadline.appendChild(deadlineInput);
 
     info.appendChild(deadline);
@@ -24788,7 +24935,7 @@ function setupAssignmentControls(card, task) {
 
     row.appendChild(info);
 
-    const canRevokeAssignedEntry = canManageResponsibles
+    const canRevokeAssignedEntry = canEditRow
       && (!assigned || canCurrentUserRevokeAssignmentEntry(referenceEntry));
     let removeButton = null;
     if (canRevokeAssignedEntry) {
@@ -24840,6 +24987,17 @@ function setupAssignmentControls(card, task) {
       deadlineInput,
       instructionSelect,
     });
+
+    const markRowForSave = () => {
+      if (!canEditRow) {
+        return;
+      }
+      selection.add(row);
+      updateBulkState();
+    };
+    commentInput.addEventListener('input', markRowForSave);
+    deadlineInput.addEventListener('change', markRowForSave);
+    instructionSelect.addEventListener('change', markRowForSave);
 
     if (!assigned) {
       selection.add(row);
@@ -24956,7 +25114,7 @@ function setupAssignmentControls(card, task) {
   };
 
   const handleBulkAssign = async () => {
-    if (!canManageResponsibles) {
+    if (!canUseResponsibleAuthorScope) {
       return;
     }
 
@@ -24973,14 +25131,18 @@ function setupAssignmentControls(card, task) {
     const rawValues = [];
     const normalizedValues = [];
     const busyRows = [];
+    let newRowsCount = 0;
+    let updatedRowsCount = 0;
 
     selection.forEach((row) => {
-      if (row.dataset.assigned === 'true') {
-        return;
-      }
       const targetValue = normalizeValue(row.dataset.assigneeValue);
       if (!targetValue) {
         return;
+      }
+      if (row.dataset.assigned === 'true') {
+        updatedRowsCount += 1;
+      } else {
+        newRowsCount += 1;
       }
 
       const controls = rowControls.get(row) || {};
@@ -25037,7 +25199,8 @@ function setupAssignmentControls(card, task) {
     }
 
     setActionButtonLoading(bulkButton, true);
-    setStatus('info', 'Назначаем выбранных...');
+    const updatesOnly = updatedRowsCount > 0 && newRowsCount === 0;
+    setStatus('info', updatesOnly ? 'Сохраняем изменения ответственного...' : 'Назначаем выбранных...');
     const startedAt = Date.now();
 
     logAssignmentEvent('bulk_payload_ready', {
@@ -25053,6 +25216,8 @@ function setupAssignmentControls(card, task) {
       assigneeIds: normalizedValues,
       assigneeValues: rawValues,
       assigneeCount: payloadAssignments.length,
+      newRowsCount,
+      updatedRowsCount,
       bulk: true,
     });
 
@@ -25081,6 +25246,8 @@ function setupAssignmentControls(card, task) {
         assigneeIds: normalizedValues,
         assigneeValues: rawValues,
         assigneeCount: payloadAssignments.length,
+        newRowsCount,
+        updatedRowsCount,
         bulk: true,
         durationMs: Date.now() - startedAt,
       });
@@ -25095,7 +25262,10 @@ function setupAssignmentControls(card, task) {
           normalizeIdentifier(assigneeValue) || assigneeValue.toLowerCase(),
         );
         if (assignment && !taskSyncedFromServer) {
-          addOptimisticAssignmentToTask(task, 'responsible', assignment, referenceEntry);
+          const added = addOptimisticAssignmentToTask(task, 'responsible', assignment, referenceEntry);
+          if (!added) {
+            updateOptimisticAssignmentInTask(task, 'responsible', assignment);
+          }
         }
         if (assignment) {
           registerRenderedEntryKeys(referenceEntry, assigneeValue, normalizeIdentifier(assigneeValue));
@@ -25111,9 +25281,11 @@ function setupAssignmentControls(card, task) {
       });
       selection.clear();
       updateBulkState();
-      setBulkAssignFeedback(bulkButton, 'Назначение успешно', updateBulkState, 'success');
+      setBulkAssignFeedback(bulkButton, updatesOnly ? 'Сохранено' : 'Назначение успешно', updateBulkState, 'success');
       refreshDirectorStateAfterLocalTaskMutation({ renderCards: false });
-      setStatus('success', payloadAssignments.length > 1 ? 'Ответственные назначены.' : 'Ответственный назначен.');
+      setStatus('success', updatesOnly
+        ? 'Данные ответственного обновлены.'
+        : (payloadAssignments.length > 1 ? 'Ответственные назначены.' : 'Ответственный назначен.'));
       refreshTasksInBackground();
     } catch (error) {
       restoreTaskAssignmentSnapshot(task, rollbackSnapshot);
@@ -25126,6 +25298,8 @@ function setupAssignmentControls(card, task) {
         assigneeIds: normalizedValues,
         assigneeValues: rawValues,
         assigneeCount: payloadAssignments.length,
+        newRowsCount,
+        updatedRowsCount,
         bulk: true,
         message,
         errorStatus: errorDetails.status,
@@ -25166,8 +25340,8 @@ function setupAssignmentControls(card, task) {
   if (!canManageResponsibles) {
     comboButton.hidden = true;
     comboSheet.hidden = true;
-    bulkButton.hidden = true;
-    bulkCount.hidden = true;
+    bulkButton.hidden = !canAuthorResponsibles;
+    bulkCount.hidden = !canAuthorResponsibles;
     comboInput.disabled = true;
     optionsList.innerHTML = '';
     optionsList.hidden = true;
@@ -25203,6 +25377,9 @@ function setupAssignmentControls(card, task) {
     }
 
     const referenceEntry = matchedEntry || (directoryEntry && directoryEntry.entry) || null;
+    if (!canManageResponsibles && !canCurrentUserRevokeAssignmentEntry(referenceEntry)) {
+      return;
+    }
     const comment = resolveCommentForEntry(value, identifier, referenceEntry);
     const due = resolveDueForEntry(value, identifier, referenceEntry);
     const instruction = resolveInstructionForEntry(value, identifier, referenceEntry);
@@ -25229,6 +25406,9 @@ function setupAssignmentControls(card, task) {
 
     const value = resolveAssignmentValueFromEntry(entry);
     if (!value) {
+      return;
+    }
+    if (!canManageResponsibles && !canCurrentUserRevokeAssignmentEntry(entry)) {
       return;
     }
 
@@ -25445,13 +25625,14 @@ function setupSubordinateControls(card, task) {
   const assignmentCandidates = buildAssignmentCandidateList([], subordinates);
   const canManageSubordinates = userIsDirectorForOrganization(organization)
     || userIsResponsibleForTask(task);
-  const canViewSubordinates = canManageSubordinates || userIsSubordinateForTask(task);
+  const assignedEntries = collectTaskAssignments(task, 'subordinate');
+  const canAuthorSubordinates = assignedEntries.some((entry) => canCurrentUserRevokeAssignmentEntry(entry));
+  const canUseSubordinateAuthorScope = canManageSubordinates || canAuthorSubordinates;
+  const canViewSubordinates = canUseSubordinateAuthorScope || userIsSubordinateForTask(task);
   if (!canViewSubordinates) {
     container.remove();
     return;
   }
-
-  const assignedEntries = collectTaskAssignments(task, 'subordinate');
 
   if (assignedEntries.length === 0 && (!canManageSubordinates || !assignmentCandidates.length)) {
     container.remove();
@@ -25502,8 +25683,8 @@ function setupSubordinateControls(card, task) {
   if (!canManageSubordinates) {
     pickerButton.hidden = true;
     pickerSheet.hidden = true;
-    bulkButton.hidden = true;
-    bulkCount.hidden = true;
+    bulkButton.hidden = !canAuthorSubordinates;
+    bulkCount.hidden = !canAuthorSubordinates;
     searchInput.disabled = true;
     optionsList.innerHTML = '';
     optionsList.hidden = true;
@@ -25518,6 +25699,7 @@ function setupSubordinateControls(card, task) {
   const currentIdentifiers = new Set(getTaskSubordinateIdentifiers(task));
   const commentMap = getTaskSubordinateComments(task);
   const dueDateMap = getTaskSubordinateDueDates(task);
+  const instructionMap = getTaskSubordinateInstructions(task);
   const renderedEntryKeys = new Set();
   const selection = new Set();
   const rowControls = new WeakMap();
@@ -25526,6 +25708,23 @@ function setupSubordinateControls(card, task) {
     bulkCount.textContent = String(selection.size);
     bulkButton.disabled = selection.size === 0;
     if (bulkButton.dataset.feedback === 'true') {
+      return;
+    }
+    let selectedAssignedCount = 0;
+    let selectedNewCount = 0;
+    selection.forEach((row) => {
+      if (row && row.dataset && row.dataset.assigned === 'true') {
+        selectedAssignedCount += 1;
+      } else {
+        selectedNewCount += 1;
+      }
+    });
+    if (selectedAssignedCount > 0 && selectedNewCount === 0) {
+      bulkButton.textContent = selection.size > 1 ? `Сохранить ${selection.size}` : 'Сохранить изменения';
+      return;
+    }
+    if (selectedAssignedCount > 0 && selectedNewCount > 0) {
+      bulkButton.textContent = `Сохранить ${selection.size}`;
       return;
     }
     bulkButton.textContent = selection.size > 1 ? `Назначить ${selection.size}` : 'Назначить выбранных';
@@ -25785,6 +25984,46 @@ function setupSubordinateControls(card, task) {
     return '';
   };
 
+  const resolveInstructionForEntry = (value, normalized, entry) => {
+    const instructionKeys = collectSubordinateCommentKeyCandidates(entry, value);
+    for (let index = 0; index < instructionKeys.length; index += 1) {
+      const key = instructionKeys[index];
+      if (instructionMap.has(key)) {
+        return instructionMap.get(key) || '';
+      }
+    }
+    if (entry && typeof entry === 'object' && Object.prototype.hasOwnProperty.call(entry, 'assignmentInstruction')) {
+      return normalizeAssignmentInstruction(entry.assignmentInstruction);
+    }
+    if (normalized && instructionMap.has(normalized)) {
+      return instructionMap.get(normalized) || '';
+    }
+    return '';
+  };
+
+  const populateInstructionSelect = (selectElement, selectedValue) => {
+    if (!selectElement) {
+      return;
+    }
+
+    selectElement.innerHTML = '';
+
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = 'Не выбрано';
+    selectElement.appendChild(placeholder);
+
+    INSTRUCTION_OPTIONS.forEach((option) => {
+      const node = document.createElement('option');
+      node.value = option;
+      node.textContent = option;
+      selectElement.appendChild(node);
+    });
+
+    const normalized = normalizeAssignmentInstruction(selectedValue);
+    selectElement.value = normalized || '';
+  };
+
   const createAssigneeAvatar = (entry, fallbackLabel = '') => {
     const avatar = document.createElement('div');
     avatar.className = 'appdosc-avatar';
@@ -25818,11 +26057,12 @@ function setupSubordinateControls(card, task) {
     return avatar;
   };
 
-  const createSubordinateRow = ({ value, label, normalized, assigned, comment, dueDate, referenceEntry = null }) => {
+  const createSubordinateRow = ({ value, label, normalized, assigned, comment, dueDate, instruction, referenceEntry = null }) => {
     const key = buildAssignmentRowKey(value, normalized);
     if (!key || findAssignmentRow(entriesContainer, key)) {
       return null;
     }
+    const canEditRow = canManageSubordinates || !assigned || canCurrentUserRevokeAssignmentEntry(referenceEntry);
 
     const row = document.createElement('div');
     row.className = 'appdosc-card__assign-row';
@@ -25874,6 +26114,48 @@ function setupSubordinateControls(card, task) {
     requestAnimationFrame(() => requestAnimationFrame(resizeCommentInput));
     info.appendChild(commentInput);
 
+    const instructionBlock = document.createElement('div');
+    instructionBlock.className = 'appdosc-card__assign-instruction';
+
+    const instructionLabel = document.createElement('div');
+    instructionLabel.className = 'appdosc-card__assign-instruction-label';
+    instructionLabel.textContent = 'Поручение';
+    instructionBlock.appendChild(instructionLabel);
+
+    const instructionSelect = document.createElement('select');
+    instructionSelect.className = 'appdosc-card__assign-instruction-select';
+    populateInstructionSelect(instructionSelect, instruction || '');
+    instructionSelect.disabled = !canEditRow;
+    instructionBlock.appendChild(instructionSelect);
+
+    const workHint = document.createElement('div');
+    workHint.className = 'appdosc-card__assign-note';
+    workHint.textContent = 'Требует исполнения и проверки';
+    workHint.setAttribute('role', 'note');
+    workHint.style.width = 'max-content';
+    workHint.style.maxWidth = '100%';
+    workHint.style.marginTop = '6px';
+    workHint.style.padding = '5px 8px';
+    workHint.style.borderRadius = '999px';
+    workHint.style.border = '1px solid rgba(245, 158, 11, .34)';
+    workHint.style.background = 'rgba(245, 158, 11, .12)';
+    workHint.style.color = 'var(--appdosc-task-status-warn-text)';
+    workHint.style.fontWeight = '800';
+    workHint.style.lineHeight = '1.2';
+    instructionBlock.appendChild(workHint);
+
+    const updateInstructionState = () => {
+      const requiresWork = assignmentInstructionRequiresWork({ assignmentInstruction: instructionSelect.value });
+      instructionBlock.dataset.requiresWork = requiresWork ? 'true' : 'false';
+      workHint.hidden = !requiresWork;
+      instructionSelect.style.borderColor = requiresWork ? 'rgba(245, 158, 11, .58)' : '';
+      instructionSelect.style.boxShadow = requiresWork ? '0 0 0 3px rgba(245, 158, 11, .12)' : '';
+    };
+    instructionSelect.addEventListener('change', updateInstructionState);
+    updateInstructionState();
+
+    info.appendChild(instructionBlock);
+
     const deadline = document.createElement('div');
     deadline.className = 'appdosc-card__assign-deadline';
 
@@ -25888,8 +26170,8 @@ function setupSubordinateControls(card, task) {
     if (dueDate) {
       deadlineInput.value = dueDate;
     }
-    commentInput.readOnly = !canManageSubordinates;
-    deadlineInput.disabled = !canManageSubordinates;
+    commentInput.readOnly = !canEditRow;
+    deadlineInput.disabled = !canEditRow;
     deadline.appendChild(deadlineInput);
 
     info.appendChild(deadline);
@@ -25934,7 +26216,7 @@ function setupSubordinateControls(card, task) {
 
     row.appendChild(info);
 
-    const canRevokeAssignedEntry = canManageSubordinates
+    const canRevokeAssignedEntry = canEditRow
       && (!assigned || canCurrentUserRevokeAssignmentEntry(referenceEntry));
     let removeButton = null;
     if (canRevokeAssignedEntry) {
@@ -25966,7 +26248,19 @@ function setupSubordinateControls(card, task) {
       removeButton,
       commentInput,
       deadlineInput,
+      instructionSelect,
     });
+
+    const markRowForSave = () => {
+      if (!canEditRow) {
+        return;
+      }
+      selection.add(row);
+      updateBulkState();
+    };
+    commentInput.addEventListener('input', markRowForSave);
+    deadlineInput.addEventListener('change', markRowForSave);
+    instructionSelect.addEventListener('change', markRowForSave);
 
     if (!assigned) {
       selection.add(row);
@@ -26006,7 +26300,7 @@ function setupSubordinateControls(card, task) {
       const rawValues = [targetValue];
       const normalizedValues = normalizedValue ? [normalizedValue] : [];
 
-      setAssignmentRowBusy(row, true, null, removeButton, commentInput, deadlineInput);
+      setAssignmentRowBusy(row, true, null, removeButton, commentInput, deadlineInput, instructionSelect);
       setStatus('info', 'Удаляем подчинённого...');
       const startedAt = Date.now();
       const rollbackSnapshot = createTaskAssignmentSnapshot(task);
@@ -26069,7 +26363,7 @@ function setupSubordinateControls(card, task) {
         });
         setStatus('error', message);
       } finally {
-        setAssignmentRowBusy(row, false, null, removeButton, commentInput, deadlineInput);
+        setAssignmentRowBusy(row, false, null, removeButton, commentInput, deadlineInput, instructionSelect);
       }
     };
 
@@ -26081,7 +26375,7 @@ function setupSubordinateControls(card, task) {
   };
 
   const handleBulkAssign = async () => {
-    if (!canManageSubordinates) {
+    if (!canUseSubordinateAuthorScope) {
       return;
     }
 
@@ -26098,24 +26392,30 @@ function setupSubordinateControls(card, task) {
     const rawValues = [];
     const normalizedValues = [];
     const busyRows = [];
+    let newRowsCount = 0;
+    let updatedRowsCount = 0;
 
     selection.forEach((row) => {
-      if (row.dataset.assigned === 'true') {
-        return;
-      }
       const targetValue = normalizeValue(row.dataset.assigneeValue);
       if (!targetValue) {
         return;
+      }
+      if (row.dataset.assigned === 'true') {
+        updatedRowsCount += 1;
+      } else {
+        newRowsCount += 1;
       }
 
       const controls = rowControls.get(row) || {};
       const commentValue = normalizeAssignmentComment(controls.commentInput ? controls.commentInput.value : undefined);
       const dueValue = normalizeAssignmentDueDate(controls.deadlineInput ? controls.deadlineInput.value : undefined);
+      const instructionValue = normalizeAssignmentInstruction(controls.instructionSelect ? controls.instructionSelect.value : undefined);
 
       payloadAssignments.push({
         id: targetValue,
         assignmentComment: commentValue,
         assignmentDueDate: dueValue,
+        assignmentInstruction: instructionValue,
       });
 
       rawValues.push(targetValue);
@@ -26124,7 +26424,7 @@ function setupSubordinateControls(card, task) {
         normalizedValues.push(normalizedValue);
       }
 
-      setAssignmentRowBusy(row, true, controls.assignButton, controls.removeButton, controls.commentInput, controls.deadlineInput);
+      setAssignmentRowBusy(row, true, controls.assignButton, controls.removeButton, controls.commentInput, controls.deadlineInput, controls.instructionSelect);
       busyRows.push(row);
     });
 
@@ -26132,13 +26432,14 @@ function setupSubordinateControls(card, task) {
       setStatus('error', 'Выберите подчинённых для назначения.');
       busyRows.forEach((row) => {
         const controls = rowControls.get(row) || {};
-        setAssignmentRowBusy(row, false, controls.assignButton, controls.removeButton, controls.commentInput, controls.deadlineInput);
+        setAssignmentRowBusy(row, false, controls.assignButton, controls.removeButton, controls.commentInput, controls.deadlineInput, controls.instructionSelect);
       });
       return;
     }
 
     setActionButtonLoading(bulkButton, true);
-    setStatus('info', 'Назначаем выбранных подчинённых...');
+    const updatesOnly = updatedRowsCount > 0 && newRowsCount === 0;
+    setStatus('info', updatesOnly ? 'Сохраняем изменения подчинённого...' : 'Назначаем выбранных подчинённых...');
     const startedAt = Date.now();
 
     logClientEvent('task_subordinate_assign_request', {
@@ -26148,6 +26449,8 @@ function setupSubordinateControls(card, task) {
       subordinateValues: rawValues,
       subordinateCount: payloadAssignments.length,
       subordinateAssignments: payloadAssignments,
+      newRowsCount,
+      updatedRowsCount,
       bulk: true,
     });
 
@@ -26173,6 +26476,8 @@ function setupSubordinateControls(card, task) {
         subordinateValues: rawValues,
         subordinateCount: payloadAssignments.length,
         subordinateAssignments: payloadAssignments,
+        newRowsCount,
+        updatedRowsCount,
         bulk: true,
         durationMs: Date.now() - startedAt,
       });
@@ -26186,7 +26491,10 @@ function setupSubordinateControls(card, task) {
           normalizeIdentifier(assigneeValue) || assigneeValue.toLowerCase(),
         );
         if (assignment && !taskSyncedFromServer) {
-          addOptimisticAssignmentToTask(task, 'subordinate', assignment, referenceEntry);
+          const added = addOptimisticAssignmentToTask(task, 'subordinate', assignment, referenceEntry);
+          if (!added) {
+            updateOptimisticAssignmentInTask(task, 'subordinate', assignment);
+          }
         }
         if (assignment) {
           registerRenderedEntry(referenceEntry || assignment, assigneeValue, normalizeIdentifier(assigneeValue));
@@ -26194,9 +26502,11 @@ function setupSubordinateControls(card, task) {
       });
       selection.clear();
       updateBulkState();
-      setBulkAssignFeedback(bulkButton, 'Назначение успешно', updateBulkState, 'success');
+      setBulkAssignFeedback(bulkButton, updatesOnly ? 'Сохранено' : 'Назначение успешно', updateBulkState, 'success');
       refreshDirectorStateAfterLocalTaskMutation({ renderCards: false });
-      setStatus('success', payloadAssignments.length > 1 ? 'Подчинённые назначены.' : 'Подчинённый назначен.');
+      setStatus('success', updatesOnly
+        ? 'Данные подчинённого обновлены.'
+        : (payloadAssignments.length > 1 ? 'Подчинённые назначены.' : 'Подчинённый назначен.'));
       refreshTasksInBackground();
     } catch (error) {
       restoreTaskAssignmentSnapshot(task, rollbackSnapshot);
@@ -26210,6 +26520,8 @@ function setupSubordinateControls(card, task) {
         subordinateValues: rawValues,
         subordinateCount: payloadAssignments.length,
         subordinateAssignments: payloadAssignments,
+        newRowsCount,
+        updatedRowsCount,
         bulk: true,
         message,
         errorStatus: errorDetails.status,
@@ -26225,7 +26537,7 @@ function setupSubordinateControls(card, task) {
           delete row.dataset.syncState;
         }
         const controls = rowControls.get(row) || {};
-        setAssignmentRowBusy(row, false, controls.assignButton, controls.removeButton, controls.commentInput, controls.deadlineInput);
+        setAssignmentRowBusy(row, false, controls.assignButton, controls.removeButton, controls.commentInput, controls.deadlineInput, controls.instructionSelect);
       });
     }
   };
@@ -26285,9 +26597,10 @@ function setupSubordinateControls(card, task) {
     const normalizedKey = identifier || buildAssignmentDirectoryKey(value) || normalizeIdentifier(value);
     comment = resolveCommentForEntry(value, normalizedKey || '', matchedEntry);
     const dueDate = resolveDueForEntry(value, normalizedKey || '', matchedEntry);
+    const instruction = resolveInstructionForEntry(value, normalizedKey || '', matchedEntry);
 
     const referenceEntry = matchedEntry || (directoryEntry && directoryEntry.entry);
-    if (!canManageSubordinates && !currentUserMatchesAssignmentEntry(referenceEntry)) {
+    if (!canManageSubordinates && !canCurrentUserRevokeAssignmentEntry(referenceEntry) && !currentUserMatchesAssignmentEntry(referenceEntry)) {
       return;
     }
     if (hasRenderedEntry(referenceEntry, value, normalizedKey)) {
@@ -26301,6 +26614,7 @@ function setupSubordinateControls(card, task) {
       assigned: true,
       comment,
       dueDate,
+      instruction,
       referenceEntry,
     });
     if (row) {
@@ -26312,7 +26626,7 @@ function setupSubordinateControls(card, task) {
     if (!entry || typeof entry !== 'object') {
       return;
     }
-    if (!canManageSubordinates && !currentUserMatchesAssignmentEntry(entry)) {
+    if (!canManageSubordinates && !canCurrentUserRevokeAssignmentEntry(entry) && !currentUserMatchesAssignmentEntry(entry)) {
       return;
     }
 
@@ -26333,6 +26647,7 @@ function setupSubordinateControls(card, task) {
       assigned: true,
       comment: resolveCommentForEntry(value, normalizedKey || '', entry),
       dueDate: resolveDueForEntry(value, normalizedKey || '', entry),
+      instruction: resolveInstructionForEntry(value, normalizedKey || '', entry),
       referenceEntry: entry,
     });
     if (row) {
@@ -26407,6 +26722,7 @@ function setupSubordinateControls(card, task) {
     );
     const comment = resolveCommentForEntry(selectedValue, normalizedValue, matchedEntry);
     const dueDate = resolveDueForEntry(selectedValue, normalizedValue, matchedEntry);
+    const instruction = resolveInstructionForEntry(selectedValue, normalizedValue, matchedEntry);
 
     const row = createSubordinateRow({
       value: selectedValue,
@@ -26415,6 +26731,7 @@ function setupSubordinateControls(card, task) {
       assigned: Boolean(currentIdentifiers.has(normalizedValue)),
       comment,
       dueDate,
+      instruction,
       referenceEntry: referenceEntry || matchedEntry || null,
     });
     if (row) {

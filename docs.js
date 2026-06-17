@@ -811,10 +811,11 @@
     ].join('|');
   }
 
-  function isRegistryRequestCurrent(cacheVersion, ownerKey, organization) {
+  function isRegistryRequestCurrent(cacheVersion, ownerKey, organization, requestSequence) {
     return cacheVersion === state.runtimeCacheVersion
       && ownerKey === buildAccessDataOwnerKey(state.access)
-      && (!organization || organization === state.organization);
+      && (!organization || organization === state.organization)
+      && (!requestSequence || requestSequence === state.registryRequestSequence);
   }
 
   function refreshPersonalSettingsIfNeeded(access) {
@@ -1035,18 +1036,17 @@
       return normalized;
     }
 
-    var hadAccess = Boolean(state.access && state.access.authenticated && state.access.accessGranted);
     var previousOwnerKey = buildAccessDataOwnerKey(state.access);
     var nextOwnerKey = buildAccessDataOwnerKey(normalized);
     state.access = normalized;
-    if (hadAccess && previousOwnerKey !== nextOwnerKey) {
+    if (previousOwnerKey !== nextOwnerKey) {
       resetDocumentsRuntimeCache({ clearLocalStorage: !normalized.authenticated || !normalized.accessGranted });
     }
     invalidateFilterValuesCache();
     refreshUserAssignmentKeys();
     if (normalized.permissions && typeof normalized.permissions === 'object') {
       if (!state.permissions || typeof state.permissions !== 'object') {
-        state.permissions = { canManageInstructions: false, canCreateDocuments: false, canDeleteDocuments: false };
+        state.permissions = { canManageInstructions: false, canCreateDocuments: false, canDeleteDocuments: false, canManageSubordinates: false };
       }
       if (Object.prototype.hasOwnProperty.call(normalized.permissions, 'canManageInstructions')
         && typeof normalized.permissions.canManageInstructions === 'boolean') {
@@ -1059,6 +1059,10 @@
       if (Object.prototype.hasOwnProperty.call(normalized.permissions, 'canDeleteDocuments')
         && typeof normalized.permissions.canDeleteDocuments === 'boolean') {
         state.permissions.canDeleteDocuments = normalized.permissions.canDeleteDocuments;
+      }
+      if (Object.prototype.hasOwnProperty.call(normalized.permissions, 'canManageSubordinates')
+        && typeof normalized.permissions.canManageSubordinates === 'boolean') {
+        state.permissions.canManageSubordinates = normalized.permissions.canManageSubordinates;
       }
     }
     setToolbarState();
@@ -1169,7 +1173,8 @@
     accepted: 'Выполнено',
     revision: 'В работе'
   };
-  var INSTRUCTION_OPTIONS = ['В работу', 'Для информации', 'Для участия', 'Пояснить', 'Предоставить объяснение', 'Предоставить информацию'];
+  var WORK_INSTRUCTION_LABEL = 'Подготовить ответ';
+  var INSTRUCTION_OPTIONS = [WORK_INSTRUCTION_LABEL, 'Для информации', 'Для участия', 'Пояснить', 'Предоставить объяснение', 'Предоставить информацию'];
   var TABLE_COLUMN_MAP = (function() {
     var map = {};
     for (var i = 0; i < TABLE_COLUMNS.length; i += 1) {
@@ -1346,11 +1351,13 @@
     tablePreferencesApplying: false,
     filterValuesCacheVersion: 1,
     runtimeCacheVersion: 1,
+    registryRequestSequence: 0,
     realtime: {
       timerId: null,
       inFlight: false,
       lastSyncAt: 0,
       registrySignature: '',
+      registryMetaSignature: '',
       broadcastChannel: null,
       storageListenerAttached: false,
       visibilityListenerAttached: false
@@ -4980,7 +4987,7 @@
       '.documents-tab-shell:nth-child(2) .documents-tab__count{background:#fff1f2;color:#ef4444;}' +
       '.documents-tab-shell:nth-child(3) .documents-tab__count{background:#ecfdf5;color:#10b981;}' +
       '.documents-tabs__add{width:38px;height:40px;margin:0;border-color:#e2e8f0;border-radius:6px 6px 0 0;background:#fff;box-shadow:none;font-size:20px;}' +
-      '.documents-table-wrapper{border:var(--docs-border-width,1px) solid var(--docs-border-color,#e2e8f0);border-radius:6px;background:#fff;box-shadow:0 14px 35px rgba(15,23,42,.06);overflow-x:auto;overflow-y:visible;}' +
+      '.documents-table-wrapper{border:var(--docs-border-width,1px) solid var(--docs-border-color,#e2e8f0);border-radius:6px;background:#fff;box-shadow:0 14px 35px rgba(15,23,42,.06);overflow-x:auto;overflow-y:auto;scrollbar-gutter:stable;max-height:clamp(320px,calc(100vh - 260px),720px);}' +
       '.documents-table{border-collapse:separate;border-spacing:0;table-layout:fixed;background:#fff;color:#172554;font-size:13px;}' +
       '.documents-table__head th{background:#fff;border-bottom:var(--docs-border-width,1px) solid var(--docs-border-color,#e2e8f0);border-right:var(--docs-border-width,1px) solid var(--docs-border-color,#e2e8f0);color:#0f172a;font-size:12px;font-weight:800;text-align:left;}' +
       '.documents-table__header-row th{height:48px;padding:0 12px;z-index:9;overflow:visible;}' +
@@ -5036,6 +5043,12 @@
       '.documents-status__badge--cancelled{background:#f8fafc;border-color:#cbd5e1;color:#64748b;}' +
       '.documents-status__badge--neutral{background:#eef2ff;border-color:#c7d2fe;color:#3730a3;}' +
       '.documents-status__badge--empty{background:#f8fafc;border-color:#e2e8f0;color:#94a3b8;}' +
+      '.documents-status__assignment{display:inline-grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:5px;max-width:100%;min-height:24px;padding:3px 7px;border:1px solid #fed7aa;border-radius:7px;background:#fff7ed;color:#9a3412;font-size:11px;font-weight:900;line-height:1.15;box-sizing:border-box;}' +
+      '.documents-status__assignment[data-completed="true"]{border-color:#bbf7d0;background:#ecfdf5;color:#047857;}' +
+      '.documents-status__assignment-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
+      '.documents-status__assignment-count{display:inline-flex;align-items:center;justify-content:center;min-width:28px;height:18px;padding:0 6px;border-radius:999px;background:#ffedd5;color:#9a3412;font-variant-numeric:tabular-nums;}' +
+      '.documents-status__assignment[data-completed="true"] .documents-status__assignment-count{background:#d1fae5;color:#047857;}' +
+      '.documents-status__assignment-state{color:#64748b;font-size:10px;font-weight:800;white-space:nowrap;}' +
       '.documents-status__select{width:100%;min-width:120px;max-width:100%;height:30px;padding:0 28px 0 9px;border:1px solid #cbd5e1;border-radius:7px;background:#fff;color:#334155;font-size:12px;font-weight:900;line-height:1.1;outline:none;cursor:pointer;box-sizing:border-box;}' +
       '.documents-status__select:focus{border-color:#93c5fd;box-shadow:0 0 0 3px rgba(37,99,235,.12);}' +
       '.documents-status__select--work{background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8;}' +
@@ -5101,7 +5114,7 @@
       '.documents-empty--loading::before{content:"";width:18px;height:18px;border:2px solid #dbeafe;border-top-color:#2563eb;border-radius:999px;animation:documents-empty-spin .75s linear infinite;}' +
       '.documents-empty--error{color:#b91c1c;background:#fef2f2;}' +
       '@keyframes documents-empty-spin{to{transform:rotate(360deg);}}' +
-      '.documents-pagination{display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:100%;box-sizing:border-box;padding:12px 16px;border-top:var(--docs-border-width,1px) solid var(--docs-border-color,#e2e8f0);border-radius:0 0 6px 6px;background:#fff;color:#172554;font-size:13px;}' +
+      '.documents-pagination{position:sticky;bottom:0;z-index:7;display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:100%;box-sizing:border-box;padding:12px 16px;border-top:var(--docs-border-width,1px) solid var(--docs-border-color,#e2e8f0);border-radius:0 0 6px 6px;background:#fff;color:#172554;font-size:13px;}' +
       '.documents-pagination[hidden]{display:none;}' +
       '.documents-pagination__left{display:flex;align-items:center;gap:18px;flex-wrap:wrap;}' +
       '.documents-pagination__size{display:inline-flex;align-items:center;gap:8px;}' +
@@ -14450,10 +14463,10 @@
       if (!doc || typeof doc !== 'object') {
         return '—';
       }
-      var instructionValue = doc.instruction ? String(doc.instruction).trim() : '';
+      var instructionValue = doc.instruction ? normalizeAssignmentInstructionLabel(doc.instruction) : '';
       var primaryAssignee = resolvePrimaryAssignee(doc);
       if (!instructionValue && primaryAssignee && primaryAssignee.assignmentInstruction) {
-        instructionValue = String(primaryAssignee.assignmentInstruction).trim();
+        instructionValue = normalizeAssignmentInstructionLabel(primaryAssignee.assignmentInstruction);
       }
       var assignments = buildInstructionAssignments(doc);
       var lines = [];
@@ -15554,7 +15567,11 @@
     var showHint = config.showHint !== undefined ? Boolean(config.showHint) : defaultRole !== 'responsible';
     var directorEnhanced = defaultRole === 'responsible' && normalizeRoleValue(state.effectiveUserRole || '') === 'director';
     var allowDeadline = config.allowDeadline === true;
-    var allowInstructionAssignment = canAssignInstructionsToUsers();
+    var allowInstructionAssignment = config.allowInstructionAssignment === true || canAssignInstructionsToUsers();
+    var allowAddRows = config.allowAdd !== false;
+    var allowEmptySelection = config.allowEmptySelection === true;
+    var lockExistingSelection = config.lockExistingSelection === true;
+    var allowComment = config.allowComment === true;
     var isSubordinateEditor = defaultRole === 'subordinate';
     var isSubordinateUser = isSubordinateEditor && isCurrentUserSubordinate();
 
@@ -15674,7 +15691,7 @@
       var activeRows = rows.filter(function(item) {
         return item && item.row && list.contains(item.row);
       });
-      var disable = activeRows.length <= 1;
+      var disable = activeRows.length <= 1 && !allowEmptySelection;
       activeRows.forEach(function(item) {
         if (item.removeButton) {
           item.removeButton.disabled = disable || item.locked;
@@ -15785,7 +15802,7 @@
       var deadlineInput = null;
       var instructionWrapper = null;
       var instructionSelect = null;
-      var showComment = defaultRole === 'subordinate' || directorEnhanced;
+      var showComment = allowComment || defaultRole === 'subordinate' || directorEnhanced;
       var showDeadline = defaultRole === 'subordinate' || directorEnhanced || allowDeadline;
       if (showComment) {
         commentWrapper = createElement('div', 'documents-assignees__comment');
@@ -15842,7 +15859,8 @@
       }
 
       var isLocked = isProtectedSubordinateAssignment(prefill);
-      if (isLocked) {
+      var isSelectionLocked = Boolean(lockExistingSelection && prefill);
+      if (isLocked || isSelectionLocked) {
         var lockedValue = select.value;
         if (lockedValue) {
           select.dataset.lockedValue = lockedValue;
@@ -16027,16 +16045,18 @@
       addRow(null);
     }
 
-    var addButton = createElement('button', 'documents-assignees__add', addButtonLabel);
-    addButton.type = 'button';
-    addButton.addEventListener('click', function() {
-      addRow(null);
-      var lastRow = rows[rows.length - 1];
-      if (lastRow && lastRow.select) {
-        lastRow.select.focus();
-      }
-    });
-    wrapper.appendChild(addButton);
+    if (allowAddRows) {
+      var addButton = createElement('button', 'documents-assignees__add', addButtonLabel);
+      addButton.type = 'button';
+      addButton.addEventListener('click', function() {
+        addRow(null);
+        var lastRow = rows[rows.length - 1];
+        if (lastRow && lastRow.select) {
+          lastRow.select.focus();
+        }
+      });
+      wrapper.appendChild(addButton);
+    }
 
     function hasMissingTelegramSelection() {
       var hasMissing = false;
@@ -16164,24 +16184,42 @@
     };
   }
 
-  function createAssigneesEditor(initialAssignees) {
-    return createAssignmentEditor(initialAssignees, {
+  function mergeAssignmentEditorOptions(base, overrides) {
+    var result = {};
+    var key;
+    for (key in base) {
+      if (Object.prototype.hasOwnProperty.call(base, key)) {
+        result[key] = base[key];
+      }
+    }
+    if (overrides && typeof overrides === 'object') {
+      for (key in overrides) {
+        if (Object.prototype.hasOwnProperty.call(overrides, key)) {
+          result[key] = overrides[key];
+        }
+      }
+    }
+    return result;
+  }
+
+  function createAssigneesEditor(initialAssignees, options) {
+    return createAssignmentEditor(initialAssignees, mergeAssignmentEditorOptions({
       fillSelect: fillResponsibleSelect,
       updateHint: updateResponsibleHint,
       addButtonLabel: 'Добавить ответственного',
       role: 'responsible',
       allowDeadline: true
-    });
+    }, options));
   }
 
-  function createSubordinatesEditor(initialAssignees) {
-    return createAssignmentEditor(initialAssignees, {
+  function createSubordinatesEditor(initialAssignees, options) {
+    return createAssignmentEditor(initialAssignees, mergeAssignmentEditorOptions({
       fillSelect: fillSubordinateSelect,
       updateHint: updateSubordinateHint,
       addButtonLabel: 'Добавить подчинённого',
       role: 'subordinate',
       resolveEntry: findSubordinateById
-    });
+    }, options));
   }
 
   function createDirectorCell(doc) {
@@ -16297,10 +16335,13 @@
     }
 
     var canManageAssignees = isCurrentUserAdmin();
-    if (canManageAssignees) {
+    var canEditAuthoredAssignees = hasAssignmentsAuthoredByCurrentUser(assignees);
+    if (canManageAssignees || canEditAuthoredAssignees) {
       container.classList.add('documents-assignee--editable');
       container.appendChild(createAssignmentEditButton(
-        primaryAssignee ? 'Изменить ответственных' : 'Назначить ответственных',
+        canManageAssignees
+          ? (primaryAssignee ? 'Изменить ответственных' : 'Назначить ответственных')
+          : 'Изменить мои назначения',
         function() {
           openAssigneeModal(doc);
         }
@@ -16354,13 +16395,6 @@
     }
     var flow = doc.reviewFlow || doc.review_flow || '';
     return String(flow).trim() === REVIEW_FLOW_RESPONSIBLE_SUBORDINATE;
-  }
-
-  function assignmentInstructionRequiresWork(entry) {
-    if (!entry || typeof entry !== 'object') {
-      return false;
-    }
-    return normalizeStatusValue(entry.assignmentInstruction) === 'в работу';
   }
 
   function normalizeSubordinateSubmissionStatus(value) {
@@ -16544,9 +16578,6 @@
       if (role && role !== 'responsible' && role !== 'subordinate') {
         continue;
       }
-      if (role === 'subordinate' && !assignmentInstructionRequiresWork(entry)) {
-        continue;
-      }
       if (!assignmentEntryAssignedByCurrentUser(entry)) {
         continue;
       }
@@ -16606,6 +16637,168 @@
     return '';
   }
 
+  function getAssignmentMutationId(entry) {
+    return getSubordinateMutationId(entry);
+  }
+
+  function getAssignmentEntryLookupKeys(entry) {
+    var keys = [];
+    var seen = Object.create(null);
+
+    function pushKey(key) {
+      var normalized = key ? String(key).trim().toLowerCase() : '';
+      if (!normalized || seen[normalized]) {
+        return;
+      }
+      seen[normalized] = true;
+      keys.push(normalized);
+    }
+
+    if (!entry || typeof entry !== 'object') {
+      return keys;
+    }
+
+    buildAssigneeKeyCandidates(entry).forEach(pushKey);
+
+    var mutationId = getAssignmentMutationId(entry);
+    if (mutationId) {
+      var normalizedId = normalizeAssigneeIdentifier(mutationId);
+      if (normalizedId) {
+        pushKey('id::' + normalizedId);
+      }
+      var normalizedName = normalizeUserIdentifier(mutationId);
+      if (normalizedName) {
+        pushKey('name::' + normalizedName);
+      }
+    }
+
+    return keys;
+  }
+
+  function assignmentEntriesReferToSamePerson(first, second) {
+    var firstKeys = getAssignmentEntryLookupKeys(first);
+    var secondKeys = getAssignmentEntryLookupKeys(second);
+    if (!firstKeys.length || !secondKeys.length) {
+      return false;
+    }
+    var lookup = Object.create(null);
+    firstKeys.forEach(function(key) {
+      lookup[key] = true;
+    });
+    for (var i = 0; i < secondKeys.length; i += 1) {
+      if (lookup[secondKeys[i]]) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function filterAssignmentsAuthoredByCurrentUser(entries) {
+    if (!Array.isArray(entries) || !entries.length) {
+      return [];
+    }
+    return entries.filter(function(entry) {
+      return assignmentEntryAssignedByCurrentUser(entry);
+    });
+  }
+
+  function hasAssignmentsAuthoredByCurrentUser(entries) {
+    return filterAssignmentsAuthoredByCurrentUser(entries).length > 0;
+  }
+
+  function collectAssignmentEditorDiff(initialEntries, selectedEntries) {
+    var initial = Array.isArray(initialEntries) ? initialEntries : [];
+    var selected = Array.isArray(selectedEntries) ? selectedEntries : [];
+    var updated = [];
+    var removed = [];
+    var matchedInitial = [];
+
+    selected.forEach(function(selectedEntry) {
+      var matchedIndex = -1;
+      for (var i = 0; i < initial.length; i += 1) {
+        if (matchedInitial[i]) {
+          continue;
+        }
+        if (assignmentEntriesReferToSamePerson(initial[i], selectedEntry)) {
+          matchedIndex = i;
+          break;
+        }
+      }
+      if (matchedIndex !== -1) {
+        matchedInitial[matchedIndex] = true;
+      }
+      updated.push(selectedEntry);
+    });
+
+    initial.forEach(function(initialEntry, index) {
+      if (!matchedInitial[index]) {
+        removed.push(initialEntry);
+      }
+    });
+
+    return {
+      updated: updated,
+      removed: removed
+    };
+  }
+
+  function sendAssignmentEditorMutations(doc, kind, initialEntries, selectedEntries, successMessage) {
+    if (!doc || !doc.id) {
+      return Promise.reject(new Error('Не удалось определить документ.'));
+    }
+
+    var diff = collectAssignmentEditorDiff(initialEntries, selectedEntries);
+    var updateType = kind === 'subordinate' ? 'subordinates_add' : 'assign_add';
+    var removeType = kind === 'subordinate' ? 'subordinates_remove' : 'assign_remove';
+    var updateField = kind === 'subordinate' ? 'subordinates' : 'assignees';
+    var removeField = kind === 'subordinate' ? 'removeSubordinateIds' : 'removeAssigneeIds';
+    var hasWork = diff.updated.length > 0 || diff.removed.length > 0;
+
+    if (!hasWork) {
+      showMessage('success', 'Изменений нет.');
+      return Promise.resolve();
+    }
+
+    var chain = Promise.resolve();
+    if (diff.updated.length) {
+      chain = chain.then(function() {
+        var payload = {
+          documentId: doc.id,
+          updateType: updateType
+        };
+        payload[updateField] = diff.updated;
+        return sendTaskMutation(payload, false);
+      });
+    }
+
+    if (diff.removed.length) {
+      chain = chain.then(function() {
+        var removeIds = [];
+        diff.removed.forEach(function(entry) {
+          var mutationId = getAssignmentMutationId(entry);
+          if (mutationId) {
+            removeIds.push(mutationId);
+          }
+        });
+        if (!removeIds.length) {
+          throw new Error(kind === 'subordinate'
+            ? 'Не удалось определить подчинённого для отзыва.'
+            : 'Не удалось определить ответственного для отзыва.');
+        }
+        var payload = {
+          documentId: doc.id,
+          updateType: removeType
+        };
+        payload[removeField] = removeIds;
+        return sendTaskMutation(payload, false);
+      });
+    }
+
+    return chain.then(function() {
+      showMessage('success', successMessage || 'Назначения обновлены.');
+    });
+  }
+
   function isCurrentUserResponsibleForDocument(doc) {
     var assignees = resolveAssigneeList(doc);
     for (var i = 0; i < assignees.length; i += 1) {
@@ -16622,9 +16815,6 @@
 
   function canReviewSubordinateEntry(doc, entry) {
     if (!documentHasResponsibleSubordinateReviewFlow(doc)) {
-      return false;
-    }
-    if (!assignmentInstructionRequiresWork(entry)) {
       return false;
     }
     if (matchesCurrentUserAssignee(entry)) {
@@ -16653,9 +16843,6 @@
     if (!documentHasResponsibleSubordinateReviewFlow(doc)) {
       return false;
     }
-    if (!assignmentInstructionRequiresWork(entry)) {
-      return false;
-    }
     if (!matchesCurrentUserAssignee(entry)) {
       return false;
     }
@@ -16668,9 +16855,6 @@
 
   function appendSubordinateReviewControls(container, doc, entry) {
     if (!container || !documentHasResponsibleSubordinateReviewFlow(doc) || !entry) {
-      return;
-    }
-    if (!assignmentInstructionRequiresWork(entry)) {
       return;
     }
     ensureSubordinateReviewStyle();
@@ -16802,10 +16986,14 @@
       }
     }
 
-    if (canManageSubordinates()) {
+    var canManageAllSubordinates = canManageSubordinates();
+    var canEditAuthoredSubordinates = hasAssignmentsAuthoredByCurrentUser(subordinates);
+    if (canManageAllSubordinates || canEditAuthoredSubordinates) {
       container.classList.add('documents-assignee--editable');
       container.appendChild(createAssignmentEditButton(
-        subordinates.length ? 'Изменить подчинённых' : 'Назначить подчинённых',
+        canManageAllSubordinates
+          ? (subordinates.length ? 'Изменить подчинённых' : 'Назначить подчинённых')
+          : 'Изменить мои назначения',
         function() {
           openSubordinateModal(doc);
         }
@@ -18294,7 +18482,20 @@
 
     state.realtime.inFlight = true;
     state.realtime.lastSyncAt = now;
-    return refreshRegistrySilently()
+    return fetchRegistryMetaSilently()
+      .catch(function(error) {
+        if (typeof docsLogger.warn === 'function') {
+          docsLogger.warn('Не удалось проверить метаданные реестра, выполняем полную синхронизацию:', error);
+        }
+        return null;
+      })
+      .then(function(data) {
+        var metaSignature = resolveRealtimeRegistryMetaSignature(data);
+        if (metaSignature && metaSignature === state.realtime.registryMetaSignature) {
+          return state.documents;
+        }
+        return refreshRegistrySilently({ registryMetaSignature: metaSignature });
+      })
       .catch(function(error) {
         if (typeof docsLogger.warn === 'function') {
           docsLogger.warn('Не удалось выполнить realtime-синхронизацию просмотров:', error);
@@ -18678,11 +18879,25 @@
     return false;
   }
 
+  function normalizeAssignmentInstructionLabel(value) {
+    var text = value === null || value === undefined ? '' : String(value).trim();
+    if (!text) {
+      return '';
+    }
+
+    var normalized = text.replace(/\s+/g, ' ').toLowerCase().replace(/ё/g, 'е');
+    if (normalized === 'в работу') {
+      return WORK_INSTRUCTION_LABEL;
+    }
+
+    return text;
+  }
+
   function buildInstructionSelectOptions(select, currentValue) {
     if (!select) {
       return;
     }
-    var normalized = currentValue ? String(currentValue) : '';
+    var normalized = normalizeAssignmentInstructionLabel(currentValue);
     select.innerHTML = '';
 
     var placeholder = document.createElement('option');
@@ -20293,7 +20508,7 @@
 
       var comment = entry.assignmentComment ? String(entry.assignmentComment).trim() : '';
       var dueDate = entry.assignmentDueDate ? String(entry.assignmentDueDate).trim() : '';
-      var instruction = entry.assignmentInstruction ? String(entry.assignmentInstruction).trim() : '';
+      var instruction = entry.assignmentInstruction ? normalizeAssignmentInstructionLabel(entry.assignmentInstruction) : '';
 
       if (!dueDate && !isSubordinate && doc && doc.dueDate) {
         dueDate = String(doc.dueDate).trim();
@@ -20326,10 +20541,10 @@
     var container = createElement('div', 'documents-instruction');
     var primaryAssignee = resolvePrimaryAssignee(doc);
     var assignmentInstruction = primaryAssignee && primaryAssignee.assignmentInstruction
-      ? String(primaryAssignee.assignmentInstruction)
+      ? normalizeAssignmentInstructionLabel(primaryAssignee.assignmentInstruction)
       : '';
 
-    var instructionValue = doc && doc.instruction ? String(doc.instruction) : '';
+    var instructionValue = doc && doc.instruction ? normalizeAssignmentInstructionLabel(doc.instruction) : '';
     if (!instructionValue && assignmentInstruction) {
       instructionValue = assignmentInstruction;
     }
@@ -20429,6 +20644,26 @@
     return container;
   }
 
+  function createOwnAssignmentStatusCounter(doc) {
+    var summary = getCurrentResponsibleAssignmentCompletionSummary(doc);
+    if (!summary || summary.total < 1) {
+      return null;
+    }
+
+    var counter = createElement('div', 'documents-status__assignment');
+    counter.dataset.completed = summary.allCompleted ? 'true' : 'false';
+    counter.title = summary.pendingNames && summary.pendingNames.length
+      ? 'Ожидают выполнения: ' + summary.pendingNames.join(', ')
+      : 'Все ваши назначения выполнены';
+    counter.setAttribute('aria-label', 'Мои назначения: выполнено ' + summary.completed + ' из ' + summary.total);
+
+    counter.appendChild(createElement('span', 'documents-status__assignment-label', 'Мои назначения'));
+    counter.appendChild(createElement('span', 'documents-status__assignment-count', summary.completed + '/' + summary.total));
+    counter.appendChild(createElement('span', 'documents-status__assignment-state', summary.allCompleted ? 'готово' : 'в работе'));
+
+    return counter;
+  }
+
   function handleStatusSelectChange(doc, select, meta) {
     if (!doc || !doc.id || !select) {
       return;
@@ -20522,6 +20757,11 @@
       container.appendChild(select);
     } else {
       container.appendChild(createStatusBadge(statusText, getStatusTone(statusText)));
+    }
+
+    var ownAssignmentCounter = createOwnAssignmentStatusCounter(doc);
+    if (ownAssignmentCounter) {
+      container.appendChild(ownAssignmentCounter);
     }
 
     container.appendChild(meta);
@@ -21653,7 +21893,7 @@
 
     var pageSize = normalizeTablePageSize(state.tablePageSize);
     var groupingColumn = normalizeGroupingColumn(state.groupingColumn);
-    var renderWholePage = groupingColumn || pageSize === 'all'
+    var renderWholePage = groupingColumn
       ? true
       : entries.length <= Math.max(100, pageSize);
     var largeWholePage = renderWholePage && entries.length > Math.max(1, Number(state.virtualTable.progressiveThreshold) || 140);
@@ -21729,10 +21969,7 @@
       return false;
     }
     var pageSize = normalizeTablePageSize(state.tablePageSize);
-    if (pageSize === 'all') {
-      return false;
-    }
-    return entries.length > Math.max(100, pageSize);
+    return pageSize === 'all' || entries.length > Math.max(100, pageSize);
   }
 
   function bindVirtualTableScroll(container) {
@@ -21910,15 +22147,25 @@
   function uploadFormDataWithProgress(url, formData, progressHandler) {
     return new Promise(function(resolve, reject) {
       var xhr = new XMLHttpRequest();
+      var lastProgressAt = 0;
+      var progressThrottleMs = 120;
       xhr.open('POST', url, true);
       xhr.withCredentials = true;
       xhr.timeout = 600000;
 
       if (xhr.upload && typeof progressHandler === 'function') {
         xhr.upload.onprogress = function(event) {
+          var now = Date.now();
+          var loaded = event && typeof event.loaded === 'number' ? event.loaded : 0;
+          var total = event && typeof event.total === 'number' ? event.total : 0;
+          var isFinalProgress = Boolean(total > 0 && loaded >= total);
+          if (!isFinalProgress && lastProgressAt && now - lastProgressAt < progressThrottleMs) {
+            return;
+          }
+          lastProgressAt = now;
           progressHandler({
-            loaded: event && typeof event.loaded === 'number' ? event.loaded : 0,
-            total: event && typeof event.total === 'number' ? event.total : 0,
+            loaded: loaded,
+            total: total,
             lengthComputable: Boolean(event && event.lengthComputable)
           });
         };
@@ -22380,9 +22627,16 @@
       }
     }
     refreshUserAssignmentKeys();
+    if (state.virtualTable && state.virtualTable.renderDeferred && isDocumentFormModalOpen()) {
+      state.documentTabsDirty = true;
+      syncRealtimeRegistryMetaSignature(data);
+      state.realtime.registrySignature = '';
+      return state.documents;
+    }
     refreshDocumentTabsIfNeeded();
     updateClockUserDisplay();
     updateTable();
+    syncRealtimeRegistryMetaSignature(data);
     syncRealtimeRegistrySignature();
     return state.documents;
   }
@@ -25987,6 +26241,8 @@
     state.registryLoadError = '';
     var requestCacheVersion = state.runtimeCacheVersion;
     var requestOwnerKey = buildAccessDataOwnerKey(state.access);
+    var requestSequence = state.registryRequestSequence + 1;
+    state.registryRequestSequence = requestSequence;
     updateTable();
 
     return fetch(buildApiUrl('list', { organization: organization }), {
@@ -25995,7 +26251,7 @@
     })
       .then(handleResponse)
       .then(function(data) {
-        if (!isRegistryRequestCurrent(requestCacheVersion, requestOwnerKey, organization)) {
+        if (!isRegistryRequestCurrent(requestCacheVersion, requestOwnerKey, organization, requestSequence)) {
           return state.documents;
         }
         state.registryLoading = false;
@@ -26027,7 +26283,7 @@
         return documents;
       })
       .catch(function(error) {
-        if (!isRegistryRequestCurrent(requestCacheVersion, requestOwnerKey, organization)) {
+        if (!isRegistryRequestCurrent(requestCacheVersion, requestOwnerKey, organization, requestSequence)) {
           return state.documents;
         }
         var message = error && error.message ? error.message : String(error);
@@ -26040,7 +26296,20 @@
       });
   }
 
-  function refreshRegistrySilently() {
+  function fetchRegistryMetaSilently() {
+    if (!state.organization) {
+      return Promise.reject(new Error('Организация не определена.'));
+    }
+
+    return fetch(buildApiUrl('registry_meta', { organization: state.organization, cacheBust: Date.now() }), {
+      credentials: 'same-origin',
+      cache: 'no-store'
+    })
+      .then(handleResponse);
+  }
+
+  function refreshRegistrySilently(options) {
+    var config = options && typeof options === 'object' ? options : {};
     if (!state.organization) {
       return Promise.reject(new Error('Организация не определена.'));
     }
@@ -26048,6 +26317,8 @@
     var requestCacheVersion = state.runtimeCacheVersion;
     var requestOwnerKey = buildAccessDataOwnerKey(state.access);
     var requestOrganization = state.organization;
+    var requestSequence = state.registryRequestSequence + 1;
+    state.registryRequestSequence = requestSequence;
 
     return fetch(buildApiUrl('list', { organization: requestOrganization, cacheBust: Date.now() }), {
       credentials: 'same-origin',
@@ -26055,16 +26326,23 @@
     })
       .then(handleResponse)
       .then(function(data) {
-        if (!isRegistryRequestCurrent(requestCacheVersion, requestOwnerKey, requestOrganization)) {
+        if (!isRegistryRequestCurrent(requestCacheVersion, requestOwnerKey, requestOrganization, requestSequence)) {
           return state.documents;
         }
         var documents = resolveDocumentsCollection(data);
         var nextSignature = buildRealtimeRegistrySignature(documents);
         if (nextSignature && nextSignature === state.realtime.registrySignature) {
+          syncRealtimeRegistryMetaSignature(data);
+          if (config.registryMetaSignature && !state.realtime.registryMetaSignature) {
+            state.realtime.registryMetaSignature = config.registryMetaSignature;
+          }
           return state.documents;
         }
 
         var updatedDocuments = updateStateFromPayload(data);
+        if (config.registryMetaSignature && !state.realtime.registryMetaSignature) {
+          state.realtime.registryMetaSignature = config.registryMetaSignature;
+        }
         state.realtime.registrySignature = nextSignature || buildRealtimeRegistrySignature(updatedDocuments);
         return updatedDocuments;
       });
@@ -26116,6 +26394,23 @@
     return parts.join('\n');
   }
 
+  function resolveRealtimeRegistryMetaSignature(data) {
+    var meta = data && data.registryMeta && typeof data.registryMeta === 'object'
+      ? data.registryMeta
+      : null;
+    if (!meta || meta.signature === undefined || meta.signature === null) {
+      return '';
+    }
+    return String(meta.signature);
+  }
+
+  function syncRealtimeRegistryMetaSignature(data) {
+    var signature = resolveRealtimeRegistryMetaSignature(data);
+    if (signature) {
+      state.realtime.registryMetaSignature = signature;
+    }
+  }
+
   function syncRealtimeRegistrySignature() {
     state.realtime.registrySignature = buildRealtimeRegistrySignature(state.documents);
   }
@@ -26148,6 +26443,9 @@
       .then(handleResponse)
       .then(function(data) {
         applyTaskMutationPayload(data);
+        if (successMessage === false) {
+          return data;
+        }
         if (successMessage) {
           showMessage('success', successMessage);
         } else if (data && data.message) {
@@ -28364,11 +28662,20 @@
       form.addEventListener('submit', async function(event) {
         event.preventDefault();
         clearMessage();
+        if (state.virtualTable) {
+          state.virtualTable.renderDeferred = true;
+        }
         setDocumentFormSubmitting(true);
         setUploadProgressActive(true);
         updateUploadProgress(5, 'Подготавливаем данные формы…', 'is-stage-preparing');
         var formData = new FormData();
         var attachmentFiles = attachmentsStore.slice();
+        var initialCreateAttachmentFiles = !isEditMode && attachmentFiles.length
+          ? attachmentFiles.slice(0, DOCUMENTS_UPLOAD_BATCH_SIZE)
+          : [];
+        var remainingCreateAttachmentFiles = !isEditMode && attachmentFiles.length > initialCreateAttachmentFiles.length
+          ? attachmentFiles.slice(initialCreateAttachmentFiles.length)
+          : [];
         var attachmentErrors = validateAttachmentFiles(attachmentFiles, existingAttachments.filter(function(file) {
           var keys = collectAttachmentKeys(file);
           if (!keys.length) {
@@ -28481,8 +28788,8 @@
           if (typeof formData.delete === 'function') {
             formData.delete('attachments[]');
           }
-          if (attachmentFiles.length) {
-            attachmentFiles.forEach(function(file) {
+          if (initialCreateAttachmentFiles.length) {
+            initialCreateAttachmentFiles.forEach(function(file) {
               formData.append('attachments[]', file);
             });
           }
@@ -28533,13 +28840,15 @@
           logFilesDiagnostics('submit-create', {
             newFilesCount: attachmentFiles.length,
             newFileNames: attachmentFiles.map(function(file) { return file.name; }).slice(0, 10),
-            directUploadCount: attachmentFiles.length
+            directUploadCount: initialCreateAttachmentFiles.length,
+            deferredUploadCount: remainingCreateAttachmentFiles.length
           });
         }
 
         appendTelegramUserIdToFormData(formData);
 
-        var directCreateUploadActive = !isEditMode && attachmentFiles.length > 0;
+        var directCreateUploadActive = !isEditMode && initialCreateAttachmentFiles.length > 0;
+        var deferredCreateUploadActive = !isEditMode && remainingCreateAttachmentFiles.length > 0;
         if (attachmentFiles.length) {
           setSelectedAttachmentStates(
             attachmentFiles,
@@ -28551,11 +28860,13 @@
 
         submitButton.textContent = isEditMode ? 'Сохраняем...' : 'Добавляем...';
         if (directCreateUploadActive) {
-          setSelectedAttachmentStates(attachmentFiles, 'uploading', 0, 'Загружается: 0%');
+          setSelectedAttachmentStates(initialCreateAttachmentFiles, 'uploading', 0, 'Загружается: 0%');
         }
         updateUploadProgress(
           12,
-          directCreateUploadActive ? 'Загружаем файлы сразу в задачу…' : 'Сохраняем карточку документа…',
+          directCreateUploadActive
+            ? (deferredCreateUploadActive ? 'Загружаем первую часть файлов…' : 'Загружаем файлы сразу в задачу…')
+            : 'Сохраняем карточку документа…',
           'is-stage-uploading'
         );
 
@@ -28571,7 +28882,7 @@
           if (directCreateUploadActive) {
             var attachmentPercent = Math.max(1, Math.min(99, Math.round(progressInsideRequest * 100)));
             setSelectedAttachmentStates(
-              attachmentFiles,
+              initialCreateAttachmentFiles,
               'uploading',
               attachmentPercent,
               'Загружается: ' + attachmentPercent + '%'
@@ -28579,17 +28890,21 @@
           }
           updateUploadProgress(
             uploadPercent,
-            directCreateUploadActive ? 'Загружаем файлы сразу в задачу…' : 'Сохраняем карточку документа…',
+            directCreateUploadActive
+              ? (deferredCreateUploadActive ? 'Загружаем первую часть файлов…' : 'Загружаем файлы сразу в задачу…')
+              : 'Сохраняем карточку документа…',
             'is-stage-uploading'
           );
         })
           .then(function(data) {
             if (directCreateUploadActive) {
-              setSelectedAttachmentStates(attachmentFiles, 'ready', 100, 'Загружен в задачу');
+              setSelectedAttachmentStates(initialCreateAttachmentFiles, 'ready', 100, 'Загружен в задачу');
             }
             updateUploadProgress(
-              isEditMode ? 34 : 95,
-              isEditMode ? 'Документ сохранён. Готовим загрузку файлов…' : 'Документ и файлы сохранены. Обновляем таблицу…',
+              isEditMode || deferredCreateUploadActive ? 34 : 95,
+              isEditMode || deferredCreateUploadActive
+                ? 'Документ сохранён. Готовим загрузку файлов…'
+                : 'Документ и файлы сохранены. Обновляем таблицу…',
               'is-stage-processing'
             );
             if (isEditMode) {
@@ -28630,8 +28945,9 @@
 
             var uploadPromise = Promise.resolve();
             var latestUploadData = null;
-            if (isEditMode && attachmentFiles.length && createdOrUpdatedDocumentId) {
-              var batches = splitFilesToBatches(attachmentFiles, DOCUMENTS_UPLOAD_BATCH_SIZE);
+            var deferredAttachmentFiles = isEditMode ? attachmentFiles : remainingCreateAttachmentFiles;
+            if (deferredAttachmentFiles.length && createdOrUpdatedDocumentId) {
+              var batches = splitFilesToBatches(deferredAttachmentFiles, DOCUMENTS_UPLOAD_BATCH_SIZE);
               uploadPromise = batches.reduce(function(chain, batch, batchIndex) {
                 return chain.then(function() {
                   return runSequentialUploadStep(function() {
@@ -28832,13 +29148,23 @@
       var subordinateField = createElement('div', 'documents-form__field');
       var subordinateLabel = createElement('label', '', 'Подчинённые');
       subordinateField.appendChild(subordinateLabel);
+      var canManageAllSubordinates = canManageSubordinates();
       var currentSubordinates = resolveSubordinateList(doc);
-      var subordinatesEditor = createSubordinatesEditor(currentSubordinates);
+      var editableSubordinates = canManageAllSubordinates
+        ? currentSubordinates
+        : filterAssignmentsAuthoredByCurrentUser(currentSubordinates);
+      var subordinatesEditor = createSubordinatesEditor(editableSubordinates, canManageAllSubordinates ? null : {
+        allowAdd: false,
+        allowEmptySelection: true,
+        lockExistingSelection: true,
+        allowComment: true,
+        allowInstructionAssignment: true
+      });
       subordinateField.appendChild(subordinatesEditor.element);
       grid.appendChild(subordinateField);
 
       var instructionSelect = null;
-      if (canManageInstructions()) {
+      if (canManageAllSubordinates && canManageInstructions()) {
         var instructionField = createElement('div', 'documents-form__field');
         var instructionLabel = createElement('label', '', 'Поручения');
         instructionField.appendChild(instructionLabel);
@@ -28869,6 +29195,17 @@
           return;
         }
         var selectedSubordinates = subordinatesEditor.collect();
+        if (!canManageAllSubordinates) {
+          sendAssignmentEditorMutations(doc, 'subordinate', editableSubordinates, selectedSubordinates, 'Мои назначения обновлены.')
+            .then(function() {
+              closeModal(modal);
+            })
+            .catch(function(error) {
+              submitButton.disabled = false;
+              updateStatus('Не удалось сохранить изменения: ' + error.message, true);
+            });
+          return;
+        }
         var fields = { subordinates: selectedSubordinates };
         if (instructionSelect) {
           fields.instruction = instructionSelect.value || '';
@@ -28944,6 +29281,7 @@
       var allAssignees = resolveAssigneeList(doc);
       var preservedSubordinates = [];
       var currentAssignees = [];
+      var canManageAllResponsibles = isCurrentUserAdmin();
 
       if (allAssignees && allAssignees.length) {
         for (var ca = 0; ca < allAssignees.length; ca += 1) {
@@ -28959,14 +29297,23 @@
         }
       }
 
-      var assigneesEditor = createAssigneesEditor(currentAssignees);
+      var editableAssignees = canManageAllResponsibles
+        ? currentAssignees
+        : filterAssignmentsAuthoredByCurrentUser(currentAssignees);
+      var assigneesEditor = createAssigneesEditor(editableAssignees, canManageAllResponsibles ? null : {
+        allowAdd: false,
+        allowEmptySelection: true,
+        lockExistingSelection: true,
+        allowComment: true,
+        allowInstructionAssignment: true
+      });
       assigneeField.appendChild(assigneesEditor.element);
       grid.appendChild(assigneeField);
 
       var primaryAssignee = resolvePrimaryAssignee(doc);
 
       var instructionSelect = null;
-      if (canManageInstructions()) {
+      if (canManageAllResponsibles && canManageInstructions()) {
         var instructionField = createElement('div', 'documents-form__field');
         var instructionLabel = createElement('label', '', 'Поручения');
         instructionField.appendChild(instructionLabel);
@@ -28996,7 +29343,9 @@
       dueInput.value = initialDueDate;
       dueField.appendChild(dueLabel);
       dueField.appendChild(dueInput);
-      grid.appendChild(dueField);
+      if (canManageAllResponsibles) {
+        grid.appendChild(dueField);
+      }
 
       var commentField = createElement('div', 'documents-form__field');
       var commentLabel = createElement('label', '', 'Комментарий');
@@ -29026,7 +29375,9 @@
 
       commentField.appendChild(commentLabel);
       commentField.appendChild(commentInput);
-      grid.appendChild(commentField);
+      if (canManageAllResponsibles) {
+        grid.appendChild(commentField);
+      }
 
       form.appendChild(grid);
 
@@ -29047,6 +29398,17 @@
           return;
         }
         var selectedAssignees = assigneesEditor.collect();
+        if (!canManageAllResponsibles) {
+          sendAssignmentEditorMutations(doc, 'responsible', editableAssignees, selectedAssignees, 'Мои назначения обновлены.')
+            .then(function() {
+              closeModal(modal);
+            })
+            .catch(function(error) {
+              submitButton.disabled = false;
+              updateStatus('Не удалось сохранить изменения: ' + error.message, true);
+            });
+          return;
+        }
         var combinedAssignees = selectedAssignees.slice();
 
         var assignmentComment = commentInput ? String(commentInput.value || '').trim() : '';
@@ -29634,7 +29996,8 @@
     var tableWrapper = createElement('div', 'documents-table-wrapper');
     tableWrapper.style.position = 'relative';
     tableWrapper.style.overflowX = 'auto';
-    tableWrapper.style.overflowY = 'visible';
+    tableWrapper.style.overflowY = 'auto';
+    tableWrapper.style.scrollbarGutter = 'stable';
     tableWrapper.style.webkitOverflowScrolling = 'touch';
     var table = createElement('table', 'documents-table');
     var colgroup = createElement('colgroup', 'documents-table__colgroup');
@@ -30029,6 +30392,7 @@
   function resetDocumentsRuntimeCache(options) {
     var config = options && typeof options === 'object' ? options : {};
     state.runtimeCacheVersion += 1;
+    state.registryRequestSequence += 1;
     stopRealtimeRegistrySync();
 
     if (state.tablePreferencesSavingTimer && typeof window !== 'undefined') {
@@ -30046,6 +30410,13 @@
     }
     if (state.virtualTable.progressiveFrame && typeof window !== 'undefined' && typeof window.cancelAnimationFrame === 'function') {
       window.cancelAnimationFrame(state.virtualTable.progressiveFrame);
+    }
+
+    if (elements.tableBody) {
+      clearVirtualTableRows(true);
+      elements.tableBody.textContent = '';
+      elements.tableTopSpacer = null;
+      elements.tableBottomSpacer = null;
     }
 
     state.documents = [];
@@ -30072,6 +30443,7 @@
     state.effectiveUserRole = '';
     state.realtime.lastSyncAt = 0;
     state.realtime.registrySignature = '';
+    state.realtime.registryMetaSignature = '';
     state.permissions = { canManageInstructions: false, canCreateDocuments: false, canDeleteDocuments: false, canManageSubordinates: false };
     state.admin.settings = { responsibles: [], block2: [], block3: [] };
     state.admin.loaded = false;

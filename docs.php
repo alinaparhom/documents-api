@@ -115,11 +115,6 @@ const DOCS_VIEW_TRACE_LOG_FILE = DOCS_SERVER_LOG_DIRECTORY . '/Просмотр�
 const DOCS_RESPONSE_LOG_FILE = DOCS_SERVER_LOG_DIRECTORY . '/Ответ.log';
 const DOCS_KRUGLIK_LOG_FILE = DOCS_SERVER_LOG_DIRECTORY . '/Kruglik.log';
 const DOCS_ATTACHMENT_MAX_FILE_SIZE = 26214400; // 25 МБ
-const DOCS_ATTACHMENT_DEDUP_MIN_BYTES = 65536; // 64 КБ
-const DOCS_ATTACHMENT_ARCHIVE_DIRECTORY = '.attachment-archives';
-const DOCS_ATTACHMENT_ARCHIVE_TEST_DIRECTORY = '.attachment-archive-tests';
-const DOCS_ATTACHMENT_ARCHIVE_TEST_MANIFEST = 'manifest.json';
-const DOCS_ATTACHMENT_ARCHIVE_MIN_BYTES = 262144; // 256 КБ
 const DOCS_ATTACHMENT_BLOCKED_EXTENSIONS = [
     'exe' => true,
     'msi' => true,
@@ -1857,7 +1852,7 @@ function docs_build_response_notification_message(array $record, array $organiza
     }
     $lines[] = 'Содержание: ' . ($content !== '' ? $content : 'не указано');
 
-    $instruction = sanitize_instruction($uploaderEntry['assignmentInstruction'] ?? '');
+    $instruction = docs_format_assignment_instruction_label($uploaderEntry['assignmentInstruction'] ?? '');
     if ($instruction === '') {
         $instruction = sanitize_instruction($record['instruction'] ?? '');
     }
@@ -2048,7 +2043,7 @@ function docs_build_subordinate_submission_notification_message(
     }
     $lines[] = '📄 Содержание: ' . $escape($content !== '' ? $content : 'не указано');
 
-    $instruction = sanitize_instruction($subordinate['assignmentInstruction'] ?? '');
+    $instruction = docs_format_assignment_instruction_label($subordinate['assignmentInstruction'] ?? '');
     if ($instruction === '') {
         $instruction = sanitize_instruction($record['instruction'] ?? '');
     }
@@ -2272,7 +2267,7 @@ function docs_build_assignment_notification_message(array $record, array $assign
     $assignmentComment = sanitize_assignment_comment($assignee['assignmentComment'] ?? '');
     $assignmentDueRaw = sanitize_date_field($assignee['assignmentDueDate'] ?? '');
     $assignmentDueFormatted = docs_format_human_date($assignmentDueRaw);
-    $assignmentInstruction = sanitize_text_field($assignee['assignmentInstruction'] ?? '', 800);
+    $assignmentInstruction = docs_format_assignment_instruction_label($assignee['assignmentInstruction'] ?? '');
     if ($assignmentInstruction === '') {
         $assignmentInstruction = $assignmentComment;
     }
@@ -4303,143 +4298,87 @@ function docs_format_file_size(int $size): string
     return $size . ' Б';
 }
 
-function docs_collect_directory_size_summary(string $directory): array
+function docs_collect_storage_size_summary(?string $requestedOrganization = null): array
 {
-    $summary = [
-        'bytes' => 0,
-        'files' => 0,
-        'directories' => 0,
+    $folder = '';
+    if (is_string($requestedOrganization) && trim($requestedOrganization) !== '') {
+        $folder = sanitize_folder_name($requestedOrganization);
+    }
+
+    $folders = [];
+    if ($folder !== '') {
+        $folders[] = $folder;
+    } else {
+        foreach (load_organizations() as $organization) {
+            $candidate = sanitize_folder_name((string) $organization);
+            if ($candidate !== '') {
+                $folders[$candidate] = $candidate;
+            }
+        }
+        $folders = array_values($folders);
+    }
+
+    $registryFiles = [REGISTRY_FILENAME, OUTGOING_REGISTRY_FILENAME, ORDERS_REGISTRY_FILENAME, SETTINGS_FILENAME];
+    $registryBytes = 0;
+    $attachmentsCount = 0;
+    $responsesCount = 0;
+    $recordsCount = 0;
+
+    foreach ($folders as $currentFolder) {
+        $directory = DOCUMENTS_ROOT . '/' . $currentFolder;
+        foreach ($registryFiles as $registryFile) {
+            $path = $directory . '/' . $registryFile;
+            if (is_file($path)) {
+                $registryBytes += max(0, (int) (@filesize($path) ?: 0));
+            }
+        }
+
+        foreach (load_registry($currentFolder) as $record) {
+            if (!is_array($record)) {
+                continue;
+            }
+            $recordsCount++;
+            if (isset($record['files']) && is_array($record['files'])) {
+                $attachmentsCount += count($record['files']);
+            }
+            if (isset($record['responses']) && is_array($record['responses'])) {
+                $responsesCount += count($record['responses']);
+            }
+        }
+
+        foreach (docs_load_outgoing_registry($currentFolder) as $record) {
+            if (!is_array($record)) {
+                continue;
+            }
+            $recordsCount++;
+            if (isset($record['files']) && is_array($record['files'])) {
+                $attachmentsCount += count($record['files']);
+            }
+        }
+    }
+
+    return [
+        'bytes' => $registryBytes,
+        'files' => $attachmentsCount + $responsesCount,
+        'directories' => count($folders),
         'extensions' => [],
         'topDirectories' => [],
         'largestFiles' => [],
         'archiveBytes' => 0,
         'testArchiveBytes' => 0,
-        'registryBytes' => 0,
+        'registryBytes' => $registryBytes,
+        'label' => docs_format_file_size($registryBytes),
+        'archiveLabel' => '0 Б',
+        'testArchiveLabel' => '0 Б',
+        'registryLabel' => docs_format_file_size($registryBytes),
+        'path' => $folder !== '' ? 'documents/' . $folder : 'documents',
+        'organization' => $folder !== '' ? $requestedOrganization : null,
+        'checkedAt' => date('c'),
+        'mode' => 'lightweight_registry_only',
+        'recordsCount' => $recordsCount,
+        'attachmentsCount' => $attachmentsCount,
+        'responsesCount' => $responsesCount,
     ];
-
-    if (!is_dir($directory)) {
-        return $summary;
-    }
-
-    $root = rtrim(str_replace('\\', '/', $directory), '/');
-    $extensionBuckets = [];
-    $directoryBuckets = [];
-    $largestFiles = [];
-
-    try {
-        $iterator = new RecursiveIteratorIterator(
-            new RecursiveDirectoryIterator($directory, FilesystemIterator::SKIP_DOTS),
-            RecursiveIteratorIterator::SELF_FIRST
-        );
-    } catch (Throwable $exception) {
-        return $summary;
-    }
-
-    foreach ($iterator as $entry) {
-        if (!$entry instanceof SplFileInfo) {
-            continue;
-        }
-        if ($entry->isDir()) {
-            $summary['directories']++;
-            continue;
-        }
-        if (!$entry->isFile()) {
-            continue;
-        }
-
-        $path = str_replace('\\', '/', $entry->getPathname());
-        $relativePath = strpos($path, $root . '/') === 0 ? substr($path, strlen($root) + 1) : $entry->getFilename();
-        $relativePath = ltrim($relativePath, '/');
-        $firstSegment = $relativePath !== '' && strpos($relativePath, '/') !== false
-            ? substr($relativePath, 0, strpos($relativePath, '/'))
-            : '(root)';
-        $extension = strtolower((string) pathinfo($entry->getFilename(), PATHINFO_EXTENSION));
-        if ($extension === '') {
-            $extension = '[no_ext]';
-        }
-        $fileSize = max(0, (int) ($entry->getSize() ?: 0));
-
-        $summary['files']++;
-        $summary['bytes'] += $fileSize;
-
-        if (!isset($extensionBuckets[$extension])) {
-            $extensionBuckets[$extension] = ['extension' => $extension, 'files' => 0, 'bytes' => 0];
-        }
-        $extensionBuckets[$extension]['files']++;
-        $extensionBuckets[$extension]['bytes'] += $fileSize;
-
-        if (!isset($directoryBuckets[$firstSegment])) {
-            $directoryBuckets[$firstSegment] = ['directory' => $firstSegment, 'files' => 0, 'bytes' => 0];
-        }
-        $directoryBuckets[$firstSegment]['files']++;
-        $directoryBuckets[$firstSegment]['bytes'] += $fileSize;
-
-        if ($firstSegment === DOCS_ATTACHMENT_ARCHIVE_DIRECTORY || $extension === 'zip') {
-            $summary['archiveBytes'] += $fileSize;
-        }
-        if ($firstSegment === DOCS_ATTACHMENT_ARCHIVE_TEST_DIRECTORY) {
-            $summary['testArchiveBytes'] += $fileSize;
-        }
-        if (in_array($entry->getFilename(), [REGISTRY_FILENAME, OUTGOING_REGISTRY_FILENAME, ORDERS_REGISTRY_FILENAME, SETTINGS_FILENAME], true)) {
-            $summary['registryBytes'] += $fileSize;
-        }
-
-        $largestFiles[] = [
-            'path' => $relativePath,
-            'extension' => $extension,
-            'bytes' => $fileSize,
-        ];
-    }
-
-    usort($extensionBuckets, static function (array $left, array $right): int {
-        return ($right['bytes'] <=> $left['bytes']) ?: strcmp($left['extension'], $right['extension']);
-    });
-    usort($directoryBuckets, static function (array $left, array $right): int {
-        return ($right['bytes'] <=> $left['bytes']) ?: strcmp($left['directory'], $right['directory']);
-    });
-    usort($largestFiles, static function (array $left, array $right): int {
-        return ($right['bytes'] <=> $left['bytes']) ?: strcmp($left['path'], $right['path']);
-    });
-
-    $summary['extensions'] = array_map(static function (array $bucket): array {
-        $bucket['label'] = docs_format_file_size((int) $bucket['bytes']);
-        return $bucket;
-    }, array_slice($extensionBuckets, 0, 15));
-    $summary['topDirectories'] = array_map(static function (array $bucket): array {
-        $bucket['label'] = docs_format_file_size((int) $bucket['bytes']);
-        return $bucket;
-    }, array_slice($directoryBuckets, 0, 15));
-    $summary['largestFiles'] = array_map(static function (array $file): array {
-        $file['label'] = docs_format_file_size((int) $file['bytes']);
-        return $file;
-    }, array_slice($largestFiles, 0, 15));
-
-    return $summary;
-}
-
-function docs_collect_storage_size_summary(?string $requestedOrganization = null): array
-{
-    $documentsRoot = realpath(DOCUMENTS_ROOT);
-    $folder = '';
-    $targetPath = $documentsRoot;
-    if (is_string($requestedOrganization) && trim($requestedOrganization) !== '') {
-        $folder = sanitize_folder_name($requestedOrganization);
-        $targetPath = is_string($documentsRoot) && $documentsRoot !== ''
-            ? $documentsRoot . '/' . $folder
-            : DOCUMENTS_ROOT . '/' . $folder;
-    }
-
-    $targetPath = is_string($targetPath) ? $targetPath : '';
-    $summary = docs_collect_directory_size_summary($targetPath);
-    $summary['label'] = docs_format_file_size((int) $summary['bytes']);
-    $summary['archiveLabel'] = docs_format_file_size((int) ($summary['archiveBytes'] ?? 0));
-    $summary['testArchiveLabel'] = docs_format_file_size((int) ($summary['testArchiveBytes'] ?? 0));
-    $summary['registryLabel'] = docs_format_file_size((int) ($summary['registryBytes'] ?? 0));
-    $summary['path'] = $folder !== '' ? 'documents/' . $folder : 'documents';
-    $summary['organization'] = $folder !== '' ? $requestedOrganization : null;
-    $summary['checkedAt'] = date('c');
-
-    return $summary;
 }
 
 function docs_validate_uploaded_attachment(string $originalName, int $size): ?string
@@ -4461,195 +4400,6 @@ function docs_validate_uploaded_attachment(string $originalName, int $size): ?st
     return null;
 }
 
-function docs_find_attachment_storage_root(string $path): ?string
-{
-    $documentsRoot = realpath(DOCUMENTS_ROOT);
-    $filePath = realpath($path);
-    if (!is_string($documentsRoot) || $documentsRoot === '' || !is_string($filePath) || $filePath === '') {
-        return null;
-    }
-
-    $documentsRoot = rtrim(str_replace('\\', '/', $documentsRoot), '/');
-    $filePath = str_replace('\\', '/', $filePath);
-    if (strpos($filePath, $documentsRoot . '/') !== 0) {
-        return null;
-    }
-
-    $relative = substr($filePath, strlen($documentsRoot) + 1);
-    $segments = explode('/', $relative);
-    if (empty($segments[0]) || $segments[0] === '.' || $segments[0] === '..') {
-        return null;
-    }
-
-    $storageRoot = $documentsRoot . '/' . $segments[0];
-    return is_dir($storageRoot) ? $storageRoot : null;
-}
-
-function docs_files_share_inode(string $firstPath, string $secondPath): bool
-{
-    $firstInode = @fileinode($firstPath);
-    $secondInode = @fileinode($secondPath);
-
-    return is_int($firstInode) && is_int($secondInode) && $firstInode === $secondInode;
-}
-
-function docs_attachment_file_can_deduplicate(string $path): bool
-{
-    $extension = strtolower((string) pathinfo($path, PATHINFO_EXTENSION));
-    if ($extension === '') {
-        return false;
-    }
-
-    static $allowedExtensions = [
-        'pdf' => true,
-        'jpg' => true,
-        'jpeg' => true,
-        'png' => true,
-        'gif' => true,
-        'webp' => true,
-        'heic' => true,
-        'doc' => true,
-        'docx' => true,
-        'xls' => true,
-        'xlsx' => true,
-        'txt' => true,
-        'rtf' => true,
-        'odt' => true,
-        'ods' => true,
-        'dwg' => true,
-        'bin' => true,
-        'rar' => true,
-        '7z' => true,
-    ];
-
-    return isset($allowedExtensions[$extension]);
-}
-
-function docs_attachment_file_can_archive(string $path): bool
-{
-    if (!docs_attachment_file_can_deduplicate($path)) {
-        return false;
-    }
-
-    $extension = strtolower((string) pathinfo($path, PATHINFO_EXTENSION));
-    return $extension !== 'zip';
-}
-
-function docs_prepare_archived_attachment_meta($value): array
-{
-    if (!is_array($value)) {
-        return [];
-    }
-
-    $zip = sanitize_text_field((string) ($value['zip'] ?? ''), 255);
-    $entry = sanitize_text_field((string) ($value['entry'] ?? ''), 500);
-    if ($zip === '' || $entry === '') {
-        return [];
-    }
-
-    $zip = str_replace('\\', '/', $zip);
-    $entry = str_replace('\\', '/', $entry);
-    if (strpos($zip, '..') !== false || strpos($entry, '..') !== false || strpos($zip, '/') !== false) {
-        return [];
-    }
-
-    return array_filter([
-        'zip' => $zip,
-        'entry' => ltrim($entry, '/'),
-        'size' => isset($value['size']) ? max(0, (int) $value['size']) : 0,
-        'archivedAt' => docs_normalize_datetime_iso(isset($value['archivedAt']) ? (string) $value['archivedAt'] : null) ?? '',
-    ], static function ($item) {
-        return $item !== '' && $item !== 0;
-    });
-}
-
-function docs_build_archived_attachment_url(string $folder, array $archive, string $fileName = ''): string
-{
-    $params = [
-        'action' => 'archived_attachment',
-        'organization' => $folder,
-        'archive' => (string) ($archive['zip'] ?? ''),
-        'entry' => (string) ($archive['entry'] ?? ''),
-    ];
-    if (!empty($archive['test'])) {
-        $params['test'] = '1';
-    }
-    if ($fileName !== '') {
-        $params['name'] = $fileName;
-    }
-
-    return '/docs.php?' . http_build_query($params, '', '&', PHP_QUERY_RFC3986);
-}
-
-function docs_file_matches_uploaded_attachment(string $candidatePath, string $path, int $size, string $hash): bool
-{
-    if ($candidatePath === $path || !is_file($candidatePath)) {
-        return false;
-    }
-    if (!docs_attachment_file_can_deduplicate($candidatePath)) {
-        return false;
-    }
-    if (docs_files_share_inode($candidatePath, $path)) {
-        return false;
-    }
-    if ((int) (@filesize($candidatePath) ?: 0) !== $size) {
-        return false;
-    }
-
-    $candidateHash = @hash_file('sha256', $candidatePath);
-    return is_string($candidateHash) && $candidateHash !== '' && hash_equals($hash, $candidateHash);
-}
-
-function docs_find_duplicate_attachment_file(string $path, int $size, string $hash): ?string
-{
-    $storageRoot = docs_find_attachment_storage_root($path);
-    if ($storageRoot === null || !is_dir($storageRoot)) {
-        return null;
-    }
-
-    try {
-        $iterator = new RecursiveIteratorIterator(
-            new RecursiveDirectoryIterator($storageRoot, FilesystemIterator::SKIP_DOTS),
-            RecursiveIteratorIterator::LEAVES_ONLY
-        );
-    } catch (Throwable $exception) {
-        return null;
-    }
-
-    foreach ($iterator as $entry) {
-        if (!$entry instanceof SplFileInfo || !$entry->isFile()) {
-            continue;
-        }
-
-        $candidatePath = $entry->getPathname();
-        if (docs_file_matches_uploaded_attachment($candidatePath, $path, $size, $hash)) {
-            return $candidatePath;
-        }
-    }
-
-    return null;
-}
-
-function docs_replace_duplicate_attachment_with_hardlink(string $path, string $duplicatePath): bool
-{
-    if (!function_exists('link') || !is_file($path) || !is_file($duplicatePath)) {
-        return false;
-    }
-
-    $temporaryPath = $path . '.dedup-' . str_replace('.', '', uniqid('', true));
-    if (!@rename($path, $temporaryPath)) {
-        return false;
-    }
-
-    if (@link($duplicatePath, $path)) {
-        @unlink($temporaryPath);
-        return true;
-    }
-
-    @rename($temporaryPath, $path);
-    return false;
-}
-
 function docs_optimize_uploaded_attachment_file(string $path, string $originalName, int $originalSize = 0): array
 {
     $result = [
@@ -4657,10 +4407,6 @@ function docs_optimize_uploaded_attachment_file(string $path, string $originalNa
         'size' => is_file($path) ? (int) (@filesize($path) ?: 0) : 0,
         'originalSize' => max(0, $originalSize),
     ];
-
-    if (!is_file($path) || !docs_attachment_file_can_deduplicate($path)) {
-        return $result;
-    }
 
     $actualSize = (int) (@filesize($path) ?: 0);
     if ($actualSize <= 0) {
@@ -4675,788 +4421,39 @@ function docs_optimize_uploaded_attachment_file(string $path, string $originalNa
 
 function docs_deduplicate_attachment_storage(?string $requestedOrganization = null): array
 {
-    $documentsRoot = realpath(DOCUMENTS_ROOT);
-    if (!is_string($documentsRoot) || $documentsRoot === '' || !is_dir($documentsRoot)) {
-        return [
-            'success' => false,
-            'reason' => 'documents_root_missing',
-            'filesScanned' => 0,
-            'duplicatesLinked' => 0,
-            'savedBytes' => 0,
-        ];
-    }
-
-    $organizationFolders = [];
-    if (is_string($requestedOrganization) && trim($requestedOrganization) !== '') {
-        $folder = sanitize_folder_name($requestedOrganization);
-        if ($folder !== '') {
-            $organizationFolders[] = $folder;
-        }
-    } else {
-        $items = @scandir($documentsRoot);
-        if (is_array($items)) {
-            foreach ($items as $item) {
-                if ($item === '.' || $item === '..') {
-                    continue;
-                }
-                $candidate = $documentsRoot . '/' . $item;
-                if (is_dir($candidate)) {
-                    $organizationFolders[] = $item;
-                }
-            }
-        }
-    }
-
-    $organizationFolders = array_values(array_unique(array_filter($organizationFolders, static function ($folder): bool {
-        return is_string($folder) && $folder !== '' && $folder !== '.' && $folder !== '..';
-    })));
-
-    $seen = [];
-    $summary = [
-        'success' => true,
-        'organizations' => 0,
+    return [
+        'success' => false,
+        'disabled' => true,
+        'reason' => 'attachment_dedupe_disabled',
         'filesScanned' => 0,
         'duplicatesLinked' => 0,
         'savedBytes' => 0,
-        'skippedSmall' => 0,
-        'linkFailed' => 0,
     ];
-
-    foreach ($organizationFolders as $folder) {
-        $storageRoot = $documentsRoot . '/' . $folder;
-        if (!is_dir($storageRoot)) {
-            continue;
-        }
-        $summary['organizations']++;
-
-        try {
-            $iterator = new RecursiveIteratorIterator(
-                new RecursiveDirectoryIterator($storageRoot, FilesystemIterator::SKIP_DOTS),
-                RecursiveIteratorIterator::LEAVES_ONLY
-            );
-        } catch (Throwable $exception) {
-            continue;
-        }
-
-        foreach ($iterator as $entry) {
-            if (!$entry instanceof SplFileInfo || !$entry->isFile()) {
-                continue;
-            }
-
-            $path = $entry->getPathname();
-            if (!docs_attachment_file_can_deduplicate($path)) {
-                continue;
-            }
-
-            $size = (int) ($entry->getSize() ?: 0);
-            if ($size < DOCS_ATTACHMENT_DEDUP_MIN_BYTES) {
-                $summary['skippedSmall']++;
-                continue;
-            }
-
-            $summary['filesScanned']++;
-            $hash = @hash_file('sha256', $path);
-            if (!is_string($hash) || $hash === '') {
-                continue;
-            }
-
-            $key = $size . ':' . $hash;
-            if (!isset($seen[$key])) {
-                $seen[$key] = $path;
-                continue;
-            }
-
-            $duplicatePath = $seen[$key];
-            if (docs_files_share_inode($duplicatePath, $path)) {
-                continue;
-            }
-
-            if (docs_replace_duplicate_attachment_with_hardlink($path, $duplicatePath)) {
-                $summary['duplicatesLinked']++;
-                $summary['savedBytes'] += $size;
-            } else {
-                $summary['linkFailed']++;
-            }
-        }
-    }
-
-    return $summary;
-}
-
-function docs_get_attachment_archive_root(string $folder, bool $create = true): string
-{
-    $dir = ensure_organization_directory($folder) . '/' . DOCS_ATTACHMENT_ARCHIVE_DIRECTORY;
-    if ($create && !is_dir($dir)) {
-        @mkdir($dir, 0775, true);
-    }
-
-    return $dir;
-}
-
-function docs_get_attachment_archive_test_root(string $folder, bool $create = true): string
-{
-    $dir = ensure_organization_directory($folder) . '/' . DOCS_ATTACHMENT_ARCHIVE_TEST_DIRECTORY;
-    if ($create && !is_dir($dir)) {
-        @mkdir($dir, 0775, true);
-    }
-
-    return $dir;
-}
-
-function docs_get_attachment_archive_test_manifest_path(string $folder): string
-{
-    return docs_get_attachment_archive_test_root($folder, true) . '/' . DOCS_ATTACHMENT_ARCHIVE_TEST_MANIFEST;
-}
-
-function docs_attachment_archive_test_month_from_values(array $values, string $path): string
-{
-    foreach ($values as $value) {
-        if (!is_scalar($value)) {
-            continue;
-        }
-
-        $timestamp = @strtotime((string) $value);
-        if ($timestamp !== false) {
-            return date('Y-m', $timestamp);
-        }
-    }
-
-    $mtime = is_file($path) ? @filemtime($path) : false;
-    if ($mtime !== false) {
-        return date('Y-m', (int) $mtime);
-    }
-
-    return date('Y-m');
-}
-
-function docs_collect_attachment_archive_test_entries(string $folder): array
-{
-    $entries = [];
-    $seen = [];
-    $organizationRoot = ensure_organization_directory($folder);
-    $organizationRealRoot = realpath($organizationRoot);
-    if (!is_string($organizationRealRoot) || $organizationRealRoot === '') {
-        return [];
-    }
-    $organizationRealRoot = rtrim(str_replace('\\', '/', $organizationRealRoot), '/');
-
-    $pushEntry = static function (string $path, string $relativePath, array $file, array $record, string $source) use (&$entries, &$seen, $folder, $organizationRealRoot): void {
-        if ($path === '' || !is_file($path) || !is_readable($path) || !docs_attachment_file_can_archive($path)) {
-            return;
-        }
-
-        $realPath = realpath($path);
-        if (!is_string($realPath) || $realPath === '') {
-            return;
-        }
-        $normalizedRealPath = str_replace('\\', '/', $realPath);
-        if (strpos($normalizedRealPath, $organizationRealRoot . '/') !== 0) {
-            return;
-        }
-        if (strpos($normalizedRealPath, '/' . DOCS_ATTACHMENT_ARCHIVE_DIRECTORY . '/') !== false
-            || strpos($normalizedRealPath, '/' . DOCS_ATTACHMENT_ARCHIVE_TEST_DIRECTORY . '/') !== false) {
-            return;
-        }
-        if (isset($seen[$normalizedRealPath])) {
-            return;
-        }
-
-        $relativePath = docs_normalize_archive_entry_name($relativePath !== '' ? $relativePath : substr($normalizedRealPath, strlen($organizationRealRoot) + 1));
-        if ($relativePath === '') {
-            return;
-        }
-
-        $size = (int) (@filesize($realPath) ?: 0);
-        if ($size <= 0) {
-            return;
-        }
-
-        $month = docs_attachment_archive_test_month_from_values([
-            $file['uploadedAt'] ?? null,
-            $file['createdAt'] ?? null,
-            $record['registrationDate'] ?? null,
-            $record['documentDate'] ?? null,
-            $record['createdAt'] ?? null,
-            $record['updatedAt'] ?? null,
-        ], $realPath);
-
-        $originalName = sanitize_text_field((string) ($file['originalName'] ?? ($file['name'] ?? ($file['storedName'] ?? basename($relativePath)))), 255);
-        if ($originalName === '') {
-            $originalName = basename($relativePath);
-        }
-
-        $seen[$normalizedRealPath] = true;
-        $entries[] = [
-            'path' => $realPath,
-            'relativePath' => $relativePath,
-            'entry' => $relativePath,
-            'month' => $month,
-            'archive' => $month . '.test.zip',
-            'originalName' => $originalName,
-            'size' => $size,
-            'source' => $source,
-            'documentId' => sanitize_text_field((string) ($record['id'] ?? ''), 200),
-            'registryNumber' => sanitize_text_field((string) ($record['registryNumber'] ?? ''), 120),
-        ];
-    };
-
-    foreach (load_registry($folder) as $record) {
-        if (!is_array($record)) {
-            continue;
-        }
-
-        if (isset($record['files']) && is_array($record['files'])) {
-            foreach ($record['files'] as $file) {
-                if (!is_array($file)) {
-                    continue;
-                }
-                $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
-                if ($storedName === '') {
-                    continue;
-                }
-                $pushEntry($organizationRoot . '/' . $storedName, $storedName, $file, $record, 'registry_file');
-            }
-        }
-
-        if (isset($record['responses']) && is_array($record['responses'])) {
-            $documentId = sanitize_text_field((string) ($record['id'] ?? ''), 200);
-            if ($documentId === '') {
-                continue;
-            }
-            foreach ($record['responses'] as $response) {
-                if (!is_array($response)) {
-                    continue;
-                }
-                $storedName = sanitize_text_field((string) ($response['storedName'] ?? ''), 255);
-                if ($storedName === '') {
-                    continue;
-                }
-                $relativePath = 'Ответы/' . $documentId . '/' . $storedName;
-                $pushEntry(docs_get_document_responses_dir($folder, $documentId, false) . '/' . $storedName, $relativePath, $response, $record, 'response_file');
-            }
-        }
-    }
-
-    foreach (docs_load_outgoing_registry($folder) as $record) {
-        if (!is_array($record) || !isset($record['files']) || !is_array($record['files'])) {
-            continue;
-        }
-        foreach ($record['files'] as $file) {
-            if (!is_array($file)) {
-                continue;
-            }
-            foreach (docs_get_outgoing_file_path_candidates($folder, $file) as $pathCandidate) {
-                $storedName = sanitize_text_field((string) ($file['storedName'] ?? basename($pathCandidate)), 255);
-                $relativePath = 'Исходящие/' . ($storedName !== '' ? $storedName : basename($pathCandidate));
-                $pushEntry($pathCandidate, $relativePath, $file, $record, 'outgoing_file');
-            }
-        }
-    }
-
-    usort($entries, static function (array $left, array $right): int {
-        return strcmp((string) ($left['month'] ?? ''), (string) ($right['month'] ?? ''))
-            ?: strcmp((string) ($left['relativePath'] ?? ''), (string) ($right['relativePath'] ?? ''));
-    });
-
-    return $entries;
-}
-
-function docs_delete_attachment_archive_test_files(string $folder, string $archiveName = ''): array
-{
-    $archiveRoot = docs_get_attachment_archive_test_root($folder, true);
-    $deleted = 0;
-    $bytesDeleted = 0;
-    $archiveName = sanitize_text_field($archiveName, 255);
-    $archiveName = str_replace('\\', '/', $archiveName);
-    if (strpos($archiveName, '..') !== false || strpos($archiveName, '/') !== false) {
-        $archiveName = '';
-    }
-
-    $items = @scandir($archiveRoot);
-    if (is_array($items)) {
-        foreach ($items as $item) {
-            if ($item === '.' || $item === '..') {
-                continue;
-            }
-            if ($archiveName !== '' && $item !== $archiveName) {
-                continue;
-            }
-            if ($item !== DOCS_ATTACHMENT_ARCHIVE_TEST_MANIFEST && substr($item, -9) !== '.test.zip') {
-                continue;
-            }
-            $path = $archiveRoot . '/' . $item;
-            if (!is_file($path)) {
-                continue;
-            }
-            $size = (int) (@filesize($path) ?: 0);
-            if (@unlink($path)) {
-                $deleted++;
-                $bytesDeleted += $size;
-            }
-        }
-    }
-
-    if ($archiveName !== '') {
-        docs_refresh_attachment_archive_test_manifest($folder);
-    }
-
-    return [
-        'deleted' => $deleted,
-        'bytesDeleted' => $bytesDeleted,
-        'bytesDeletedLabel' => docs_format_file_size($bytesDeleted),
-    ];
-}
-
-function docs_refresh_attachment_archive_test_manifest(string $folder, array $manifest = []): array
-{
-    if (empty($manifest)) {
-        $manifest = docs_collect_attachment_archive_test_summary($folder, false);
-    }
-
-    $path = docs_get_attachment_archive_test_manifest_path($folder);
-    $encoded = json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    if ($encoded !== false) {
-        @file_put_contents($path, $encoded . PHP_EOL, LOCK_EX);
-        @chmod($path, 0644);
-    }
-
-    return $manifest;
-}
-
-function docs_generate_attachment_archive_test(string $folder, bool $replace = true): array
-{
-    if (!class_exists('ZipArchive')) {
-        return [
-            'success' => false,
-            'message' => 'На сервере недоступен ZipArchive.',
-        ];
-    }
-
-    if ($replace) {
-        docs_delete_attachment_archive_test_files($folder);
-    }
-
-    $archiveRoot = docs_get_attachment_archive_test_root($folder, true);
-    if (!is_dir($archiveRoot) || !is_writable($archiveRoot)) {
-        return [
-            'success' => false,
-            'message' => 'Не удалось подготовить папку тестовых архивов.',
-        ];
-    }
-
-    $entries = docs_collect_attachment_archive_test_entries($folder);
-    $zips = [];
-    $filesAdded = 0;
-    $sourceBytes = 0;
-    $skipped = 0;
-    $manifestEntries = [];
-
-    foreach ($entries as $entry) {
-        $archiveName = sanitize_text_field((string) ($entry['archive'] ?? ''), 255);
-        $sourcePath = (string) ($entry['path'] ?? '');
-        $entryName = docs_normalize_archive_entry_name((string) ($entry['entry'] ?? ''));
-        if ($archiveName === '' || $sourcePath === '' || $entryName === '') {
-            $skipped++;
-            continue;
-        }
-
-        $archivePath = $archiveRoot . '/' . $archiveName;
-        $zip = new ZipArchive();
-        $openResult = $zip->open($archivePath, ZipArchive::CREATE);
-        if ($openResult !== true) {
-            $skipped++;
-            continue;
-        }
-
-        $entryCandidate = $entryName;
-        $duplicateIndex = 2;
-        while ($zip->locateName($entryCandidate) !== false) {
-            $pathInfo = pathinfo($entryName);
-            $extension = isset($pathInfo['extension']) && $pathInfo['extension'] !== '' ? '.' . $pathInfo['extension'] : '';
-            $filename = $pathInfo['filename'] ?? $entryName;
-            $dirname = isset($pathInfo['dirname']) && $pathInfo['dirname'] !== '.' ? $pathInfo['dirname'] . '/' : '';
-            $entryCandidate = $dirname . $filename . '_' . $duplicateIndex . $extension;
-            $duplicateIndex++;
-        }
-
-        $added = $zip->addFile($sourcePath, $entryCandidate);
-        if ($added && method_exists($zip, 'setCompressionName')) {
-            @$zip->setCompressionName($entryCandidate, ZipArchive::CM_DEFLATE, 6);
-        }
-        $closed = $zip->close();
-        if (!$added || !$closed) {
-            $skipped++;
-            continue;
-        }
-
-        $size = (int) ($entry['size'] ?? 0);
-        $filesAdded++;
-        $sourceBytes += $size;
-        $zips[$archiveName] = true;
-        $archiveMeta = [
-            'zip' => $archiveName,
-            'entry' => $entryCandidate,
-            'test' => true,
-        ];
-        $manifestEntry = [
-            'archive' => $archiveName,
-            'entry' => $entryCandidate,
-            'originalName' => $entry['originalName'] ?? basename($entryCandidate),
-            'size' => $size,
-            'sizeLabel' => docs_format_file_size($size),
-            'source' => $entry['source'] ?? '',
-            'documentId' => $entry['documentId'] ?? '',
-            'registryNumber' => $entry['registryNumber'] ?? '',
-            'url' => docs_build_archived_attachment_url($folder, $archiveMeta, (string) ($entry['originalName'] ?? basename($entryCandidate))),
-        ];
-        $manifestEntries[] = array_filter($manifestEntry, static function ($value) {
-            return $value !== '' && $value !== 0;
-        });
-    }
-
-    $archives = docs_collect_attachment_archive_test_summary($folder, false)['archives'] ?? [];
-    $zipBytes = 0;
-    foreach ($archives as $archive) {
-        $zipBytes += (int) ($archive['bytes'] ?? 0);
-    }
-
-    $manifest = [
-        'success' => true,
-        'generatedAt' => date('c'),
-        'filesAdded' => $filesAdded,
-        'sourceBytes' => $sourceBytes,
-        'sourceLabel' => docs_format_file_size($sourceBytes),
-        'zipBytes' => $zipBytes,
-        'zipLabel' => docs_format_file_size($zipBytes),
-        'archivesCount' => count($zips),
-        'skipped' => $skipped,
-        'entries' => array_slice($manifestEntries, 0, 200),
-        'archives' => $archives,
-    ];
-    docs_refresh_attachment_archive_test_manifest($folder, $manifest);
-
-    return $manifest;
-}
-
-function docs_collect_attachment_archive_test_summary(string $folder, bool $includeManifest = true): array
-{
-    $archiveRoot = docs_get_attachment_archive_test_root($folder, true);
-    $archives = [];
-    $totalBytes = 0;
-    $totalEntries = 0;
-
-    $items = @scandir($archiveRoot);
-    if (is_array($items)) {
-        foreach ($items as $item) {
-            if ($item === '.' || $item === '..' || substr($item, -9) !== '.test.zip') {
-                continue;
-            }
-            $path = $archiveRoot . '/' . $item;
-            if (!is_file($path)) {
-                continue;
-            }
-            $bytes = (int) (@filesize($path) ?: 0);
-            $entriesCount = 0;
-            if (class_exists('ZipArchive')) {
-                $zip = new ZipArchive();
-                if ($zip->open($path) === true) {
-                    $entriesCount = max(0, (int) $zip->numFiles);
-                    $zip->close();
-                }
-            }
-            $archives[] = [
-                'name' => $item,
-                'bytes' => $bytes,
-                'label' => docs_format_file_size($bytes),
-                'entries' => $entriesCount,
-                'updatedAt' => date('c', (int) (@filemtime($path) ?: time())),
-            ];
-            $totalBytes += $bytes;
-            $totalEntries += $entriesCount;
-        }
-    }
-
-    usort($archives, static function (array $left, array $right): int {
-        return strcmp((string) ($right['name'] ?? ''), (string) ($left['name'] ?? ''));
-    });
-
-    $manifestEntries = [];
-    $manifestPath = docs_get_attachment_archive_test_manifest_path($folder);
-    if ($includeManifest && is_file($manifestPath)) {
-        $raw = @file_get_contents($manifestPath);
-        $decoded = is_string($raw) && $raw !== '' ? json_decode($raw, true) : null;
-        if (is_array($decoded) && isset($decoded['entries']) && is_array($decoded['entries'])) {
-            $manifestEntries = array_values(array_filter($decoded['entries'], static function ($entry): bool {
-                return is_array($entry);
-            }));
-        }
-    }
-
-    return [
-        'success' => true,
-        'path' => 'documents/' . $folder . '/' . DOCS_ATTACHMENT_ARCHIVE_TEST_DIRECTORY,
-        'archives' => $archives,
-        'archivesCount' => count($archives),
-        'totalBytes' => $totalBytes,
-        'totalLabel' => docs_format_file_size($totalBytes),
-        'totalEntries' => $totalEntries,
-        'samples' => array_slice($manifestEntries, 0, 12),
-        'checkedAt' => date('c'),
-    ];
-}
-
-function docs_build_attachment_archive_name(array $file, array $record): string
-{
-    $dateCandidate = '';
-    foreach ([$file['uploadedAt'] ?? null, $record['registrationDate'] ?? null, $record['createdAt'] ?? null, $record['updatedAt'] ?? null] as $value) {
-        $timestamp = is_scalar($value) ? @strtotime((string) $value) : false;
-        if ($timestamp !== false) {
-            $dateCandidate = date('Y-m', $timestamp);
-            break;
-        }
-    }
-    if ($dateCandidate === '') {
-        $dateCandidate = date('Y-m');
-    }
-
-    return $dateCandidate . '.zip';
-}
-
-function docs_normalize_archive_entry_name(string $relativePath): string
-{
-    $relativePath = str_replace('\\', '/', $relativePath);
-    $segments = preg_split('#/+#', $relativePath, -1, PREG_SPLIT_NO_EMPTY);
-    if (!is_array($segments)) {
-        return '';
-    }
-
-    $safeSegments = [];
-    foreach ($segments as $segment) {
-        $segment = trim((string) $segment);
-        if ($segment === '' || $segment === '.' || $segment === '..') {
-            continue;
-        }
-        $safeSegments[] = docs_sanitize_filename($segment, 'file');
-    }
-
-    return implode('/', $safeSegments);
-}
-
-function docs_archive_attachment_file(string $folder, string $path, string $relativePath, array $file, array $record): ?array
-{
-    if (!class_exists('ZipArchive') || !is_file($path) || !is_readable($path) || !docs_attachment_file_can_archive($path)) {
-        return null;
-    }
-
-    $size = (int) (@filesize($path) ?: 0);
-    if ($size < DOCS_ATTACHMENT_ARCHIVE_MIN_BYTES) {
-        return null;
-    }
-
-    $archiveRoot = docs_get_attachment_archive_root($folder, true);
-    if (!is_dir($archiveRoot) || !is_writable($archiveRoot)) {
-        return null;
-    }
-
-    $archiveName = docs_build_attachment_archive_name($file, $record);
-    $archivePath = $archiveRoot . '/' . $archiveName;
-    $entryName = docs_normalize_archive_entry_name($relativePath);
-    if ($entryName === '') {
-        return null;
-    }
-
-    $zip = new ZipArchive();
-    $openResult = $zip->open($archivePath, ZipArchive::CREATE);
-    if ($openResult !== true) {
-        return null;
-    }
-
-    $entryCandidate = $entryName;
-    $duplicateIndex = 2;
-    while ($zip->locateName($entryCandidate) !== false) {
-        $pathInfo = pathinfo($entryName);
-        $extension = isset($pathInfo['extension']) && $pathInfo['extension'] !== '' ? '.' . $pathInfo['extension'] : '';
-        $filename = $pathInfo['filename'] ?? $entryName;
-        $dirname = isset($pathInfo['dirname']) && $pathInfo['dirname'] !== '.' ? $pathInfo['dirname'] . '/' : '';
-        $entryCandidate = $dirname . $filename . '_' . $duplicateIndex . $extension;
-        $duplicateIndex++;
-    }
-
-    $added = $zip->addFile($path, $entryCandidate);
-    if ($added && method_exists($zip, 'setCompressionName')) {
-        @$zip->setCompressionName($entryCandidate, ZipArchive::CM_DEFLATE, 6);
-    }
-    $closed = $zip->close();
-    if (!$added || !$closed) {
-        return null;
-    }
-
-    if (!@unlink($path)) {
-        return null;
-    }
-
-    return [
-        'zip' => $archiveName,
-        'entry' => $entryCandidate,
-        'size' => $size,
-        'archivedAt' => date('c'),
-    ];
-}
-
-function docs_archive_record_file_entry(array &$file, string $folder, string $path, string $relativePath, array $record): bool
-{
-    if (!is_array($file) || !empty($file['archive'])) {
-        return false;
-    }
-
-    $archive = docs_archive_attachment_file($folder, $path, $relativePath, $file, $record);
-    if (!is_array($archive)) {
-        return false;
-    }
-
-    $file['archive'] = $archive;
-    $file['url'] = docs_build_archived_attachment_url(
-        $folder,
-        $archive,
-        sanitize_text_field((string) ($file['originalName'] ?? ($file['storedName'] ?? 'document')), 255)
-    );
-
-    return true;
-}
-
-function docs_archive_registry_attachments(string $folder): array
-{
-    [$registryHandle, $records] = docs_lock_registry($folder);
-    if ($registryHandle === null) {
-        $records = load_registry($folder);
-    }
-
-    $summary = [
-        'filesArchived' => 0,
-        'bytesArchived' => 0,
-        'recordsChanged' => 0,
-    ];
-    $changed = false;
-    $dir = ensure_organization_directory($folder);
-
-    foreach ($records as &$record) {
-        if (!is_array($record)) {
-            continue;
-        }
-        $recordChanged = false;
-
-        if (isset($record['files']) && is_array($record['files'])) {
-            foreach ($record['files'] as &$file) {
-                if (!is_array($file)) {
-                    continue;
-                }
-                $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
-                if ($storedName === '') {
-                    continue;
-                }
-                $path = $dir . '/' . $storedName;
-                $size = is_file($path) ? (int) (@filesize($path) ?: 0) : 0;
-                if (docs_archive_record_file_entry($file, $folder, $path, $storedName, $record)) {
-                    $summary['filesArchived']++;
-                    $summary['bytesArchived'] += $size;
-                    $recordChanged = true;
-                    $changed = true;
-                }
-            }
-            unset($file);
-        }
-
-        if (isset($record['responses']) && is_array($record['responses'])) {
-            $documentId = sanitize_text_field((string) ($record['id'] ?? ''), 200);
-            foreach ($record['responses'] as &$response) {
-                if (!is_array($response)) {
-                    continue;
-                }
-                $storedName = sanitize_text_field((string) ($response['storedName'] ?? ''), 255);
-                if ($storedName === '' || $documentId === '') {
-                    continue;
-                }
-                $relativePath = 'Ответы/' . $documentId . '/' . $storedName;
-                $path = docs_get_document_responses_dir($folder, $documentId, false) . '/' . $storedName;
-                $size = is_file($path) ? (int) (@filesize($path) ?: 0) : 0;
-                if (docs_archive_record_file_entry($response, $folder, $path, $relativePath, $record)) {
-                    $summary['filesArchived']++;
-                    $summary['bytesArchived'] += $size;
-                    $recordChanged = true;
-                    $changed = true;
-                }
-            }
-            unset($response);
-        }
-
-        if ($recordChanged) {
-            $summary['recordsChanged']++;
-        }
-    }
-    unset($record);
-
-    if ($changed) {
-        if ($registryHandle !== null) {
-            docs_save_registry_locked($registryHandle, $records);
-            docs_unlock_registry($registryHandle);
-        } else {
-            save_registry($folder, $records);
-        }
-    } elseif ($registryHandle !== null) {
-        docs_unlock_registry($registryHandle);
-    }
-
-    return $summary;
 }
 
 function docs_archive_attachment_storage(?string $requestedOrganization = null): array
 {
-    $organizations = [];
-    if (is_string($requestedOrganization) && trim($requestedOrganization) !== '') {
-        $organizations[] = $requestedOrganization;
-    } else {
-        $organizations = load_organizations();
-    }
-
-    $summary = [
-        'success' => true,
-        'organizations' => 0,
+    return [
+        'success' => false,
+        'disabled' => true,
+        'reason' => 'zip_archive_disabled',
         'filesArchived' => 0,
         'bytesArchived' => 0,
         'recordsChanged' => 0,
     ];
-
-    foreach ($organizations as $organization) {
-        $folder = sanitize_folder_name((string) $organization);
-        if ($folder === '') {
-            continue;
-        }
-        $organizationSummary = docs_archive_registry_attachments($folder);
-        $summary['organizations']++;
-        $summary['filesArchived'] += (int) ($organizationSummary['filesArchived'] ?? 0);
-        $summary['bytesArchived'] += (int) ($organizationSummary['bytesArchived'] ?? 0);
-        $summary['recordsChanged'] += (int) ($organizationSummary['recordsChanged'] ?? 0);
-    }
-
-    return $summary;
 }
 
 function docs_optimize_attachment_storage(?string $requestedOrganization = null): array
 {
-    $before = docs_collect_storage_size_summary($requestedOrganization);
-    $archiveSummary = docs_archive_attachment_storage($requestedOrganization);
-    $dedupeSummary = docs_deduplicate_attachment_storage($requestedOrganization);
-    $after = docs_collect_storage_size_summary($requestedOrganization);
-
     return [
-        'success' => true,
+        'success' => false,
+        'disabled' => true,
+        'reason' => 'attachment_optimization_disabled',
         'organization' => is_string($requestedOrganization) && trim($requestedOrganization) !== '' ? $requestedOrganization : null,
-        'before' => $before,
-        'after' => $after,
-        'archive' => $archiveSummary,
-        'dedupe' => $dedupeSummary,
-        'savedBytes' => max(0, (int) ($before['bytes'] ?? 0) - (int) ($after['bytes'] ?? 0)),
-        'savedLabel' => docs_format_file_size(max(0, (int) ($before['bytes'] ?? 0) - (int) ($after['bytes'] ?? 0))),
+        'archive' => docs_archive_attachment_storage($requestedOrganization),
+        'dedupe' => docs_deduplicate_attachment_storage($requestedOrganization),
+        'savedBytes' => 0,
+        'savedLabel' => '0 Б',
     ];
 }
 
@@ -5711,6 +4708,23 @@ function sanitize_folder_name(string $name): string
 function get_registry_path(string $folder): string
 {
     return DOCUMENTS_ROOT . '/' . $folder . '/' . REGISTRY_FILENAME;
+}
+
+function docs_build_registry_meta(string $folder, string $organization): array
+{
+    $path = get_registry_path($folder);
+    $exists = is_file($path);
+    $mtime = $exists ? @filemtime($path) : false;
+    $size = $exists ? @filesize($path) : false;
+    $mtimeValue = $mtime === false ? 0 : (int) $mtime;
+    $sizeValue = $size === false ? 0 : (int) $size;
+
+    return [
+        'exists' => $exists,
+        'mtime' => $mtimeValue,
+        'size' => $sizeValue,
+        'signature' => $organization . '|' . $mtimeValue . '|' . $sizeValue,
+    ];
 }
 
 function get_outgoing_registry_path(string $folder): string
@@ -8350,12 +7364,6 @@ function docs_prepare_responses_for_record(array &$record, string $folder): void
             'uploadedByLogin' => sanitize_text_field((string) ($response['uploadedByLogin'] ?? ''), 120),
         ];
 
-        $archive = docs_prepare_archived_attachment_meta($response['archive'] ?? null);
-        if (!empty($archive)) {
-            $item['archive'] = $archive;
-            $item['url'] = docs_build_archived_attachment_url($folder, $archive, $item['originalName']);
-        }
-
         if ($documentId !== '') {
             if (empty($item['url'])) {
                 $item['url'] = build_public_path($folder, 'Ответы/' . $documentId . '/' . $storedName);
@@ -8363,9 +7371,7 @@ function docs_prepare_responses_for_record(array &$record, string $folder): void
         }
         if (docs_is_text_response_file($storedName)) {
             $item['isTextFile'] = true;
-            if (empty($archive)) {
-                $item['textContent'] = docs_read_response_text_content($folder, $documentId, $storedName);
-            }
+            $item['textContent'] = docs_read_response_text_content($folder, $documentId, $storedName);
         }
 
         $prepared[] = $item;
@@ -12200,20 +11206,6 @@ function docs_collect_unique_subordinate_review_entries(array $record): array
     return $entries;
 }
 
-function docs_assignment_instruction_requires_work(array $entry): bool
-{
-    $instruction = sanitize_instruction(isset($entry['assignmentInstruction']) ? (string) $entry['assignmentInstruction'] : '');
-    if ($instruction === '') {
-        return false;
-    }
-
-    $normalized = mb_strtolower($instruction, 'UTF-8');
-    $normalized = str_replace('ё', 'е', $normalized);
-    $normalized = preg_replace('/\s+/u', ' ', $normalized);
-
-    return trim((string) $normalized) === 'в работу';
-}
-
 function docs_get_subordinate_review_summary(array $record): array
 {
     $entries = docs_collect_unique_subordinate_review_entries($record);
@@ -12235,6 +11227,41 @@ function docs_get_subordinate_review_summary(array $record): array
         'total' => $total,
         'allAccepted' => $total === 0 || $accepted >= $total,
     ];
+}
+
+function docs_normalize_assignment_instruction_key(?string $value): string
+{
+    $instruction = sanitize_instruction($value);
+    if ($instruction === '') {
+        return '';
+    }
+
+    $normalized = mb_strtolower($instruction, 'UTF-8');
+    $normalized = str_replace('ё', 'е', $normalized);
+    $normalized = preg_replace('/\s+/u', ' ', $normalized);
+
+    return trim((string) $normalized);
+}
+
+function docs_format_assignment_instruction_label(?string $value): string
+{
+    $instruction = sanitize_instruction($value);
+    if ($instruction === '') {
+        return '';
+    }
+
+    if (docs_normalize_assignment_instruction_key($instruction) === 'в работу') {
+        return 'Подготовить ответ';
+    }
+
+    return $instruction;
+}
+
+function docs_assignment_instruction_requires_work(array $entry): bool
+{
+    $normalized = docs_normalize_assignment_instruction_key(isset($entry['assignmentInstruction']) ? (string) $entry['assignmentInstruction'] : '');
+
+    return in_array($normalized, ['в работу', 'подготовить ответ'], true);
 }
 
 function docs_collect_current_responsible_assignment_entries(array $record): array
@@ -12431,12 +11458,12 @@ function docs_get_current_responsible_assignment_completion_summary(
             continue;
         }
 
-        $role = docs_normalize_assignment_role((string) ($entry['role'] ?? ''));
-        if ($role === 'subordinate' && !docs_assignment_instruction_requires_work($entry)) {
+        if (!docs_entry_assigned_by_current_user($entry, $requestContext, $directories, $sessionAuth)) {
             continue;
         }
 
-        if (!docs_entry_assigned_by_current_user($entry, $requestContext, $directories, $sessionAuth)) {
+        $role = docs_normalize_assignment_role((string) ($entry['role'] ?? ''));
+        if ($role === 'subordinate' && !docs_assignment_instruction_requires_work($entry)) {
             continue;
         }
 
@@ -15192,69 +14219,6 @@ function docs_stream_file_response(string $path, string $fileName, string $dispo
     exit;
 }
 
-function docs_stream_zip_entry_response(string $zipPath, string $entryName, string $fileName, string $disposition, string $method): void
-{
-    if (!class_exists('ZipArchive') || !is_file($zipPath) || !is_readable($zipPath)) {
-        respond_error('Файл недоступен.', 404);
-    }
-
-    $zip = new ZipArchive();
-    if ($zip->open($zipPath) !== true) {
-        respond_error('Архив недоступен.', 404);
-    }
-
-    $stat = $zip->statName($entryName);
-    if (!is_array($stat)) {
-        $zip->close();
-        respond_error('Файл в архиве не найден.', 404);
-    }
-
-    $size = isset($stat['size']) ? max(0, (int) $stat['size']) : 0;
-    $stream = $zip->getStream($entryName);
-    if (!is_resource($stream)) {
-        $zip->close();
-        respond_error('Файл в архиве недоступен.', 404);
-    }
-
-    $mime = docs_detect_mime_type_by_extension($fileName);
-    if ($mime === '') {
-        $mime = 'application/octet-stream';
-    }
-
-    http_response_code(200);
-    header_remove('Content-Type');
-    header_remove('Pragma');
-    header('Content-Type: ' . $mime);
-    header('X-Content-Type-Options: nosniff');
-    header('Content-Disposition: ' . docs_build_content_disposition_header($disposition, $fileName));
-    header('Content-Length: ' . $size);
-    header('Cache-Control: private, max-age=300, must-revalidate', true);
-    header('Expires: ' . gmdate('D, d M Y H:i:s', time() + 300) . ' GMT', true);
-
-    if (strtoupper($method) === 'HEAD') {
-        fclose($stream);
-        $zip->close();
-        exit;
-    }
-
-    while (ob_get_level() > 0) {
-        @ob_end_clean();
-    }
-
-    while (!feof($stream)) {
-        $buffer = fread($stream, 8192);
-        if ($buffer === false || $buffer === '') {
-            break;
-        }
-        echo $buffer;
-        flush();
-    }
-
-    fclose($stream);
-    $zip->close();
-    exit;
-}
-
 function docs_handle_archived_attachment(string $method): void
 {
     $method = strtoupper($method);
@@ -15262,40 +14226,7 @@ function docs_handle_archived_attachment(string $method): void
         respond_error('Некорректный метод запроса.', 405, ['allowedMethod' => 'GET']);
     }
 
-    $organization = docs_normalize_organization_candidate((string) ($_GET['organization'] ?? ''));
-    $folder = sanitize_folder_name($organization);
-    $archiveName = sanitize_text_field((string) ($_GET['archive'] ?? ''), 255);
-    $entryName = sanitize_text_field((string) ($_GET['entry'] ?? ''), 500);
-    if ($folder === '' || $archiveName === '' || $entryName === '') {
-        respond_error('Не указан архивный файл.', 400);
-    }
-
-    $archiveName = str_replace('\\', '/', $archiveName);
-    $entryName = ltrim(str_replace('\\', '/', $entryName), '/');
-    if (strpos($archiveName, '..') !== false || strpos($entryName, '..') !== false || strpos($archiveName, '/') !== false) {
-        respond_error('Некорректный путь архивного файла.', 400);
-    }
-
-    $isTestArchive = docs_truthy_value($_GET['test'] ?? '');
-    if ($isTestArchive) {
-        $accessContext = docs_resolve_access_context($organization !== '' ? $organization : $folder);
-        docs_require_admin_session($accessContext);
-    }
-
-    $zipPath = ($isTestArchive ? docs_get_attachment_archive_test_root($folder, false) : docs_get_attachment_archive_root($folder, false)) . '/' . $archiveName;
-    $fileName = isset($_GET['name']) && is_string($_GET['name'])
-        ? sanitize_text_field($_GET['name'], 255)
-        : basename($entryName);
-    if ($fileName === '') {
-        $fileName = basename($entryName) ?: 'document';
-    }
-
-    $disposition = isset($_GET['disposition']) && is_string($_GET['disposition'])
-        ? $_GET['disposition']
-        : 'inline';
-    $disposition = strtolower(trim($disposition)) === 'attachment' ? 'attachment' : 'inline';
-
-    docs_stream_zip_entry_response($zipPath, $entryName, $fileName, $disposition, $method);
+    respond_error('ZIP-архивация вложений отключена.', 410, ['reason' => 'zip_archive_disabled']);
 }
 
 function docs_handle_mini_app_download_file(string $method): void
@@ -17429,16 +16360,6 @@ function docs_prepare_records_for_response(array $records, string $organization,
 
                 $storedName = isset($file['storedName']) ? trim((string) $file['storedName']) : '';
                 $fileUrl = isset($file['url']) ? trim((string) $file['url']) : '';
-                $archive = docs_prepare_archived_attachment_meta($file['archive'] ?? null);
-                if (!empty($archive)) {
-                    $file['archive'] = $archive;
-                    $file['url'] = docs_build_archived_attachment_url(
-                        $folder,
-                        $archive,
-                        sanitize_text_field((string) ($file['originalName'] ?? ($storedName !== '' ? $storedName : 'document')), 255)
-                    );
-                    $fileUrl = (string) $file['url'];
-                }
                 if ($storedName !== '' && $fileUrl === '') {
                     $file['url'] = build_public_path($folder, $storedName);
                 }
@@ -20565,12 +19486,6 @@ switch ($action) {
             $message = $assignedCount > 1 ? 'Ответственные назначены.' : 'Ответственный назначен.';
             $assignedAssignees = $changedAssignments;
         } elseif ($updateType === 'assign_add') {
-            if (!$canManageAssignments) {
-                respond_error('Недостаточно прав для назначения ответственного.', 403, [
-                    'requiresDirector' => true,
-                ]);
-            }
-
             $candidateEntries = [];
             if (isset($payload['assignees']) && is_array($payload['assignees'])) {
                 foreach ($payload['assignees'] as $entry) {
@@ -20717,6 +19632,19 @@ switch ($action) {
 
                 if ($matchedKey !== null) {
                     $existingEntry = $existingIndex[$matchedKey];
+                    if (
+                        !$canManageAssignments
+                        && !docs_entry_assigned_by_current_user(
+                            $existingEntry,
+                            $requestContext,
+                            [$responsibles, $subordinates, $block2],
+                            $sessionAuthArray
+                        )
+                    ) {
+                        respond_error('Изменить поручение может только тот, кто назначил ответственного.', 403, [
+                            'requiresAuthor' => true,
+                        ]);
+                    }
 
                     if (!isset($assignment['assignmentComment']) || $assignment['assignmentComment'] === '') {
                         if (isset($existingEntry['assignmentComment'])) {
@@ -20764,6 +19692,12 @@ switch ($action) {
                     continue;
                 }
 
+                if (!$canManageAssignments) {
+                    respond_error('Недостаточно прав для назначения ответственного.', 403, [
+                        'requiresDirector' => true,
+                    ]);
+                }
+
                 $assigned = docs_assign_author_to_assignees([$assignment], $assignmentAuthor, $assignmentAuthorRole, $assignmentAuthorMeta);
                 $assignedEntry = $assigned[0] ?? [];
                 if (empty($assignedEntry)) {
@@ -20804,12 +19738,6 @@ switch ($action) {
                 $assignedAssignees = array_merge($assignedAssignees, $changedAssignments);
             }
         } elseif ($updateType === 'assign_remove') {
-            if (!$isDirector && !$canManageAssignments) {
-                respond_error('Недостаточно прав для изменения ответственных.', 403, [
-                    'requiresDirector' => true,
-                ]);
-            }
-
             $rawCandidates = [];
             if (isset($payload['removeAssigneeIds']) && is_array($payload['removeAssigneeIds'])) {
                 foreach ($payload['removeAssigneeIds'] as $candidate) {
@@ -20877,7 +19805,15 @@ switch ($action) {
                         }
                     }
                 }
-                if ($shouldRemove && !docs_entry_assigned_by_user($entry, $requestContext)) {
+                if (
+                    $shouldRemove
+                    && !docs_entry_assigned_by_current_user(
+                        $entry,
+                        $requestContext,
+                        [$responsibles, $subordinates, $block2],
+                        $sessionAuthArray
+                    )
+                ) {
                     $blockedEntries[] = $entry;
                     $remainingResponsibles[] = $entry;
                     continue;
@@ -20947,6 +19883,9 @@ switch ($action) {
                         'assignmentDueDate' => sanitize_date_field(isset($entry['assignmentDueDate'])
                             ? (string) $entry['assignmentDueDate']
                             : ''),
+                        'assignmentInstruction' => sanitize_instruction(isset($entry['assignmentInstruction'])
+                            ? (string) $entry['assignmentInstruction']
+                            : ''),
                     ];
                 }
             }
@@ -20973,6 +19912,7 @@ switch ($action) {
                             'id' => $sanitized,
                             'assignmentComment' => '',
                             'assignmentDueDate' => '',
+                            'assignmentInstruction' => '',
                         ];
                     }
                 }
@@ -21034,6 +19974,15 @@ switch ($action) {
                     }
                 }
 
+                if (array_key_exists('assignmentInstruction', $candidateEntry)) {
+                    $assignmentInstruction = $candidateEntry['assignmentInstruction'];
+                    if ($assignmentInstruction !== '') {
+                        $assignment['assignmentInstruction'] = $assignmentInstruction;
+                    } elseif (isset($assignment['assignmentInstruction'])) {
+                        unset($assignment['assignmentInstruction']);
+                    }
+                }
+
                 $seenCandidates[$normalizedCandidate] = true;
                 $assignments[] = $assignment;
             }
@@ -21076,22 +20025,6 @@ switch ($action) {
                 $assignedAssignees = array_merge($assignedAssignees, $changedAssignments);
             }
         } elseif ($updateType === 'subordinates_add') {
-            if (!$canManageSubordinates) {
-                if ($kruglikTraceEnabled) {
-                    docs_write_kruglik_log('subordinates_add denied: no permissions', [
-                        'organization' => $organizationCandidate,
-                        'documentId' => $documentId,
-                        'requestPrimaryId' => $requestContext['primaryId'] ?? null,
-                        'isDirector' => $isDirector,
-                        'isTaskAssignee' => $isTaskAssignee,
-                        'isTaskSubordinate' => $isTaskSubordinate,
-                    ]);
-                }
-                respond_error('Недостаточно прав для назначения подчинённых.', 403, [
-                    'requiresDirector' => true,
-                ]);
-            }
-
             $candidateEntries = [];
             if (isset($payload['subordinates']) && is_array($payload['subordinates'])) {
                 foreach ($payload['subordinates'] as $entry) {
@@ -21121,6 +20054,9 @@ switch ($action) {
                         'assignmentDueDate' => sanitize_date_field(isset($entry['assignmentDueDate'])
                             ? (string) $entry['assignmentDueDate']
                             : ''),
+                        'assignmentInstruction' => sanitize_instruction(isset($entry['assignmentInstruction'])
+                            ? (string) $entry['assignmentInstruction']
+                            : ''),
                     ];
                 }
             }
@@ -21147,6 +20083,7 @@ switch ($action) {
                             'id' => $sanitized,
                             'assignmentComment' => '',
                             'assignmentDueDate' => '',
+                            'assignmentInstruction' => '',
                         ];
                     }
                 }
@@ -21211,6 +20148,15 @@ switch ($action) {
                     }
                 }
 
+                if (array_key_exists('assignmentInstruction', $candidateEntry)) {
+                    $assignmentInstruction = $candidateEntry['assignmentInstruction'];
+                    if ($assignmentInstruction !== '') {
+                        $assignment['assignmentInstruction'] = $assignmentInstruction;
+                    } elseif (isset($assignment['assignmentInstruction'])) {
+                        unset($assignment['assignmentInstruction']);
+                    }
+                }
+
                 $seenCandidates[$normalizedCandidate] = true;
                 $assignments[] = $assignment;
             }
@@ -21260,6 +20206,20 @@ switch ($action) {
 
                 if ($matchedKey !== null) {
                     $existingEntry = $existingIndex[$matchedKey];
+                    if (
+                        !$canManageSubordinates
+                        && !docs_entry_assigned_by_current_user(
+                            $existingEntry,
+                            $requestContext,
+                            [$responsibles, $subordinates, $block2],
+                            $sessionAuthArray
+                        )
+                    ) {
+                        respond_error('Изменить поручение может только тот, кто назначил подчинённого.', 403, [
+                            'requiresAuthor' => true,
+                        ]);
+                    }
+
                     if (!isset($assignment['assignmentComment']) || $assignment['assignmentComment'] === '') {
                         if (isset($existingEntry['assignmentComment'])) {
                             unset($existingEntry['assignmentComment']);
@@ -21274,6 +20234,14 @@ switch ($action) {
                         }
                     } else {
                         $existingEntry['assignmentDueDate'] = $assignment['assignmentDueDate'];
+                    }
+
+                    if (!isset($assignment['assignmentInstruction']) || $assignment['assignmentInstruction'] === '') {
+                        if (isset($existingEntry['assignmentInstruction'])) {
+                            unset($existingEntry['assignmentInstruction']);
+                        }
+                    } else {
+                        $existingEntry['assignmentInstruction'] = $assignment['assignmentInstruction'];
                     }
 
                     $existingIndex[$matchedKey] = $existingEntry;
@@ -21296,6 +20264,22 @@ switch ($action) {
 
                     $updatedEntries[] = $existingEntry;
                     continue;
+                }
+
+                if (!$canManageSubordinates) {
+                    if ($kruglikTraceEnabled) {
+                        docs_write_kruglik_log('subordinates_add denied: no permissions for new assignment', [
+                            'organization' => $organizationCandidate,
+                            'documentId' => $documentId,
+                            'requestPrimaryId' => $requestContext['primaryId'] ?? null,
+                            'isDirector' => $isDirector,
+                            'isTaskAssignee' => $isTaskAssignee,
+                            'isTaskSubordinate' => $isTaskSubordinate,
+                        ]);
+                    }
+                    respond_error('Недостаточно прав для назначения подчинённых.', 403, [
+                        'requiresDirector' => true,
+                    ]);
                 }
 
                 if ($kruglikTraceEnabled) {
@@ -21371,12 +20355,6 @@ switch ($action) {
                 $assignedAssignees = array_merge($assignedAssignees, $changedAssignments);
             }
         } elseif ($updateType === 'subordinates_remove') {
-            if (!$isDirector && !$canManageSubordinates) {
-                respond_error('Недостаточно прав для изменения подчинённых.', 403, [
-                    'requiresDirector' => true,
-                ]);
-            }
-
             $rawCandidates = [];
             if (isset($payload['removeSubordinateIds']) && is_array($payload['removeSubordinateIds'])) {
                 foreach ($payload['removeSubordinateIds'] as $candidate) {
@@ -21595,7 +20573,7 @@ switch ($action) {
             }
 
             if (is_array($submittedSubordinate) && !empty($submittedSubordinate['__requiresWorkInstruction'])) {
-                respond_error('Отправка на проверку доступна только для поручения «В работу».', 422, [
+                respond_error('Отправка на проверку доступна только для поручения «Подготовить ответ».', 422, [
                     'requiresWorkInstruction' => true,
                 ]);
             }
@@ -24008,6 +22986,19 @@ switch ($action) {
         ]);
         break;
 
+    case 'registry_meta':
+        $requestedOrganization = docs_normalize_organization_candidate($_GET['organization'] ?? '');
+        $accessContext = docs_resolve_access_context($requestedOrganization);
+        $organization = $accessContext['active'];
+        $folder = sanitize_folder_name($organization);
+
+        respond_success([
+            'organization' => $organization,
+            'organizations' => $accessContext['accessible'],
+            'registryMeta' => docs_build_registry_meta($folder, $organization),
+        ]);
+        break;
+
     case 'list':
         $requestContext = docs_build_request_user_context();
         $resolvedUserId = $requestContext['primaryId'] ?? null;
@@ -24030,8 +23021,6 @@ switch ($action) {
         $block2 = isset($settings['block2']) && is_array($settings['block2'])
             ? $settings['block2']
             : [];
-        $sessionAuth = docs_get_session_auth();
-
         $preparedRecords = docs_prepare_records_for_response($records, $organization, $folder);
         $filter = $accessContext['forceAccess'] ? null : ($accessContext['filter'] ?? null);
         $filteredRecords = $filter !== null
@@ -24041,7 +23030,7 @@ switch ($action) {
         $permissions = docs_build_permissions_summary(
             $organization,
             $requestContext,
-            is_array($sessionAuth) ? $sessionAuth : null,
+            docs_get_session_auth(),
             $block2
         );
 
@@ -24073,6 +23062,7 @@ switch ($action) {
             'storageDisplayPath' => 'documents/' . $folder,
             'storagePath' => $storagePath,
             'documents' => array_values($filteredRecords),
+            'registryMeta' => docs_build_registry_meta($folder, $organization),
             'filterSource' => $accessContext['filterSource'] ?? null,
             'userId' => $resolvedUserId,
             'permissions' => $permissions,
@@ -24448,6 +23438,7 @@ switch ($action) {
             'storageDisplayPath' => 'documents/' . $folder,
             'storagePath' => build_public_path($folder),
             'createdDocument' => $createdDocument,
+            'registryMeta' => docs_build_registry_meta($folder, $organization),
             'documentsCount' => count($records),
             'permissions' => $permissions,
             'canManageInstructions' => $permissions['canManageInstructions'],
@@ -26149,6 +25140,7 @@ switch ($action) {
             'storageDisplayPath' => 'documents/' . $folder,
             'storagePath' => build_public_path($folder),
             'updatedDocument' => is_array($updatedDocument) ? $updatedDocument : null,
+            'registryMeta' => docs_build_registry_meta($folder, $organization),
             'documentsCount' => count($records),
             'permissions' => $permissions,
             'canManageInstructions' => $permissions['canManageInstructions'],

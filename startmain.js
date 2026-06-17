@@ -6589,6 +6589,76 @@
       return documentsCredentialsPromise;
     }
 
+    function openDocumentsLoginWithOptions(options) {
+      var loginOptions = options && typeof options === 'object'
+        ? options
+        : { allowAnyLogin: true, allowedLogins: [] };
+
+      if (!documentsLoginManager || typeof documentsLoginManager.open !== 'function') {
+        logDocumentsDebug('documents_login_modal_missing', {
+          allowAnyLogin: loginOptions && !!loginOptions.allowAnyLogin,
+          allowedLoginsCount: loginOptions && Array.isArray(loginOptions.allowedLogins)
+            ? loginOptions.allowedLogins.length
+            : 0
+        });
+        var fallbackAdmin = {
+          role: 'admin',
+          authenticated: true,
+          accessGranted: true,
+          forceAccess: true,
+          organization: detectedOrganization || null,
+          organizations: detectedOrganization ? [detectedOrganization] : []
+        };
+        applySessionAuthenticationFlag(fallbackAdmin);
+        openDocuments();
+        return Promise.resolve(null);
+      }
+
+      return documentsLoginManager.open(loginOptions).then(function(result) {
+        logDocumentsDebug('documents_login_modal_result', {
+          success: result && !!result.success,
+          cancelled: result && !!result.cancelled,
+          loginProvided: result && typeof result.login === 'string' && result.login.trim() !== '',
+          allowAnyLogin: loginOptions.allowAnyLogin,
+          allowedLoginsCount: Array.isArray(loginOptions.allowedLogins) ? loginOptions.allowedLogins.length : 0
+        });
+        if (!result || !result.success) {
+          return null;
+        }
+
+        logDocumentsDebug('documents_session_authenticate_start', {
+          login: result.login,
+          hasPassword: typeof result.password === 'string' && result.password !== ''
+        });
+        return authenticateDocumentsSession(result.login, result.password)
+          .then(function(contextAfterLogin) {
+            logDocumentsDebug('documents_session_authenticate_result', {
+              login: result.login,
+              authenticated: Boolean(contextAfterLogin && contextAfterLogin.authenticated),
+              accessGranted: Boolean(contextAfterLogin && contextAfterLogin.accessGranted)
+            });
+            if (contextAfterLogin && contextAfterLogin.authenticated && contextAfterLogin.accessGranted) {
+              persistDocumentsCredentials(result.login, result.password);
+              openDocuments();
+              return null;
+            }
+            logDocumentsDebug('documents_session_authenticate_denied', {
+              login: result.login,
+              authenticated: Boolean(contextAfterLogin && contextAfterLogin.authenticated),
+              accessGranted: Boolean(contextAfterLogin && contextAfterLogin.accessGranted)
+            });
+            throw new Error('Доступ к документам ограничен.');
+          })
+          .catch(function(error) {
+            logDocumentsDebug('documents_session_authenticate_error', {
+              login: result.login,
+              message: error && error.message ? error.message : 'unknown_error'
+            });
+            throw error;
+          });
+      });
+    }
+
     function ensureDocumentsAccess(event) {
       if (documentsOpen) {
         return;
@@ -6638,79 +6708,11 @@
                 if (documentsAccessContext && documentsAccessContext.authenticated && documentsAccessContext.accessGranted) {
                   return null;
                 }
-                return loadDocumentsCredentials();
+                return openDocumentsLoginWithOptions({ allowAnyLogin: true, allowedLogins: [] });
               });
           }
 
-          return loadDocumentsCredentials().then(function(credentials) {
-            var loginOptions = credentials && typeof credentials === 'object'
-              ? credentials
-              : { allowAnyLogin: true, allowedLogins: [] };
-
-            if (!documentsLoginManager || typeof documentsLoginManager.open !== 'function') {
-              logDocumentsDebug('documents_login_modal_missing', {
-                allowAnyLogin: loginOptions && !!loginOptions.allowAnyLogin,
-                allowedLoginsCount: loginOptions && Array.isArray(loginOptions.allowedLogins)
-                  ? loginOptions.allowedLogins.length
-                  : 0
-              });
-              var fallbackAdmin = {
-                role: 'admin',
-                authenticated: true,
-                accessGranted: true,
-                forceAccess: true,
-                organization: detectedOrganization || null,
-                organizations: detectedOrganization ? [detectedOrganization] : []
-              };
-              applySessionAuthenticationFlag(fallbackAdmin);
-              openDocuments();
-              return null;
-            }
-
-            return documentsLoginManager.open(loginOptions).then(function(result) {
-              logDocumentsDebug('documents_login_modal_result', {
-                success: result && !!result.success,
-                cancelled: result && !!result.cancelled,
-                loginProvided: result && typeof result.login === 'string' && result.login.trim() !== '',
-                allowAnyLogin: loginOptions.allowAnyLogin,
-                allowedLoginsCount: Array.isArray(loginOptions.allowedLogins) ? loginOptions.allowedLogins.length : 0
-              });
-              if (!result || !result.success) {
-                return null;
-              }
-
-              logDocumentsDebug('documents_session_authenticate_start', {
-                login: result.login,
-                hasPassword: typeof result.password === 'string' && result.password !== ''
-              });
-              return authenticateDocumentsSession(result.login, result.password)
-                .then(function(contextAfterLogin) {
-                  logDocumentsDebug('documents_session_authenticate_result', {
-                    login: result.login,
-                    authenticated: Boolean(contextAfterLogin && contextAfterLogin.authenticated),
-                    accessGranted: Boolean(contextAfterLogin && contextAfterLogin.accessGranted)
-                  });
-                  if (contextAfterLogin && contextAfterLogin.authenticated && contextAfterLogin.accessGranted) {
-                    persistDocumentsCredentials(result.login, result.password);
-                    openDocuments();
-                    return null;
-                  }
-                  logDocumentsDebug('documents_session_authenticate_denied', {
-                    login: result.login,
-                    authenticated: Boolean(contextAfterLogin && contextAfterLogin.authenticated),
-                    accessGranted: Boolean(contextAfterLogin && contextAfterLogin.accessGranted)
-                  });
-                  throw new Error('Доступ к документам ограничен.');
-                })
-                .catch(function(error) {
-                  logDocumentsDebug('documents_session_authenticate_error', {
-                    login: result.login,
-                    message: error && error.message ? error.message : 'unknown_error'
-                  });
-                  throw error;
-                });
-            });
-          });
+          return openDocumentsLoginWithOptions({ allowAnyLogin: true, allowedLogins: [] });
         })
         .catch(function(error) {
           logDocumentsDebug('documents_access_error', {
