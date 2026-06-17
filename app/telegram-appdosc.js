@@ -16549,6 +16549,17 @@ function normalizeAssignmentInstruction(value) {
   return trimmed.slice(0, 600);
 }
 
+function assignmentInstructionRequiresWork(entry) {
+  if (!entry || typeof entry !== 'object') {
+    return false;
+  }
+  const normalized = normalizeAssignmentInstruction(entry.assignmentInstruction)
+    .replace(/\s+/g, ' ')
+    .toLowerCase()
+    .replace(/ё/g, 'е');
+  return normalized === 'в работу';
+}
+
 function buildTaskUpdateAssignmentPreview(entries, maxItems = 3) {
   if (!Array.isArray(entries)) {
     return [];
@@ -17731,6 +17742,7 @@ function getSubordinateWorkflowStatusLabel(status) {
 
 function getSubordinateReviewSummary(task, filterEntry) {
   const entries = collectTaskAssignments(task, 'subordinate')
+    .filter((entry) => assignmentInstructionRequiresWork(entry))
     .filter((entry) => (typeof filterEntry === 'function' ? filterEntry(entry) : true));
   const accepted = entries.reduce((count, entry) => (
     normalizeSubordinateReviewStatus(entry && entry.reviewStatus) === 'accepted'
@@ -17959,6 +17971,9 @@ function getCurrentResponsibleAssignmentCompletionSummary(task) {
       return;
     }
     const role = normalizeAssignmentRole(entry.role || 'responsible') || 'responsible';
+    if (role === 'subordinate' && !assignmentInstructionRequiresWork(entry)) {
+      return;
+    }
     const keys = collectStatusHistoryKeysForAssignment(entry);
     const primaryKey = Array.from(keys)[0] || normalizeName(resolveAssignmentSortName(entry)) || total;
     const dedupeKey = `${role}:${primaryKey}`;
@@ -23347,6 +23362,9 @@ function appendSubordinateReviewControls(container, task, entry, fallbackValue =
   if (!taskHasResponsibleSubordinateReviewFlow(task)) {
     return;
   }
+  if (!assignmentInstructionRequiresWork(entry)) {
+    return;
+  }
 
   const reviewStatus = normalizeSubordinateReviewStatus(entry.reviewStatus);
   const reviewComment = normalizeAssignmentComment(entry.reviewComment);
@@ -24038,7 +24056,7 @@ function createResponseUploadControls(task, entry, setStatus) {
 
   const input = document.createElement('input');
   input.type = 'file';
-  input.accept = 'image/*,application/pdf,.doc,.docx,.xls,.xlsx,.txt,.csv,.zip,.rar';
+  input.accept = 'image/*,application/pdf,.doc,.docx,.xls,.xlsx,.txt,.csv,.rar';
   input.multiple = true;
   if (isMobileSingleFilePickerPlatform()) {
     input.multiple = false;

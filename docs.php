@@ -4520,7 +4520,6 @@ function docs_attachment_file_can_deduplicate(string $path): bool
         'bin' => true,
         'rar' => true,
         '7z' => true,
-        'zip' => true,
     ];
 
     return isset($allowedExtensions[$extension]);
@@ -4671,27 +4670,6 @@ function docs_optimize_uploaded_attachment_file(string $path, string $originalNa
     if ($result['originalSize'] <= 0) {
         $result['originalSize'] = $actualSize;
     }
-    if ($actualSize < DOCS_ATTACHMENT_DEDUP_MIN_BYTES) {
-        return $result;
-    }
-
-    $hash = @hash_file('sha256', $path);
-    if (!is_string($hash) || $hash === '') {
-        return $result;
-    }
-
-    $duplicatePath = docs_find_duplicate_attachment_file($path, $actualSize, $hash);
-    if (is_string($duplicatePath) && docs_replace_duplicate_attachment_with_hardlink($path, $duplicatePath)) {
-        return [
-            'optimized' => true,
-            'size' => $actualSize,
-            'originalSize' => $actualSize,
-            'savedBytes' => $actualSize,
-            'mode' => 'hardlink_dedup',
-            'originalName' => $originalName,
-        ];
-    }
-
     return $result;
 }
 
@@ -12222,18 +12200,35 @@ function docs_collect_unique_subordinate_review_entries(array $record): array
     return $entries;
 }
 
+function docs_assignment_instruction_requires_work(array $entry): bool
+{
+    $instruction = sanitize_instruction(isset($entry['assignmentInstruction']) ? (string) $entry['assignmentInstruction'] : '');
+    if ($instruction === '') {
+        return false;
+    }
+
+    $normalized = mb_strtolower($instruction, 'UTF-8');
+    $normalized = str_replace('ё', 'е', $normalized);
+    $normalized = preg_replace('/\s+/u', ' ', $normalized);
+
+    return trim((string) $normalized) === 'в работу';
+}
+
 function docs_get_subordinate_review_summary(array $record): array
 {
     $entries = docs_collect_unique_subordinate_review_entries($record);
     $accepted = 0;
+    $total = 0;
 
     foreach ($entries as $entry) {
+        if (!docs_assignment_instruction_requires_work($entry)) {
+            continue;
+        }
+        $total++;
         if (docs_normalize_subordinate_review_status($entry['reviewStatus'] ?? '') === 'accepted') {
             $accepted++;
         }
     }
-
-    $total = count($entries);
 
     return [
         'accepted' => $accepted,
@@ -12433,6 +12428,11 @@ function docs_get_current_responsible_assignment_completion_summary(
 
     foreach ($entries as $entry) {
         if (!is_array($entry) || empty($entry)) {
+            continue;
+        }
+
+        $role = docs_normalize_assignment_role((string) ($entry['role'] ?? ''));
+        if ($role === 'subordinate' && !docs_assignment_instruction_requires_work($entry)) {
             continue;
         }
 
@@ -13018,6 +13018,10 @@ function docs_apply_subordinate_submission(
 
         if (docs_normalize_subordinate_review_status($subordinateEntry['reviewStatus'] ?? '') === 'accepted') {
             return ['__accepted' => true];
+        }
+
+        if (!docs_assignment_instruction_requires_work($subordinateEntry)) {
+            return ['__requiresWorkInstruction' => true];
         }
 
         $subordinateEntry = docs_apply_subordinate_submission_to_entry(
@@ -17589,21 +17593,6 @@ function docs_prepare_records_for_response(array $records, string $organization,
     }
     unset($record);
 
-    $summary = summarize_documents_collection_for_log($records);
-    $logContext = [
-        'organization' => $organization,
-        'folder' => $folder,
-        'registryPath' => get_registry_path($folder),
-        'storagePath' => build_public_path($folder),
-        'recordsCount' => $summary['count'],
-    ];
-
-    if (!empty($summary['samples'])) {
-        $logContext['recordsSample'] = $summary['samples'];
-    }
-
-    log_docs_event('Records prepared for response', $logContext);
-
     return $records;
 }
 
@@ -21605,6 +21594,12 @@ switch ($action) {
                 ]);
             }
 
+            if (is_array($submittedSubordinate) && !empty($submittedSubordinate['__requiresWorkInstruction'])) {
+                respond_error('Отправка на проверку доступна только для поручения «В работу».', 422, [
+                    'requiresWorkInstruction' => true,
+                ]);
+            }
+
             if ($submittedSubordinate === null) {
                 respond_error('Подчинённый не найден среди назначенных.', 404);
             }
@@ -24054,55 +24049,7 @@ switch ($action) {
         $storagePath = build_public_path($folder);
 
         $filterSummary = summarize_assignee_filter_for_log($filter);
-        $preparedSummary = summarize_documents_collection_for_log($preparedRecords);
-        $filteredSummary = summarize_documents_collection_for_log($filteredRecords);
-        $droppedCount = max(0, $preparedSummary['count'] - $filteredSummary['count']);
-
-        $filteredKeys = [];
-        foreach ($filteredRecords as $record) {
-            if (!is_array($record)) {
-                continue;
-            }
-
-            $filteredKeys[build_document_record_key($record)] = true;
-        }
-
-        $droppedSamples = [];
-        foreach ($preparedRecords as $record) {
-            if (!is_array($record)) {
-                continue;
-            }
-
-            $key = build_document_record_key($record);
-            if (isset($filteredKeys[$key])) {
-                continue;
-            }
-
-            $droppedSamples[] = summarize_document_record_for_log($record);
-            if (count($droppedSamples) >= 10) {
-                break;
-            }
-        }
-
-        $diagnosticContext = [
-            'organization' => $organization,
-            'folder' => $folder,
-            'registryPath' => $registryPath,
-            'storagePath' => $storagePath,
-            'filterApplied' => $filter !== null,
-            'filterSource' => $accessContext['filterSource'] ?? null,
-            'filter' => $filterSummary,
-            'recordsPrepared' => $preparedSummary,
-            'recordsFiltered' => $filteredSummary,
-            'recordsDropped' => $droppedCount,
-            'userId' => $resolvedUserId,
-        ];
-
-        if (!empty($droppedSamples)) {
-            $diagnosticContext['droppedSamples'] = $droppedSamples;
-        }
-
-        log_docs_event('Documents filtering diagnostics', $diagnosticContext);
+        $droppedCount = max(0, count($preparedRecords) - count($filteredRecords));
 
         log_docs_event('Documents list prepared', [
             'organization' => $organization,
@@ -24482,17 +24429,6 @@ switch ($action) {
             save_registry($folder, $records);
         }
 
-        $responsibles = load_responsibles_for_folder($folder);
-        $preparedRecords = docs_prepare_records_for_response($records, $organization, $folder);
-        $filter = $accessContext['forceAccess'] ? null : ($accessContext['filter'] ?? null);
-        $filteredRecords = $filter !== null
-            ? filter_documents_for_assignee($preparedRecords, $filter, $responsibles)
-            : $preparedRecords;
-
-        if (!empty($assignedForNotification)) {
-            docs_send_task_assignment_notifications($assignedForNotification, $record, $organization);
-        }
-
         $permissions = docs_build_permissions_summary(
             $organization,
             docs_build_request_user_context(),
@@ -24505,17 +24441,29 @@ switch ($action) {
             ? $createdDocumentPrepared[0]
             : $record;
 
-        respond_success([
+        $responsePayload = [
             'message' => 'Документ добавлен в реестр.',
             'organization' => $organization,
             'organizations' => $accessContext['accessible'],
             'storageDisplayPath' => 'documents/' . $folder,
             'storagePath' => build_public_path($folder),
-            'documents' => array_values($filteredRecords),
             'createdDocument' => $createdDocument,
+            'documentsCount' => count($records),
             'permissions' => $permissions,
             'canManageInstructions' => $permissions['canManageInstructions'],
-        ]);
+        ];
+
+        if (!empty($assignedForNotification)) {
+            respond_success_with_background_task($responsePayload, function () use (
+                $assignedForNotification,
+                $createdDocument,
+                $organization
+            ): void {
+                docs_send_task_assignment_notifications($assignedForNotification, $createdDocument, $organization);
+            });
+        }
+
+        respond_success($responsePayload);
         break;
 
     case 'resend_assignment_notification':
@@ -26167,30 +26115,24 @@ switch ($action) {
             }
         }
 
-        $preparedRecords = docs_prepare_records_for_response($records, $organization, $folder);
+        $updatedDocumentPrepared = is_array($updatedRecordSanitized)
+            ? docs_prepare_records_for_response([$updatedRecordSanitized], $organization, $folder)
+            : [];
         $filter = $accessContext['forceAccess'] ? null : ($accessContext['filter'] ?? null);
-        $filteredRecords = $filter !== null
-            ? filter_documents_for_assignee($preparedRecords, $filter, $responsibles)
-            : $preparedRecords;
+        $filteredUpdatedRecords = $filter !== null
+            ? filter_documents_for_assignee($updatedDocumentPrepared, $filter, $responsibles)
+            : $updatedDocumentPrepared;
+        $updatedDocument = !empty($filteredUpdatedRecords) && is_array($filteredUpdatedRecords[0])
+            ? $filteredUpdatedRecords[0]
+            : ($filter === null && !empty($updatedDocumentPrepared) && is_array($updatedDocumentPrepared[0])
+                ? $updatedDocumentPrepared[0]
+                : null);
 
         $notificationRecord = null;
         if (!empty($assignmentNotifications)) {
-            if (!empty($preparedRecords)) {
-                foreach ($preparedRecords as $preparedRecord) {
-                    if (!is_array($preparedRecord)) {
-                        continue;
-                    }
-
-                    if ((string) ($preparedRecord['id'] ?? '') === $documentId) {
-                        $notificationRecord = $preparedRecord;
-                        break;
-                    }
-                }
-            }
-
-            if ($notificationRecord === null && is_array($updatedRecordSanitized)) {
-                $notificationRecord = $updatedRecordSanitized;
-            }
+            $notificationRecord = !empty($updatedDocumentPrepared) && is_array($updatedDocumentPrepared[0])
+                ? $updatedDocumentPrepared[0]
+                : $updatedRecordSanitized;
         }
 
         $permissions = docs_build_permissions_summary(
@@ -26206,7 +26148,8 @@ switch ($action) {
             'organizations' => $accessContext['accessible'],
             'storageDisplayPath' => 'documents/' . $folder,
             'storagePath' => build_public_path($folder),
-            'documents' => array_values($filteredRecords),
+            'updatedDocument' => is_array($updatedDocument) ? $updatedDocument : null,
+            'documentsCount' => count($records),
             'permissions' => $permissions,
             'canManageInstructions' => $permissions['canManageInstructions'],
             'canCreateDocuments' => $permissions['canCreateDocuments'],
@@ -26712,7 +26655,8 @@ switch ($action) {
 
                     if (is_array($submittedSubordinate)
                         && empty($submittedSubordinate['__forbidden'])
-                        && empty($submittedSubordinate['__accepted'])) {
+                        && empty($submittedSubordinate['__accepted'])
+                        && empty($submittedSubordinate['__requiresWorkInstruction'])) {
                         $autoSubmittedSubordinate = $submittedSubordinate;
                         $submitterStatusKeys = docs_collect_status_change_candidate_keys(
                             $requestContext,
@@ -27013,7 +26957,8 @@ switch ($action) {
 
                         if (is_array($submittedSubordinate)
                             && empty($submittedSubordinate['__forbidden'])
-                            && empty($submittedSubordinate['__accepted'])) {
+                            && empty($submittedSubordinate['__accepted'])
+                            && empty($submittedSubordinate['__requiresWorkInstruction'])) {
                             $autoSubmittedSubordinate = $submittedSubordinate;
                             $submitterStatusKeys = docs_collect_status_change_candidate_keys(
                                 $requestContext,
@@ -27349,207 +27294,42 @@ switch ($action) {
         if ($method !== 'GET' && $method !== 'POST') {
             respond_error('Некорректный метод запроса.', 405);
         }
-
-        $source = $method === 'POST' ? load_json_payload() : $_GET;
-        if (!is_array($source) || empty($source)) {
-            $source = $method === 'POST' ? $_POST : $_GET;
-        }
-        if (!is_array($source)) {
-            $source = [];
-        }
-
-        $requestedOrganization = docs_normalize_organization_candidate((string) ($source['organization'] ?? ''));
-        $accessContext = docs_resolve_access_context($requestedOrganization !== '' ? $requestedOrganization : null, true);
-        docs_require_admin_session($accessContext);
-        $organization = $accessContext['active'];
-        $folder = sanitize_folder_name($organization);
-
-        respond_success([
-            'organization' => $organization,
-            'storage' => docs_collect_storage_size_summary($organization),
-            'testArchive' => docs_collect_attachment_archive_test_summary($folder),
-        ]);
+        respond_error('ZIP-архивация вложений отключена.', 410, ['reason' => 'zip_archive_disabled']);
         break;
 
     case 'storage_archive_test_generate':
         if ($method !== 'POST') {
             respond_error('Некорректный метод запроса.', 405);
         }
-
-        $payload = load_json_payload();
-        if (!is_array($payload) || empty($payload)) {
-            $payload = $_POST;
-        }
-        if (!is_array($payload)) {
-            $payload = [];
-        }
-
-        $requestedOrganization = docs_normalize_organization_candidate((string) ($payload['organization'] ?? ''));
-        $accessContext = docs_resolve_access_context($requestedOrganization !== '' ? $requestedOrganization : null, true);
-        docs_require_admin_session($accessContext);
-        $organization = $accessContext['active'];
-        $folder = sanitize_folder_name($organization);
-        $replace = !array_key_exists('replace', $payload) || docs_truthy_value($payload['replace']);
-        $before = docs_collect_storage_size_summary($organization);
-        $generation = docs_generate_attachment_archive_test($folder, $replace);
-        if (empty($generation['success'])) {
-            respond_error((string) ($generation['message'] ?? 'Не удалось создать тестовый архив.'), 500, [
-                'testArchive' => $generation,
-            ]);
-        }
-
-        respond_success([
-            'organization' => $organization,
-            'before' => $before,
-            'storage' => docs_collect_storage_size_summary($organization),
-            'testArchive' => docs_collect_attachment_archive_test_summary($folder),
-            'generation' => $generation,
-            'message' => 'Тестовые ZIP-архивы созданы. Исходные файлы не изменялись.',
-        ]);
+        respond_error('ZIP-архивация вложений отключена.', 410, ['reason' => 'zip_archive_disabled']);
         break;
 
     case 'storage_archive_test_delete':
         if ($method !== 'POST') {
             respond_error('Некорректный метод запроса.', 405);
         }
-
-        $payload = load_json_payload();
-        if (!is_array($payload) || empty($payload)) {
-            $payload = $_POST;
-        }
-        if (!is_array($payload)) {
-            $payload = [];
-        }
-
-        $requestedOrganization = docs_normalize_organization_candidate((string) ($payload['organization'] ?? ''));
-        $accessContext = docs_resolve_access_context($requestedOrganization !== '' ? $requestedOrganization : null, true);
-        docs_require_admin_session($accessContext);
-        $organization = $accessContext['active'];
-        $folder = sanitize_folder_name($organization);
-        $archiveName = sanitize_text_field((string) ($payload['archive'] ?? ''), 255);
-        $deleted = docs_delete_attachment_archive_test_files($folder, $archiveName);
-
-        respond_success([
-            'organization' => $organization,
-            'storage' => docs_collect_storage_size_summary($organization),
-            'testArchive' => docs_collect_attachment_archive_test_summary($folder),
-            'deleted' => $deleted,
-            'message' => 'Тестовые ZIP-архивы удалены.',
-        ]);
+        respond_error('ZIP-архивация вложений отключена.', 410, ['reason' => 'zip_archive_disabled']);
         break;
 
     case 'storage_archive_attachments':
         if ($method !== 'POST') {
             respond_error('Некорректный метод запроса.', 405);
         }
-
-        $payload = load_json_payload();
-        if (!is_array($payload) || empty($payload)) {
-            $payload = $_POST;
-        }
-        if (!is_array($payload)) {
-            $payload = [];
-        }
-
-        $requestedOrganization = docs_normalize_organization_candidate((string) ($payload['organization'] ?? ''));
-        $accessContext = docs_resolve_access_context($requestedOrganization !== '' ? $requestedOrganization : null, true);
-        $sessionAuth = docs_require_admin_session($accessContext);
-        $summary = docs_archive_attachment_storage($requestedOrganization !== '' ? $requestedOrganization : null);
-
-        log_docs_event('Attachment storage archive completed', [
-            'organization' => $requestedOrganization !== '' ? $requestedOrganization : 'all',
-            'admin' => [
-                'login' => $sessionAuth['login'] ?? null,
-                'organization' => $sessionAuth['organization'] ?? null,
-            ],
-            'summary' => $summary,
-        ]);
-
-        respond_success([
-            'message' => 'Архивация вложений завершена.',
-            'organization' => $requestedOrganization !== '' ? $requestedOrganization : null,
-            'summary' => $summary,
-            'archivedLabel' => docs_format_file_size((int) ($summary['bytesArchived'] ?? 0)),
-        ]);
+        respond_error('ZIP-архивация вложений отключена.', 410, ['reason' => 'zip_archive_disabled']);
         break;
 
     case 'storage_optimize_attachments':
         if ($method !== 'POST') {
             respond_error('Некорректный метод запроса.', 405);
         }
-
-        $payload = load_json_payload();
-        if (!is_array($payload) || empty($payload)) {
-            $payload = $_POST;
-        }
-        if (!is_array($payload)) {
-            $payload = [];
-        }
-
-        $requestedOrganization = docs_normalize_organization_candidate((string) ($payload['organization'] ?? ''));
-        $accessContext = docs_resolve_access_context($requestedOrganization !== '' ? $requestedOrganization : null, true);
-        $sessionAuth = docs_require_admin_session($accessContext);
-        $organizationForOptimization = $requestedOrganization !== '' ? $requestedOrganization : null;
-        $before = docs_collect_storage_size_summary($organizationForOptimization);
-
-        $queuedPayload = [
-            'message' => 'Оптимизация вложений запущена в фоне.',
-            'organization' => $organizationForOptimization,
-            'before' => $before,
-            'note' => 'Обновите размер папки через пару минут, чтобы увидеть фактическую экономию.',
-        ];
-
-        respond_success_with_background_task($queuedPayload, static function () use ($organizationForOptimization, $requestedOrganization, $sessionAuth, $before): void {
-            $summary = docs_optimize_attachment_storage($organizationForOptimization);
-
-            log_docs_event('Attachment storage optimization completed', [
-                'organization' => $requestedOrganization !== '' ? $requestedOrganization : 'all',
-                'admin' => [
-                    'login' => $sessionAuth['login'] ?? null,
-                    'organization' => $sessionAuth['organization'] ?? null,
-                ],
-                'before' => [
-                    'bytes' => $before['bytes'] ?? null,
-                    'label' => $before['label'] ?? null,
-                ],
-                'summary' => $summary,
-            ]);
-        });
+        respond_error('ZIP-архивация и дедупликация вложений отключены.', 410, ['reason' => 'attachment_optimization_disabled']);
         break;
 
     case 'storage_dedupe_attachments':
         if ($method !== 'POST') {
             respond_error('Некорректный метод запроса.', 405);
         }
-
-        $payload = load_json_payload();
-        if (!is_array($payload) || empty($payload)) {
-            $payload = $_POST;
-        }
-        if (!is_array($payload)) {
-            $payload = [];
-        }
-
-        $requestedOrganization = docs_normalize_organization_candidate((string) ($payload['organization'] ?? ''));
-        $accessContext = docs_resolve_access_context($requestedOrganization !== '' ? $requestedOrganization : null, true);
-        $sessionAuth = docs_require_admin_session($accessContext);
-        $summary = docs_deduplicate_attachment_storage($requestedOrganization !== '' ? $requestedOrganization : null);
-
-        log_docs_event('Attachment storage dedupe completed', [
-            'organization' => $requestedOrganization !== '' ? $requestedOrganization : 'all',
-            'admin' => [
-                'login' => $sessionAuth['login'] ?? null,
-                'organization' => $sessionAuth['organization'] ?? null,
-            ],
-            'summary' => $summary,
-        ]);
-
-        respond_success([
-            'message' => 'Оптимизация вложений завершена.',
-            'organization' => $requestedOrganization !== '' ? $requestedOrganization : null,
-            'summary' => $summary,
-            'savedLabel' => docs_format_file_size((int) ($summary['savedBytes'] ?? 0)),
-        ]);
+        respond_error('Дедупликация вложений отключена.', 410, ['reason' => 'attachment_dedupe_disabled']);
         break;
 
     default:

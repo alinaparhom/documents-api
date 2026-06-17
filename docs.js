@@ -795,6 +795,28 @@
     return '';
   }
 
+  function buildAccessDataOwnerKey(access) {
+    if (!access || !access.authenticated || !access.accessGranted) {
+      return 'guest';
+    }
+
+    var userKey = resolveUserKey(access);
+    var organizations = Array.isArray(access.organizations) ? access.organizations : [];
+    return [
+      access.role || 'guest',
+      access.adminScope || '',
+      access.organization || '',
+      stableStringify(organizations),
+      userKey || stableStringify(access.user || {})
+    ].join('|');
+  }
+
+  function isRegistryRequestCurrent(cacheVersion, ownerKey, organization) {
+    return cacheVersion === state.runtimeCacheVersion
+      && ownerKey === buildAccessDataOwnerKey(state.access)
+      && (!organization || organization === state.organization);
+  }
+
   function refreshPersonalSettingsIfNeeded(access) {
     var nextKey = resolveUserKey(access);
     var user = access && access.user ? access.user : null;
@@ -1014,9 +1036,11 @@
     }
 
     var hadAccess = Boolean(state.access && state.access.authenticated && state.access.accessGranted);
+    var previousOwnerKey = buildAccessDataOwnerKey(state.access);
+    var nextOwnerKey = buildAccessDataOwnerKey(normalized);
     state.access = normalized;
-    if (hadAccess && (!normalized.authenticated || !normalized.accessGranted)) {
-      resetDocumentsRuntimeCache({ clearLocalStorage: true });
+    if (hadAccess && previousOwnerKey !== nextOwnerKey) {
+      resetDocumentsRuntimeCache({ clearLocalStorage: !normalized.authenticated || !normalized.accessGranted });
     }
     invalidateFilterValuesCache();
     refreshUserAssignmentKeys();
@@ -1130,8 +1154,8 @@
   var FILTER_EMPTY_SELECTION_VALUE = '__documents_empty_filter_selection__';
   var FILTER_EXCLUDE_SELECTION_PREFIX = '__documents_exclude_filter_v1__::';
   var FILTER_SELECTION_MAX_VALUES = 5000;
-  var REALTIME_SYNC_INTERVAL_MS = 3000;
-  var REALTIME_SYNC_MIN_GAP_MS = 1200;
+  var REALTIME_SYNC_INTERVAL_MS = 15000;
+  var REALTIME_SYNC_MIN_GAP_MS = 7000;
   var REALTIME_VIEW_EVENT_KEY_PREFIX = 'documents.viewed.event.';
   var DOCUMENT_TABS_STORAGE_PREFIX = 'documents:tabs:';
   var TABLE_PREFERENCES_STORAGE_PREFIX = 'documents:table-preferences:';
@@ -1247,6 +1271,7 @@
       renderFrame: 0,
       progressiveFrame: 0,
       progressiveToken: 0,
+      renderDeferred: false,
       progressiveBatchSize: 60,
       progressiveThreshold: 140
     },
@@ -1687,35 +1712,7 @@
   }
 
   function optimizeServerStorage(organization) {
-    var targetOrganization = organization || state.organization || '';
-    if (!targetOrganization || typeof fetch !== 'function') {
-      return Promise.reject(new Error('Организация не определена.'));
-    }
-
-    return fetch(buildApiUrl('storage_optimize_attachments'), {
-      method: 'POST',
-      credentials: 'same-origin',
-      cache: 'no-store',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        organization: targetOrganization
-      })
-    })
-      .then(handleResponse)
-      .then(function(data) {
-        if (typeof console !== 'undefined' && typeof console.log === 'function') {
-          console.log('[documents] Оптимизация вложений:', {
-            organization: data.organization || targetOrganization,
-            message: data.message || '',
-            before: data.before || null,
-            note: data.note || ''
-          });
-        }
-
-        return data;
-      });
+    return Promise.reject(new Error('ZIP-архивация и дедупликация вложений отключены.'));
   }
 
   function cloneDiagnosticsObject(source) {
@@ -11539,11 +11536,6 @@
     templateButton.type = 'button';
     headerActions.appendChild(templateButton);
 
-    var archiveButton = createElement('button', 'documents-admin__log-button documents-admin__archive-button', 'Архив тест');
-    archiveButton.type = 'button';
-    archiveButton.setAttribute('aria-expanded', 'false');
-    headerActions.appendChild(archiveButton);
-
     var logButton = createElement('button', 'documents-admin__log-button', 'Журнал мини-приложения');
     logButton.type = 'button';
     logButton.setAttribute('aria-expanded', 'false');
@@ -11594,45 +11586,6 @@
     logPanel.appendChild(logHint);
 
     body.appendChild(logPanel);
-
-    var storagePanel = createElement('section', 'documents-admin__storage-panel');
-    storagePanel.setAttribute('hidden', 'true');
-    storagePanel.setAttribute('aria-live', 'polite');
-
-    var storageHeader = createElement('div', 'documents-admin__storage-header');
-    var storageHeading = createElement('div', '');
-    storageHeading.appendChild(createElement('h3', 'documents-admin__storage-title', 'Тестовые ZIP-архивы по месяцам'));
-    storageHeading.appendChild(createElement('p', 'documents-admin__storage-subtitle', 'Архивы создаются копированием файлов. Исходные файлы и реестры не изменяются.'));
-    var storageClose = createElement('button', 'documents-admin__log-close', 'Скрыть');
-    storageClose.type = 'button';
-    storageHeader.appendChild(storageHeading);
-    storageHeader.appendChild(storageClose);
-    storagePanel.appendChild(storageHeader);
-
-    var storageStatus = createElement('div', 'documents-admin__storage-status');
-    storageStatus.setAttribute('role', 'status');
-    storagePanel.appendChild(storageStatus);
-
-    var storageActions = createElement('div', 'documents-admin__storage-actions');
-    var storageRefresh = createElement('button', 'documents-admin__storage-button', 'Обновить статистику');
-    storageRefresh.type = 'button';
-    var storageGenerate = createElement('button', 'documents-admin__storage-button documents-admin__storage-button--primary', 'Создать ZIP заново');
-    storageGenerate.type = 'button';
-    var storageDelete = createElement('button', 'documents-admin__storage-button documents-admin__storage-button--danger', 'Удалить тестовые ZIP');
-    storageDelete.type = 'button';
-    storageActions.appendChild(storageRefresh);
-    storageActions.appendChild(storageGenerate);
-    storageActions.appendChild(storageDelete);
-    storagePanel.appendChild(storageActions);
-
-    var storageStats = createElement('div', 'documents-admin__storage-grid');
-    storagePanel.appendChild(storageStats);
-    var storageArchiveList = createElement('ul', 'documents-admin__storage-list');
-    storagePanel.appendChild(storageArchiveList);
-    var storageSamples = createElement('div', 'documents-admin__storage-samples');
-    storagePanel.appendChild(storageSamples);
-
-    body.appendChild(storagePanel);
 
     function buildAdminSection(key, titleText) {
       var includeCredentials = sectionHasCredentials(key);
@@ -11748,7 +11701,6 @@
     adminElements.saveButton = saveButton;
     adminElements.closeButton = closeButton;
     adminElements.logButton = logButton;
-    adminElements.archiveButton = archiveButton;
     adminElements.templateButton = templateButton;
     adminElements.logPanel = logPanel;
     adminElements.logStatus = logStatus;
@@ -11756,15 +11708,6 @@
     adminElements.logTextarea = logTextarea;
     adminElements.logCopyButton = logCopy;
     adminElements.logCloseButton = logClose;
-    adminElements.storagePanel = storagePanel;
-    adminElements.storageStatus = storageStatus;
-    adminElements.storageStats = storageStats;
-    adminElements.storageArchiveList = storageArchiveList;
-    adminElements.storageSamples = storageSamples;
-    adminElements.storageRefreshButton = storageRefresh;
-    adminElements.storageGenerateButton = storageGenerate;
-    adminElements.storageDeleteButton = storageDelete;
-    adminElements.storageCloseButton = storageClose;
     adminElements.templateModal = templateModal;
     adminElements.templateStatus = templateStatus;
     adminElements.templateName = templateName;
@@ -11787,10 +11730,6 @@
       openAdminTemplateModal();
     });
 
-    archiveButton.addEventListener('click', function() {
-      toggleAdminStoragePanel();
-    });
-
     logButton.addEventListener('click', function() {
       toggleAdminLogPanel();
     });
@@ -11801,24 +11740,6 @@
 
     logCopy.addEventListener('click', function() {
       copyAdminLogToClipboard();
-    });
-
-    storageClose.addEventListener('click', function() {
-      closeAdminStoragePanel();
-    });
-
-    storageRefresh.addEventListener('click', function() {
-      fetchAdminStorageTestSummary({ force: true }).catch(function(error) {
-        docsLogger.warn('Не удалось обновить статистику тестовых архивов:', error);
-      });
-    });
-
-    storageGenerate.addEventListener('click', function() {
-      generateAdminStorageTestArchives();
-    });
-
-    storageDelete.addEventListener('click', function() {
-      deleteAdminStorageTestArchives('');
     });
 
     templateCloseButton.addEventListener('click', function() {
@@ -11864,7 +11785,6 @@
     });
 
     updateAdminLogPanel();
-    updateAdminStoragePanel();
   }
 
   function getAdminSection(sectionKey) {
@@ -12530,25 +12450,6 @@
     return state.admin.template;
   }
 
-  function ensureAdminStorageState() {
-    if (!state.admin.storageTest) {
-      state.admin.storageTest = {
-        visible: false,
-        loading: false,
-        generating: false,
-        deleting: false,
-        error: '',
-        status: '',
-        statusType: '',
-        storage: null,
-        testArchive: null,
-        promise: null,
-        lastLoadedAt: 0
-      };
-    }
-    return state.admin.storageTest;
-  }
-
   function formatTemplateSize(size) {
     var bytes = Number(size);
     if (!isFinite(bytes) || bytes <= 0) {
@@ -12561,353 +12462,6 @@
       return (bytes / 1024).toFixed(1).replace('.0', '') + ' КБ';
     }
     return (bytes / (1024 * 1024)).toFixed(1).replace('.0', '') + ' МБ';
-  }
-
-  function formatAdminStorageLabel(value) {
-    if (value === null || value === undefined || value === '') {
-      return '0 Б';
-    }
-    if (typeof value === 'string' && /[БКМГ]Б?$/.test(value)) {
-      return value;
-    }
-    return formatTemplateSize(Number(value)) || '0 Б';
-  }
-
-  function setAdminStorageStatus(text, type) {
-    ensureAdminModal();
-    var storageState = ensureAdminStorageState();
-    storageState.status = text || '';
-    storageState.statusType = type || '';
-    if (!adminElements.storageStatus) {
-      return;
-    }
-    var status = adminElements.storageStatus;
-    status.textContent = storageState.status;
-    status.classList.toggle('is-visible', Boolean(storageState.status));
-    status.classList.remove('documents-admin__storage-status--error', 'documents-admin__storage-status--success');
-    if (type === 'error') {
-      status.classList.add('documents-admin__storage-status--error');
-    } else if (type === 'success') {
-      status.classList.add('documents-admin__storage-status--success');
-    }
-  }
-
-  function appendAdminStorageStat(label, value) {
-    if (!adminElements.storageStats) {
-      return;
-    }
-    var card = createElement('div', 'documents-admin__storage-card');
-    card.appendChild(createElement('span', 'documents-admin__storage-card-label', label));
-    card.appendChild(createElement('span', 'documents-admin__storage-card-value', value));
-    adminElements.storageStats.appendChild(card);
-  }
-
-  function updateAdminStoragePanel() {
-    ensureAdminModal();
-    var storageState = ensureAdminStorageState();
-    var organizationReady = Boolean(state.organization);
-    if (!organizationReady) {
-      storageState.visible = false;
-    }
-
-    if (adminElements.archiveButton) {
-      adminElements.archiveButton.disabled = !organizationReady;
-      adminElements.archiveButton.textContent = storageState.visible ? 'Скрыть архив' : 'Архив тест';
-      adminElements.archiveButton.setAttribute('aria-expanded', storageState.visible ? 'true' : 'false');
-    }
-    if (adminElements.storagePanel) {
-      if (storageState.visible && organizationReady) {
-        adminElements.storagePanel.classList.add('is-visible');
-        adminElements.storagePanel.removeAttribute('hidden');
-      } else {
-        adminElements.storagePanel.classList.remove('is-visible');
-        adminElements.storagePanel.setAttribute('hidden', 'true');
-      }
-    }
-
-    var busy = storageState.loading || storageState.generating || storageState.deleting;
-    if (adminElements.storageRefreshButton) {
-      adminElements.storageRefreshButton.disabled = busy || !organizationReady;
-    }
-    if (adminElements.storageGenerateButton) {
-      adminElements.storageGenerateButton.disabled = busy || !organizationReady;
-      adminElements.storageGenerateButton.textContent = storageState.generating ? 'Создаём ZIP…' : 'Создать ZIP заново';
-    }
-    if (adminElements.storageDeleteButton) {
-      var archivesForButton = storageState.testArchive && Array.isArray(storageState.testArchive.archives)
-        ? storageState.testArchive.archives
-        : [];
-      adminElements.storageDeleteButton.disabled = busy || !organizationReady || archivesForButton.length === 0;
-      adminElements.storageDeleteButton.textContent = storageState.deleting ? 'Удаляем…' : 'Удалить тестовые ZIP';
-    }
-
-    if (adminElements.storageStats) {
-      adminElements.storageStats.innerHTML = '';
-      var storage = storageState.storage || {};
-      var testArchive = storageState.testArchive || {};
-      appendAdminStorageStat('Папка организации', storage.label || formatAdminStorageLabel(storage.bytes));
-      appendAdminStorageStat('Файлов', String(storage.files || 0));
-      appendAdminStorageStat('Тестовые ZIP', testArchive.totalLabel || storage.testArchiveLabel || '0 Б');
-      appendAdminStorageStat('Записей в ZIP', String(testArchive.totalEntries || 0));
-    }
-
-    if (adminElements.storageArchiveList) {
-      adminElements.storageArchiveList.innerHTML = '';
-      var archiveList = storageState.testArchive && Array.isArray(storageState.testArchive.archives)
-        ? storageState.testArchive.archives
-        : [];
-      if (archiveList.length) {
-        archiveList.forEach(function(archive) {
-          var item = createElement('li', 'documents-admin__storage-item');
-          var main = createElement('div', 'documents-admin__storage-item-main');
-          main.appendChild(createElement('div', 'documents-admin__storage-item-title', archive.name || 'archive.test.zip'));
-          var meta = [];
-          meta.push(archive.label || formatAdminStorageLabel(archive.bytes));
-          meta.push((archive.entries || 0) + ' файлов');
-          if (archive.updatedAt) {
-            meta.push(formatAdminLogTimestamp(archive.updatedAt));
-          }
-          main.appendChild(createElement('div', 'documents-admin__storage-item-meta', meta.join(' • ')));
-          var remove = createElement('button', 'documents-admin__storage-button documents-admin__storage-button--danger', 'Удалить');
-          remove.type = 'button';
-          remove.disabled = busy;
-          remove.addEventListener('click', function() {
-            deleteAdminStorageTestArchives(archive.name || '');
-          });
-          item.appendChild(main);
-          item.appendChild(remove);
-          adminElements.storageArchiveList.appendChild(item);
-        });
-      } else if (storageState.visible) {
-        adminElements.storageArchiveList.appendChild(createElement('li', 'documents-admin__storage-empty', 'Тестовых ZIP пока нет. Нажмите “Создать ZIP заново”.'));
-      }
-    }
-
-    if (adminElements.storageSamples) {
-      adminElements.storageSamples.innerHTML = '';
-      var samples = storageState.testArchive && Array.isArray(storageState.testArchive.samples)
-        ? storageState.testArchive.samples
-        : [];
-      if (samples.length) {
-        samples.forEach(function(sample) {
-          var row = createElement('div', 'documents-admin__storage-sample');
-          var main = createElement('div', 'documents-admin__storage-item-main');
-          main.appendChild(createElement('div', 'documents-admin__storage-item-title', sample.originalName || sample.entry || 'Файл из ZIP'));
-          var metaParts = [];
-          if (sample.archive) {
-            metaParts.push(sample.archive);
-          }
-          if (sample.sizeLabel) {
-            metaParts.push(sample.sizeLabel);
-          }
-          if (sample.registryNumber) {
-            metaParts.push('рег. № ' + sample.registryNumber);
-          }
-          main.appendChild(createElement('div', 'documents-admin__storage-item-meta', metaParts.join(' • ')));
-          var open = createElement('button', 'documents-admin__storage-button', 'Открыть');
-          open.type = 'button';
-          open.disabled = !sample.url;
-          open.addEventListener('click', function() {
-            if (sample.url) {
-              window.open(sample.url, '_blank', 'noopener,noreferrer');
-            }
-          });
-          row.appendChild(main);
-          row.appendChild(open);
-          adminElements.storageSamples.appendChild(row);
-        });
-      } else if (storageState.visible) {
-        adminElements.storageSamples.appendChild(createElement('div', 'documents-admin__storage-empty', 'После генерации здесь появятся примеры файлов для проверки открытия из ZIP.'));
-      }
-    }
-
-    if (!storageState.visible) {
-      setAdminStorageStatus('', '');
-      return;
-    }
-    if (storageState.loading) {
-      setAdminStorageStatus('Загружаем статистику папки…', '');
-    } else if (storageState.generating) {
-      setAdminStorageStatus('Создаём тестовые ZIP по месяцам. Исходные файлы остаются на месте.', '');
-    } else if (storageState.deleting) {
-      setAdminStorageStatus('Удаляем только тестовые ZIP.', '');
-    } else if (storageState.error) {
-      setAdminStorageStatus(storageState.error, 'error');
-    } else if (storageState.status) {
-      setAdminStorageStatus(storageState.status, storageState.statusType);
-    } else {
-      setAdminStorageStatus('Готово к тесту. Можно создать ZIP и открыть пример файла.', 'success');
-    }
-  }
-
-  function applyAdminStoragePayload(data) {
-    var storageState = ensureAdminStorageState();
-    if (data && data.storage && typeof data.storage === 'object') {
-      storageState.storage = data.storage;
-    }
-    if (data && data.testArchive && typeof data.testArchive === 'object') {
-      storageState.testArchive = data.testArchive;
-    }
-    storageState.error = '';
-    storageState.lastLoadedAt = Date.now();
-    updateAdminStoragePanel();
-  }
-
-  function fetchAdminStorageTestSummary(options) {
-    var storageState = ensureAdminStorageState();
-    var force = options && options.force;
-    if (!state.organization) {
-      storageState.error = 'Организация не выбрана.';
-      updateAdminStoragePanel();
-      return Promise.reject(new Error(storageState.error));
-    }
-    if (storageState.loading && storageState.promise) {
-      return storageState.promise;
-    }
-    if (!force && storageState.storage && Date.now() - storageState.lastLoadedAt < 60000) {
-      return Promise.resolve(storageState);
-    }
-    storageState.loading = true;
-    storageState.error = '';
-    storageState.status = '';
-    updateAdminStoragePanel();
-    var request = fetch(buildApiUrl('storage_archive_test_summary', {
-      organization: state.organization
-    }), {
-      credentials: 'same-origin'
-    })
-      .then(handleResponse)
-      .then(function(data) {
-        applyAdminStoragePayload(data);
-        return data;
-      })
-      .catch(function(error) {
-        storageState.error = error && error.message ? error.message : 'Не удалось загрузить статистику.';
-        updateAdminStoragePanel();
-        throw error;
-      })
-      .finally(function() {
-        storageState.loading = false;
-        storageState.promise = null;
-        updateAdminStoragePanel();
-      });
-    storageState.promise = request;
-    return request;
-  }
-
-  function generateAdminStorageTestArchives() {
-    var storageState = ensureAdminStorageState();
-    if (storageState.generating || storageState.deleting || storageState.loading) {
-      return;
-    }
-    if (!state.organization) {
-      storageState.error = 'Организация не выбрана.';
-      updateAdminStoragePanel();
-      return;
-    }
-    storageState.generating = true;
-    storageState.error = '';
-    storageState.status = '';
-    updateAdminStoragePanel();
-    fetch(buildApiUrl('storage_archive_test_generate'), {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'storage_archive_test_generate',
-        organization: state.organization,
-        replace: true
-      })
-    })
-      .then(handleResponse)
-      .then(function(data) {
-        applyAdminStoragePayload(data);
-        var generation = data && data.generation ? data.generation : {};
-        setAdminStorageStatus('Создано: ' + (generation.filesAdded || 0) + ' файлов, ZIP: ' + (generation.zipLabel || '0 Б') + '.', 'success');
-      })
-      .catch(function(error) {
-        storageState.error = error && error.message ? error.message : 'Не удалось создать тестовые ZIP.';
-        updateAdminStoragePanel();
-      })
-      .finally(function() {
-        storageState.generating = false;
-        updateAdminStoragePanel();
-      });
-  }
-
-  function deleteAdminStorageTestArchives(archiveName) {
-    var storageState = ensureAdminStorageState();
-    if (storageState.generating || storageState.deleting || storageState.loading) {
-      return;
-    }
-    if (!state.organization) {
-      storageState.error = 'Организация не выбрана.';
-      updateAdminStoragePanel();
-      return;
-    }
-    storageState.deleting = true;
-    storageState.error = '';
-    storageState.status = '';
-    updateAdminStoragePanel();
-    fetch(buildApiUrl('storage_archive_test_delete'), {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'storage_archive_test_delete',
-        organization: state.organization,
-        archive: archiveName || ''
-      })
-    })
-      .then(handleResponse)
-      .then(function(data) {
-        applyAdminStoragePayload(data);
-        var deleted = data && data.deleted ? data.deleted : {};
-        setAdminStorageStatus('Удалено тестовых файлов: ' + (deleted.deleted || 0) + ', освобождено: ' + (deleted.bytesDeletedLabel || '0 Б') + '.', 'success');
-      })
-      .catch(function(error) {
-        storageState.error = error && error.message ? error.message : 'Не удалось удалить тестовые ZIP.';
-        updateAdminStoragePanel();
-      })
-      .finally(function() {
-        storageState.deleting = false;
-        updateAdminStoragePanel();
-      });
-  }
-
-  function openAdminStoragePanel() {
-    var storageState = ensureAdminStorageState();
-    if (!state.organization) {
-      storageState.error = 'Организация не выбрана.';
-      updateAdminStoragePanel();
-      return;
-    }
-    storageState.visible = true;
-    updateAdminStoragePanel();
-    fetchAdminStorageTestSummary({ force: true }).catch(function(error) {
-      docsLogger.warn('Не удалось загрузить тестовые архивы:', error);
-    });
-  }
-
-  function closeAdminStoragePanel() {
-    var storageState = ensureAdminStorageState();
-    if (!storageState.visible) {
-      return;
-    }
-    storageState.visible = false;
-    updateAdminStoragePanel();
-    if (adminElements.archiveButton) {
-      adminElements.archiveButton.focus();
-    }
-  }
-
-  function toggleAdminStoragePanel() {
-    var storageState = ensureAdminStorageState();
-    if (storageState.visible) {
-      closeAdminStoragePanel();
-    } else {
-      openAdminStoragePanel();
-    }
   }
 
   function setAdminTemplateStatus(text, type) {
@@ -13502,11 +13056,9 @@
       lastFocusedElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       ensureAdminUserLogState().visible = false;
       ensureAdminTemplateState().visible = false;
-      ensureAdminStorageState().visible = false;
       closeAdminTemplateModal({ skipFocus: true });
       updateAdminLogPanel();
       updateAdminTemplatePanel();
-      updateAdminStoragePanel();
       adminElements.modal.classList.add('is-visible');
       adminElements.modal.setAttribute('aria-hidden', 'false');
       document.addEventListener('keydown', handleAdminKeydown, true);
@@ -13541,9 +13093,7 @@
     document.removeEventListener('keydown', handleAdminKeydown, true);
     ensureAdminUserLogState().visible = false;
     ensureAdminTemplateState().visible = false;
-    ensureAdminStorageState().visible = false;
     updateAdminLogPanel();
-    updateAdminStoragePanel();
     closeAdminTemplateModal({ skipFocus: true });
     if (lastFocusedElement && typeof lastFocusedElement.focus === 'function') {
       lastFocusedElement.focus();
@@ -13556,8 +13106,6 @@
       event.stopPropagation();
       if (ensureAdminTemplateState().visible) {
         closeAdminTemplateModal();
-      } else if (ensureAdminStorageState().visible) {
-        closeAdminStoragePanel();
       } else if (ensureAdminUserLogState().visible) {
         closeAdminLogPanel();
       } else {
@@ -16808,6 +16356,13 @@
     return String(flow).trim() === REVIEW_FLOW_RESPONSIBLE_SUBORDINATE;
   }
 
+  function assignmentInstructionRequiresWork(entry) {
+    if (!entry || typeof entry !== 'object') {
+      return false;
+    }
+    return normalizeStatusValue(entry.assignmentInstruction) === 'в работу';
+  }
+
   function normalizeSubordinateSubmissionStatus(value) {
     var normalized = normalizeStatusValue(value);
     if (!normalized) {
@@ -16989,6 +16544,9 @@
       if (role && role !== 'responsible' && role !== 'subordinate') {
         continue;
       }
+      if (role === 'subordinate' && !assignmentInstructionRequiresWork(entry)) {
+        continue;
+      }
       if (!assignmentEntryAssignedByCurrentUser(entry)) {
         continue;
       }
@@ -17066,6 +16624,9 @@
     if (!documentHasResponsibleSubordinateReviewFlow(doc)) {
       return false;
     }
+    if (!assignmentInstructionRequiresWork(entry)) {
+      return false;
+    }
     if (matchesCurrentUserAssignee(entry)) {
       return false;
     }
@@ -17092,6 +16653,9 @@
     if (!documentHasResponsibleSubordinateReviewFlow(doc)) {
       return false;
     }
+    if (!assignmentInstructionRequiresWork(entry)) {
+      return false;
+    }
     if (!matchesCurrentUserAssignee(entry)) {
       return false;
     }
@@ -17104,6 +16668,9 @@
 
   function appendSubordinateReviewControls(container, doc, entry) {
     if (!container || !documentHasResponsibleSubordinateReviewFlow(doc) || !entry) {
+      return;
+    }
+    if (!assignmentInstructionRequiresWork(entry)) {
       return;
     }
     ensureSubordinateReviewStyle();
@@ -18428,10 +17995,7 @@
       button.classList.add('documents-action--pending');
     }
 
-    applyLocalDocumentViewUpdate(doc, timestamp);
-    recalculateUnviewedCounters();
     recordDocumentView(doc, 'manual_viewed_button', { force: true });
-    updateTable();
 
     doc.__markViewedPending = false;
     if (button) {
@@ -18462,7 +18026,6 @@
 
     var timestamp = new Date().toISOString();
     applyLocalDocumentViewUpdate(doc, timestamp);
-    recalculateUnviewedCounters();
     updateTable();
 
     var assigneeMatch = resolveCurrentUserAssigneeMatch(doc);
@@ -18569,7 +18132,6 @@
           id: result.id,
           name: result.name
         });
-        recalculateUnviewedCounters();
         updateTable();
         syncRealtimeRegistrySignature();
         publishRealtimeViewEvent({
@@ -18660,6 +18222,9 @@
     if (!event || event.sourceId === getRealtimeClientId()) {
       return;
     }
+    if (isDocumentFormModalOpen()) {
+      return;
+    }
 
     var doc = findDocumentById(event.documentId);
     if (!doc) {
@@ -18672,7 +18237,6 @@
       id: event.id,
       name: event.name
     });
-    recalculateUnviewedCounters();
     updateTable();
     syncRealtimeRegistrySignature();
   }
@@ -18714,6 +18278,9 @@
   function runRealtimeRegistrySync(options) {
     var config = options && typeof options === 'object' ? options : {};
     if (!state.organization || !state.registryLoaded || state.realtime.inFlight) {
+      return Promise.resolve(state.documents);
+    }
+    if (isDocumentFormModalOpen()) {
       return Promise.resolve(state.documents);
     }
     if (typeof document !== 'undefined' && document.hidden && config.force !== true) {
@@ -18802,6 +18369,38 @@
     state.realtime.timerId = window.setInterval(function() {
       runRealtimeRegistrySync();
     }, REALTIME_SYNC_INTERVAL_MS);
+  }
+
+  function isDocumentFormModalOpen() {
+    if (typeof document === 'undefined' || typeof document.querySelector !== 'function') {
+      return false;
+    }
+
+    return Boolean(document.querySelector('.documents-modal--document-form'));
+  }
+
+  function pauseTableRenderForDocumentForm() {
+    if (!state.virtualTable || !isDocumentFormModalOpen()) {
+      return false;
+    }
+
+    state.virtualTable.renderDeferred = true;
+    if (state.virtualTable.renderFrame && typeof window !== 'undefined' && typeof window.cancelAnimationFrame === 'function') {
+      window.cancelAnimationFrame(state.virtualTable.renderFrame);
+      state.virtualTable.renderFrame = 0;
+    }
+    cancelProgressiveTableRender();
+
+    return true;
+  }
+
+  function resumeDeferredTableRenderAfterDocumentForm() {
+    if (!state.virtualTable || !state.virtualTable.renderDeferred || isDocumentFormModalOpen()) {
+      return;
+    }
+
+    state.virtualTable.renderDeferred = false;
+    updateTable();
   }
 
   function stopRealtimeRegistrySync() {
@@ -21157,6 +20756,41 @@
     return button;
   }
 
+  function buildElementRenderSignature(element) {
+    if (!(element instanceof HTMLElement)) {
+      return '';
+    }
+
+    var parts = [
+      element.tagName || '',
+      element.className || '',
+      element.dataset && element.dataset.unviewed ? element.dataset.unviewed : '',
+      element.textContent || ''
+    ];
+    var nodes = element.querySelectorAll('button,a,input,select,textarea,[aria-label],[title],[data-unviewed]');
+    var limit = Math.min(nodes.length, 16);
+    for (var i = 0; i < limit; i += 1) {
+      var node = nodes[i];
+      var nodeParts = [
+        node.tagName || '',
+        node.className || '',
+        node.getAttribute('aria-label') || '',
+        node.getAttribute('title') || '',
+        node.getAttribute('href') || '',
+        node.disabled ? 'disabled' : '',
+        node.hidden ? 'hidden' : '',
+        node.dataset && node.dataset.unviewed ? node.dataset.unviewed : '',
+        node.dataset && node.dataset.fileKind ? node.dataset.fileKind : ''
+      ];
+      parts.push(nodeParts.join('~'));
+    }
+    if (nodes.length > limit) {
+      parts.push('more:' + nodes.length);
+    }
+
+    return parts.join('|');
+  }
+
   function renderTableRowCells(tr, doc, index, filterValues, force) {
     if (!tr) {
       return;
@@ -21200,7 +20834,7 @@
         displayValue: displayValue,
         filterValue: filterValues && columnKey ? filterValues[columnKey] : '',
         unassignedHighlighted: columnKey === 'assignee' && state.showUnassignedOnly && !(filterValues && filterValues.__hasAssignee),
-        contentHtml: content instanceof HTMLElement ? content.outerHTML : ''
+        contentSignature: content instanceof HTMLElement ? buildElementRenderSignature(content) : ''
       });
       return {
         content: content,
@@ -21454,6 +21088,21 @@
       updateFilterBar();
     }
     return { countChanged: countChanged, filterDisabled: filterDisabled };
+  }
+
+  function applyUnviewedCount(count) {
+    var normalizedCount = Math.max(0, Number(count) || 0);
+    var filterDisabled = false;
+    if (state.showUnviewedOnly && normalizedCount === 0) {
+      state.showUnviewedOnly = false;
+      filterDisabled = true;
+    }
+    state.unviewedCount = normalizedCount;
+    updateUnviewedButtonState();
+    if (filterDisabled) {
+      updateFilterBar();
+    }
+    return { filterDisabled: filterDisabled };
   }
 
   function parseSortableDate(value) {
@@ -21917,6 +21566,10 @@
     if (!elements.tableBody) {
       return;
     }
+    if (pauseTableRenderForDocumentForm()) {
+      return;
+    }
+
     cancelProgressiveTableRender();
     var token = state.virtualTable.progressiveToken;
     var batchSize = Math.max(20, Number(state.virtualTable.progressiveBatchSize) || 60);
@@ -21936,6 +21589,10 @@
       if (token !== state.virtualTable.progressiveToken || !elements.tableBody) {
         return;
       }
+      if (pauseTableRenderForDocumentForm()) {
+        return;
+      }
+
       var fragment = document.createDocumentFragment();
       var renderedCount = 0;
       var deadline = getFrameDeadline();
@@ -21980,6 +21637,10 @@
     if (!elements.tableBody) {
       return;
     }
+    if (pauseTableRenderForDocumentForm()) {
+      return;
+    }
+
     ensureVirtualTableStructure();
     var entries = Array.isArray(state.virtualTable.filteredEntries) ? state.virtualTable.filteredEntries : [];
     if (!entries.length) {
@@ -22042,6 +21703,10 @@
   }
 
   function scheduleVirtualTableRender() {
+    if (pauseTableRenderForDocumentForm()) {
+      return;
+    }
+
     if (state.virtualTable.renderFrame) {
       return;
     }
@@ -22115,9 +21780,13 @@
     if (!elements.tableBody) {
       return;
     }
+    if (pauseTableRenderForDocumentForm()) {
+      return;
+    }
 
     var documents = Array.isArray(state.documents) ? state.documents : [];
     var filteredEntries = [];
+    var unviewedCount = 0;
 
     for (var i = 0; i < documents.length; i += 1) {
       var doc = documents[i];
@@ -22125,9 +21794,17 @@
         continue;
       }
       var values = getDocumentFilterValues(doc, i);
+      if (values.__hasUnviewed) {
+        unviewedCount += 1;
+      }
       if (matchesActiveDocumentTab(doc, values) && matchesDocumentFilters(values)) {
         filteredEntries.push({ doc: doc, values: values, index: i });
       }
+    }
+
+    if (applyUnviewedCount(unviewedCount).filterDisabled) {
+      updateTable();
+      return;
     }
 
     filteredEntries = applyTableSorting(filteredEntries);
@@ -22289,8 +21966,8 @@
     });
   }
 
-  var DOCUMENTS_UPLOAD_BATCH_SIZE = 1;
-  var DOCUMENTS_UPLOAD_STEP_DELAY = 450;
+  var DOCUMENTS_UPLOAD_BATCH_SIZE = 4;
+  var DOCUMENTS_UPLOAD_STEP_DELAY = 0;
   var DOCUMENTS_ATTACHMENT_VISIBLE_LIMIT = 30;
   var DOCUMENTS_ATTACHMENT_MAX_FILE_SIZE = 25 * 1024 * 1024;
   var DOCUMENTS_ATTACHMENT_TOTAL_MAX_SIZE = 120 * 1024 * 1024;
@@ -22487,7 +22164,7 @@
     return Promise.resolve().then(stepFactory).then(function(result) {
       return waitForBrowserFrame()
         .then(function() {
-          return delay(DOCUMENTS_UPLOAD_STEP_DELAY);
+          return DOCUMENTS_UPLOAD_STEP_DELAY > 0 ? delay(DOCUMENTS_UPLOAD_STEP_DELAY) : null;
         })
         .then(function() {
           return result;
@@ -22606,7 +22283,7 @@
     }
   }
 
-  function mergeTaskIntoStateDocuments(task) {
+  function mergeTaskIntoStateDocuments(task, options) {
     if (!task || typeof task !== 'object' || !task.id) {
       return false;
     }
@@ -22626,7 +22303,9 @@
         break;
       }
     }
-    if (!replaced) {
+    if (!replaced && options && options.prepend) {
+      state.documents.unshift(preparedTask);
+    } else if (!replaced) {
       state.documents.push(preparedTask);
     }
 
@@ -22640,6 +22319,10 @@
 
     if (hasDocumentsCollectionPayload(data)) {
       replaceStateDocuments(resolveDocumentsCollection(data));
+    } else if (data && data.updatedDocument && typeof data.updatedDocument === 'object') {
+      mergeTaskIntoStateDocuments(data.updatedDocument);
+    } else if (data && data.createdDocument && typeof data.createdDocument === 'object') {
+      mergeTaskIntoStateDocuments(data.createdDocument, { prepend: true });
     } else if (data && data.task && typeof data.task === 'object') {
       mergeTaskIntoStateDocuments(data.task);
     }
@@ -22698,7 +22381,6 @@
     }
     refreshUserAssignmentKeys();
     refreshDocumentTabsIfNeeded();
-    recalculateUnviewedCounters();
     updateClockUserDisplay();
     updateTable();
     syncRealtimeRegistrySignature();
@@ -24095,7 +23777,7 @@
     var grid = uploadSection.grid;
     var filesField = createOutgoingFormField({ name: 'attachments[]', label: 'Файлы', type: 'file', wide: true });
     filesField.input.multiple = true;
-    filesField.input.accept = '.pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.txt,.rtf,.odt,.ods,.zip';
+    filesField.input.accept = '.pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.txt,.rtf,.odt,.ods';
     filesField.input.classList.add('documents-outgoing-file-upload__input');
     filesField.field.classList.add('documents-form__field--file');
 
@@ -24132,7 +23814,7 @@
         ? firstName + ' · ' + formatFileSize(totalSize)
         : selected.length + ' файлов · ' + formatFileSize(totalSize);
     });
-    filesField.field.appendChild(createElement('div', 'documents-outgoing-form-modal__file-hint', 'PDF, изображения, DOCX/XLSX, TXT, RTF, ODT/ODS или ZIP до 25 МБ на файл.'));
+    filesField.field.appendChild(createElement('div', 'documents-outgoing-form-modal__file-hint', 'PDF, изображения, DOCX/XLSX, TXT, RTF или ODT/ODS до 25 МБ на файл.'));
     var privateToggle = createOutgoingPrivateFilesToggle();
 
     grid.appendChild(filesField.field);
@@ -24212,6 +23894,7 @@
     var isEditMode = Boolean(record && record.id);
     var editLockToken = editLock && editLock.token ? String(editLock.token) : '';
     var editLockReleased = false;
+    var outgoingFormSubmitting = false;
     var releaseEditLockOnce = function() {
       if (!isEditMode || editLockReleased || !editLockToken) {
         return;
@@ -24243,6 +23926,10 @@
     form.setAttribute('autocomplete', 'off');
 
     var closeOutgoingForm = function() {
+      if (outgoingFormSubmitting) {
+        showMessage('info', 'Дождитесь завершения сохранения и загрузки файлов.');
+        return;
+      }
       if (modal.parentNode) {
         modal.parentNode.removeChild(modal);
       }
@@ -24266,6 +23953,21 @@
     var submitButton = createElement('button', 'documents-button documents-button--primary', isEditMode ? 'Сохранить' : 'Добавить');
     submitButton.type = 'submit';
     submitButton.setAttribute('form', formId);
+
+    function setOutgoingFormSubmitting(active) {
+      outgoingFormSubmitting = Boolean(active);
+      submitButton.disabled = outgoingFormSubmitting;
+      cancelButton.disabled = outgoingFormSubmitting;
+      if (outgoingFormSubmitting) {
+        modal.dataset.closeLocked = 'true';
+        modal.setAttribute('aria-busy', 'true');
+        submitButton.textContent = isEditMode ? 'Сохраняем...' : 'Создаём и загружаем...';
+      } else {
+        delete modal.dataset.closeLocked;
+        modal.removeAttribute('aria-busy');
+        submitButton.textContent = isEditMode ? 'Сохранить' : 'Добавить';
+      }
+    }
 
     var actions = createElement('div', 'documents-modal__actions documents-outgoing-form-modal__footer');
     actions.appendChild(cancelButton);
@@ -24304,7 +24006,7 @@
     });
     var filesField = createOutgoingFormField({ name: 'attachments[]', label: isEditMode ? 'Добавить файлы' : 'Файлы', type: 'file', wide: true });
     filesField.input.multiple = true;
-    filesField.input.accept = '.pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.txt,.rtf,.odt,.ods,.zip';
+    filesField.input.accept = '.pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.txt,.rtf,.odt,.ods';
     filesField.input.classList.add('documents-outgoing-file-upload__input');
     filesField.field.classList.add('documents-form__field--file');
     var filesUploadParent = filesField.input.parentNode;
@@ -24340,7 +24042,7 @@
         ? firstName + ' · ' + formatFileSize(totalSize)
         : selected.length + ' файлов · ' + formatFileSize(totalSize);
     });
-    var filesHint = createElement('div', 'documents-outgoing-form-modal__file-hint', 'PDF, изображения, DOCX/XLSX, TXT, RTF, ODT/ODS или ZIP до 25 МБ на файл.');
+    var filesHint = createElement('div', 'documents-outgoing-form-modal__file-hint', 'PDF, изображения, DOCX/XLSX, TXT, RTF или ODT/ODS до 25 МБ на файл.');
     filesField.field.appendChild(filesHint);
     var privateToggle = createOutgoingPrivateFilesToggle();
     var existingFiles = normalizeOutgoingFileList(record && record.files);
@@ -24427,7 +24129,7 @@
 
     form.addEventListener('submit', function(event) {
       event.preventDefault();
-      submitButton.disabled = true;
+      setOutgoingFormSubmitting(true);
       var payload = {
         organization: state.organization
       };
@@ -24441,12 +24143,12 @@
       });
       payload.addressee = payload.correspondent || '';
       if (!validateOutgoingNumberField()) {
-        submitButton.disabled = false;
+        setOutgoingFormSubmitting(false);
         registryNumberField.input.focus();
         return;
       }
       if (!payload.addressee) {
-        submitButton.disabled = false;
+        setOutgoingFormSubmitting(false);
         setOutgoingFormFieldError(addresseeField, 'Поле «Адресат» обязательно для заполнения.');
         addresseeField.input.focus();
         return;
@@ -24454,7 +24156,7 @@
       var selectedFiles = Array.from(filesField.input.files || []);
       var fileErrors = validateAttachmentFiles(selectedFiles, existingFiles);
       if (fileErrors.length) {
-        submitButton.disabled = false;
+        setOutgoingFormSubmitting(false);
         showMessage('error', fileErrors.slice(0, 3).join(' '));
         return;
       }
@@ -24493,6 +24195,7 @@
 
       postOutgoingRegistryAction('outgoing_save', requestPayload)
         .then(function(data) {
+          setOutgoingFormSubmitting(false);
           closeOutgoingForm();
           showMessage('success', data && data.message ? data.message : 'Запись сохранена.');
           if (typeof onSaved === 'function') {
@@ -24500,7 +24203,7 @@
           }
         })
         .catch(function(error) {
-          submitButton.disabled = false;
+          setOutgoingFormSubmitting(false);
           if (error && error.reason === 'outgoing_number_exists') {
             setOutgoingFormFieldError(registryNumberField, error.message || 'Этот исходящий номер уже занят.');
             registryNumberField.input.focus();
@@ -25481,7 +25184,7 @@
     var uploadSection = createOutgoingFormSection('Файл приказа', 'Выберите один или несколько файлов для выбранной записи.');
     var filesField = createOutgoingFormField({ name: 'attachments[]', label: 'Файлы', type: 'file', wide: true });
     filesField.input.multiple = true;
-    filesField.input.accept = '.pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.txt,.rtf,.odt,.ods,.zip';
+    filesField.input.accept = '.pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.txt,.rtf,.odt,.ods';
     filesField.input.classList.add('documents-outgoing-file-upload__input');
     filesField.field.classList.add('documents-form__field--file');
     var filesUploadParent = filesField.input.parentNode;
@@ -25515,7 +25218,7 @@
         ? (selected[0] && selected[0].name ? selected[0].name : 'Файл') + ' · ' + formatFileSize(totalSize)
         : selected.length + ' файлов · ' + formatFileSize(totalSize);
     });
-    filesField.field.appendChild(createElement('div', 'documents-outgoing-form-modal__file-hint', 'PDF, изображения, DOCX/XLSX, TXT, RTF, ODT/ODS или ZIP до 25 МБ на файл.'));
+    filesField.field.appendChild(createElement('div', 'documents-outgoing-form-modal__file-hint', 'PDF, изображения, DOCX/XLSX, TXT, RTF или ODT/ODS до 25 МБ на файл.'));
     uploadSection.grid.appendChild(filesField.field);
     form.appendChild(uploadSection.section);
     body.appendChild(form);
@@ -25646,7 +25349,7 @@
 
     var filesField = createOutgoingFormField({ name: 'attachments[]', label: isEditMode ? 'Добавить файлы' : 'Файлы приказа', type: 'file', wide: true });
     filesField.input.multiple = true;
-    filesField.input.accept = '.pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.txt,.rtf,.odt,.ods,.zip';
+    filesField.input.accept = '.pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.txt,.rtf,.odt,.ods';
     filesField.input.classList.add('documents-outgoing-file-upload__input');
     filesField.field.classList.add('documents-form__field--file');
     var filesUploadParent = filesField.input.parentNode;
@@ -25680,7 +25383,7 @@
         ? (selected[0] && selected[0].name ? selected[0].name : 'Файл') + ' · ' + formatFileSize(totalSize)
         : selected.length + ' файлов · ' + formatFileSize(totalSize);
     });
-    filesField.field.appendChild(createElement('div', 'documents-outgoing-form-modal__file-hint', 'PDF, изображения, DOCX/XLSX, TXT, RTF, ODT/ODS или ZIP до 25 МБ на файл.'));
+    filesField.field.appendChild(createElement('div', 'documents-outgoing-form-modal__file-hint', 'PDF, изображения, DOCX/XLSX, TXT, RTF или ODT/ODS до 25 МБ на файл.'));
     var existingFiles = normalizeOutgoingFileList(record && record.files);
     var removedFileKeys = [];
     var existingFilesPanel = null;
@@ -26283,6 +25986,7 @@
     state.registryLoading = true;
     state.registryLoadError = '';
     var requestCacheVersion = state.runtimeCacheVersion;
+    var requestOwnerKey = buildAccessDataOwnerKey(state.access);
     updateTable();
 
     return fetch(buildApiUrl('list', { organization: organization }), {
@@ -26291,7 +25995,7 @@
     })
       .then(handleResponse)
       .then(function(data) {
-        if (requestCacheVersion !== state.runtimeCacheVersion) {
+        if (!isRegistryRequestCurrent(requestCacheVersion, requestOwnerKey, organization)) {
           return state.documents;
         }
         state.registryLoading = false;
@@ -26317,14 +26021,13 @@
           }
         }
         sendClientDiagnostics('registry_loaded', summary);
-        logServerStorageSize(organization);
         showMessage('success', documents.length
           ? 'Загружено документов: ' + documents.length
           : 'Реестр пока пуст.');
         return documents;
       })
       .catch(function(error) {
-        if (requestCacheVersion !== state.runtimeCacheVersion) {
+        if (!isRegistryRequestCurrent(requestCacheVersion, requestOwnerKey, organization)) {
           return state.documents;
         }
         var message = error && error.message ? error.message : String(error);
@@ -26342,12 +26045,19 @@
       return Promise.reject(new Error('Организация не определена.'));
     }
 
-    return fetch(buildApiUrl('list', { organization: state.organization, cacheBust: Date.now() }), {
+    var requestCacheVersion = state.runtimeCacheVersion;
+    var requestOwnerKey = buildAccessDataOwnerKey(state.access);
+    var requestOrganization = state.organization;
+
+    return fetch(buildApiUrl('list', { organization: requestOrganization, cacheBust: Date.now() }), {
       credentials: 'same-origin',
       cache: 'no-store'
     })
       .then(handleResponse)
       .then(function(data) {
+        if (!isRegistryRequestCurrent(requestCacheVersion, requestOwnerKey, requestOrganization)) {
+          return state.documents;
+        }
         var documents = resolveDocumentsCollection(data);
         var nextSignature = buildRealtimeRegistrySignature(documents);
         if (nextSignature && nextSignature === state.realtime.registrySignature) {
@@ -26417,7 +26127,6 @@
     }
     mergeTaskIntoStateDocuments(task);
     refreshUserAssignmentKeys();
-    recalculateUnviewedCounters();
     updateClockUserDisplay();
     updateTable();
   }
@@ -27628,8 +27337,16 @@
     if (!modal) {
       return;
     }
+    if (modal.dataset && modal.dataset.closeLocked === 'true') {
+      showMessage('info', 'Дождитесь завершения сохранения и загрузки файлов.');
+      return;
+    }
+    var wasDocumentForm = modal.classList && modal.classList.contains('documents-modal--document-form');
     modal.parentNode && modal.parentNode.removeChild(modal);
     document.removeEventListener('keydown', handleEscape);
+    if (wasDocumentForm) {
+      resumeDeferredTableRenderAfterDocumentForm();
+    }
   }
 
   function handleEscape(event) {
@@ -27704,6 +27421,7 @@
       var isEditMode = Boolean(doc && doc.id);
       ensureDocumentDraftUploadStyle();
       var modal = createElement('div', 'documents-modal');
+      modal.classList.add('documents-modal--document-form');
       var shell = createElement('div', 'documents-modal__shell');
       var title = createElement('h3', 'documents-modal__title', 'Добавить документ');
       var form = createElement('form', 'documents-form');
@@ -27847,7 +27565,7 @@
 
       var attachmentsField = addField({ name: 'attachments[]', label: 'Файлы', type: 'file' });
       attachmentsField.input.multiple = true;
-      attachmentsField.input.accept = '.pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.txt,.rtf,.odt,.ods,.zip';
+      attachmentsField.input.accept = '.pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.txt,.rtf,.odt,.ods';
       attachmentsField.field.classList.add('documents-form__field--file');
       attachmentsField.input.classList.add('documents-file-input');
 
@@ -27918,6 +27636,25 @@
       var selectedAttachmentStates = Object.create(null);
       var selectedAttachmentRowsByKey = Object.create(null);
       var formSubmitting = false;
+
+      function setDocumentFormSubmitting(active) {
+        formSubmitting = Boolean(active);
+        submitButton.disabled = formSubmitting;
+        cancelButton.disabled = formSubmitting;
+        if (formSubmitting) {
+          modal.dataset.closeLocked = 'true';
+          modal.setAttribute('aria-busy', 'true');
+        } else {
+          delete modal.dataset.closeLocked;
+          modal.removeAttribute('aria-busy');
+        }
+        Object.keys(selectedAttachmentRowsByKey).forEach(function(key) {
+          var row = selectedAttachmentRowsByKey[key];
+          if (row && row.removeButton) {
+            row.removeButton.disabled = formSubmitting;
+          }
+        });
+      }
 
       function getSelectedFileKey(file) {
         if (!file || typeof file !== 'object') {
@@ -28627,8 +28364,7 @@
       form.addEventListener('submit', async function(event) {
         event.preventDefault();
         clearMessage();
-        formSubmitting = true;
-        submitButton.disabled = true;
+        setDocumentFormSubmitting(true);
         setUploadProgressActive(true);
         updateUploadProgress(5, 'Подготавливаем данные формы…', 'is-stage-preparing');
         var formData = new FormData();
@@ -28648,16 +28384,14 @@
         var updateFields = null;
 
         if (attachmentErrors.length) {
-          formSubmitting = false;
-          submitButton.disabled = false;
+          setDocumentFormSubmitting(false);
           setUploadProgressActive(false);
           showMessage('error', attachmentErrors.slice(0, 3).join(' '));
           return;
         }
 
         if (!isEditMode && !directorSelect.value) {
-          formSubmitting = false;
-          submitButton.disabled = false;
+          setDocumentFormSubmitting(false);
           setUploadProgressActive(false);
           directorSelect.focus();
           showMessage('error', 'Выберите директора перед созданием задачи.');
@@ -28665,8 +28399,7 @@
         }
 
         if (assigneesEditor.hasMissingTelegramSelection()) {
-          formSubmitting = false;
-          submitButton.disabled = false;
+          setDocumentFormSubmitting(false);
           setUploadProgressActive(false);
           showMessage('error', TELEGRAM_MISSING_MESSAGE);
           return;
@@ -28674,8 +28407,7 @@
 
         correspondentField.input.value = normalizeTextInputValue(correspondentField.input.value);
         if (!correspondentField.input.value) {
-          formSubmitting = false;
-          submitButton.disabled = false;
+          setDocumentFormSubmitting(false);
           setUploadProgressActive(false);
           correspondentField.input.focus();
           showMessage('error', 'Заполните поле «Отправитель / получатель».');
@@ -28869,25 +28601,12 @@
             }
             updateStateFromPayload(data);
 
-            if (!isEditMode && data && data.createdDocument && data.createdDocument.id) {
-              var createdDocumentId = String(data.createdDocument.id);
-              var hasCreatedDocument = false;
-              for (var createdIndex = 0; createdIndex < state.documents.length; createdIndex += 1) {
-                var existingCreatedDoc = state.documents[createdIndex];
-                if (existingCreatedDoc && existingCreatedDoc.id && String(existingCreatedDoc.id) === createdDocumentId) {
-                  hasCreatedDocument = true;
-                  break;
-                }
-              }
-              if (!hasCreatedDocument) {
-                state.documents = [data.createdDocument].concat(state.documents || []);
-                updateTable();
-              }
-            }
-
             if (isEditMode && updateFields && doc && doc.id) {
               var payloadDocuments = resolveDocumentsCollection(data);
-              var hasUpdatedDocument = false;
+              var hasUpdatedDocument = !!(data
+                && data.updatedDocument
+                && data.updatedDocument.id
+                && String(data.updatedDocument.id) === String(doc.id));
               if (payloadDocuments.length) {
                 for (var payloadIndex = 0; payloadIndex < payloadDocuments.length; payloadIndex += 1) {
                   var payloadDoc = payloadDocuments[payloadIndex];
@@ -28962,6 +28681,7 @@
               if (latestUploadData) {
                 updateStateFromPayload(latestUploadData);
               }
+              setDocumentFormSubmitting(false);
               closeModal(modal);
               if (data && data.message) {
                 showMessage('success', data.message);
@@ -28974,8 +28694,7 @@
           })
           .catch(function(error) {
             var errorMessage = error && error.message ? error.message : 'повторите попытку.';
-            formSubmitting = false;
-            submitButton.disabled = false;
+            setDocumentFormSubmitting(false);
             updateSubmitButtonForDraftUploads();
             if (attachmentFiles.length) {
               markPendingSelectedAttachmentsError(attachmentFiles, 'Не загружен: ' + errorMessage);
@@ -29068,6 +28787,7 @@
 
       document.addEventListener('keydown', handleEscape);
       document.body.appendChild(modal);
+      pauseTableRenderForDocumentForm();
     }, function(error) {
       showMessage('error', 'Не удалось загрузить список ответственных: ' + error.message);
     });
@@ -30207,19 +29927,6 @@
       promise: null,
       lastLoadedAt: 0
     };
-    state.admin.storageTest = {
-      visible: false,
-      loading: false,
-      generating: false,
-      deleting: false,
-      error: '',
-      status: '',
-      statusType: '',
-      storage: null,
-      testArchive: null,
-      promise: null,
-      lastLoadedAt: 0
-    };
     var initialColumnOrder = loadColumnOrderFromLocalStorage();
     if (initialColumnOrder && initialColumnOrder.length) {
       state.columnOrder = initialColumnOrder;
@@ -30378,19 +30085,6 @@
       promise: null,
       lastLoadedAt: 0
     };
-    state.admin.storageTest = {
-      visible: false,
-      loading: false,
-      generating: false,
-      deleting: false,
-      error: '',
-      status: '',
-      statusType: '',
-      storage: null,
-      testArchive: null,
-      promise: null,
-      lastLoadedAt: 0
-    };
     state.admin.template = {
       exists: false,
       fileName: '',
@@ -30443,15 +30137,14 @@
       return Promise.reject(new Error('Организация не определена.'));
     }
 
-    showMessage('success', 'Оптимизация вложений запущена в фоне.');
+    showMessage('warning', 'ZIP-архивация и дедупликация вложений отключены.');
 
     return optimizeServerStorage(targetOrganization)
       .then(function(result) {
-        showMessage('success', 'Оптимизация запущена. Размер обновится после завершения фоновой обработки.');
         return result;
       })
       .catch(function(error) {
-        showMessage('error', error && error.message ? error.message : 'Не удалось запустить оптимизацию.');
+        showMessage('warning', error && error.message ? error.message : 'Оптимизация вложений отключена.');
         throw error;
       });
   };
