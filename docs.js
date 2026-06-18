@@ -605,6 +605,7 @@
   var activeOutgoingEditLocks = Object.create(null);
   var ordersRegistryEscapeHandler = null;
   var ordersFilterPopoverOutsideHandler = null;
+  var journalsMenuOutsideHandler = null;
   var elements = {
     addButton: null,
     adminButton: null,
@@ -1174,7 +1175,7 @@
     revision: 'В работе'
   };
   var WORK_INSTRUCTION_LABEL = 'Подготовить ответ';
-  var INSTRUCTION_OPTIONS = [WORK_INSTRUCTION_LABEL, 'Для информации', 'Для участия', 'Пояснить', 'Предоставить объяснение', 'Предоставить информацию'];
+  var INSTRUCTION_OPTIONS = ['В работу', WORK_INSTRUCTION_LABEL, 'Для информации', 'Для участия', 'Пояснить', 'Предоставить объяснение', 'Предоставить информацию'];
   var TABLE_COLUMN_MAP = (function() {
     var map = {};
     for (var i = 0; i < TABLE_COLUMNS.length; i += 1) {
@@ -4793,7 +4794,7 @@
       '.documents-outgoing-modal__add:hover,.documents-outgoing-modal__add:focus-visible{border-color:#1f4fdc;background:#1f4fdc;outline:0;transform:translateY(-1px);}' +
       '.documents-outgoing-modal__close{width:36px;height:36px;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;border:1px solid #dbeafe;border-radius:10px;background:#fff;color:#334155;font-size:22px;line-height:1;cursor:pointer;transition:background .16s ease,border-color .16s ease,color .16s ease;}' +
       '.documents-outgoing-modal__close:hover,.documents-outgoing-modal__close:focus-visible{border-color:#93c5fd;background:#eff6ff;color:#1d4ed8;outline:0;}' +
-      '.documents-outgoing-modal__body{position:relative;flex:1 1 auto;min-height:0;overflow:auto;padding:12px 18px 18px;}' +
+      '.documents-outgoing-modal__body{position:relative;flex:1 1 auto;min-height:0;overflow-x:auto;overflow-y:auto;scrollbar-gutter:stable;padding:12px 18px 18px;}' +
       '.documents-outgoing-table{width:100%;min-width:1080px;border-collapse:separate;border-spacing:0;border:1px solid #dbeafe;border-radius:12px;overflow:hidden;background:#fff;font-size:12px;}' +
       '.documents-outgoing-table th,.documents-outgoing-table td{border-bottom:1px solid #e2e8f0;border-right:1px solid #edf2f7;padding:10px 12px;text-align:left;vertical-align:top;}' +
       '.documents-outgoing-table th:last-child,.documents-outgoing-table td:last-child{border-right:0;}' +
@@ -4952,6 +4953,12 @@
       '#documents-settings-button:hover,#documents-settings-button:focus-visible{color:#6d28d9;border-color:#a78bfa;background:#f3e8ff;}' +
       '#documents-online-button{color:#047857;border-color:rgba(52,211,153,.62);background:#ecfdf5;}' +
       '#documents-online-button:hover,#documents-online-button:focus-visible{color:#065f46;border-color:#34d399;background:#d1fae5;}' +
+      '#documents-journals-button{color:#7c2d12;border-color:rgba(251,146,60,.62);background:#fff7ed;font-weight:800;}' +
+      '#documents-journals-button:hover,#documents-journals-button:focus-visible,#documents-journals-button[aria-expanded="true"]{color:#9a3412;border-color:#fb923c;background:#ffedd5;}' +
+      '.documents-journals-menu{position:fixed;z-index:2650;display:none;width:min(280px,calc(100vw - 24px));padding:8px;border:1px solid rgba(148,163,184,0.3);border-radius:14px;background:#ffffff;box-shadow:0 22px 48px rgba(15,23,42,0.18);}' +
+      '.documents-journals-menu--visible{display:flex;flex-direction:column;gap:4px;}' +
+      '.documents-journals-menu__item{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;min-height:36px;padding:8px 10px;border:0;border-radius:9px;background:transparent;color:#172554;font-size:13px;font-weight:800;text-align:left;cursor:pointer;}' +
+      '.documents-journals-menu__item:hover,.documents-journals-menu__item:focus-visible{background:#fff7ed;color:#9a3412;outline:none;}' +
       '#documents-admin-button{color:#1d4ed8;border-color:rgba(96,165,250,.62);background:#eff6ff;font-weight:800;}' +
       '#documents-admin-button:hover,#documents-admin-button:focus-visible{color:#1e40af;border-color:#60a5fa;background:#dbeafe;}' +
       '#documents-responsible-button{color:#047857;border-color:rgba(52,211,153,.62);background:#ecfdf5;font-weight:800;}' +
@@ -5043,12 +5050,6 @@
       '.documents-status__badge--cancelled{background:#f8fafc;border-color:#cbd5e1;color:#64748b;}' +
       '.documents-status__badge--neutral{background:#eef2ff;border-color:#c7d2fe;color:#3730a3;}' +
       '.documents-status__badge--empty{background:#f8fafc;border-color:#e2e8f0;color:#94a3b8;}' +
-      '.documents-status__assignment{display:inline-grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:5px;max-width:100%;min-height:24px;padding:3px 7px;border:1px solid #fed7aa;border-radius:7px;background:#fff7ed;color:#9a3412;font-size:11px;font-weight:900;line-height:1.15;box-sizing:border-box;}' +
-      '.documents-status__assignment[data-completed="true"]{border-color:#bbf7d0;background:#ecfdf5;color:#047857;}' +
-      '.documents-status__assignment-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
-      '.documents-status__assignment-count{display:inline-flex;align-items:center;justify-content:center;min-width:28px;height:18px;padding:0 6px;border-radius:999px;background:#ffedd5;color:#9a3412;font-variant-numeric:tabular-nums;}' +
-      '.documents-status__assignment[data-completed="true"] .documents-status__assignment-count{background:#d1fae5;color:#047857;}' +
-      '.documents-status__assignment-state{color:#64748b;font-size:10px;font-weight:800;white-space:nowrap;}' +
       '.documents-status__select{width:100%;min-width:120px;max-width:100%;height:30px;padding:0 28px 0 9px;border:1px solid #cbd5e1;border-radius:7px;background:#fff;color:#334155;font-size:12px;font-weight:900;line-height:1.1;outline:none;cursor:pointer;box-sizing:border-box;}' +
       '.documents-status__select:focus{border-color:#93c5fd;box-shadow:0 0 0 3px rgba(37,99,235,.12);}' +
       '.documents-status__select--work{background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8;}' +
@@ -5146,15 +5147,15 @@
       '@media (max-width:420px){' +
       '#documents-title,.documents-panel__title{max-width:1px;flex-basis:1px;color:transparent;}' +
       '.documents-panel-control-group{gap:2px;}' +
-      '.documents-panel-icon-button,#documents-close,#documents-logout-button,#documents-refresh-button,#documents-settings-button,#documents-online-button,.documents-panel-control-group .documents-tools-toggle,#documents-add-button,#documents-admin-button,#documents-responsible-button,#documents-unviewed-button,#documents-outgoing-button,#documents-orders-button{width:25px;min-width:25px;max-width:25px;height:27px;min-height:27px;padding:0;border-radius:7px;}' +
-      '#documents-admin-button,#documents-responsible-button,#documents-unviewed-button,#documents-outgoing-button,#documents-orders-button{font-size:0;overflow:hidden;}' +
+      '.documents-panel-icon-button,#documents-close,#documents-logout-button,#documents-refresh-button,#documents-settings-button,#documents-online-button,.documents-panel-control-group .documents-tools-toggle,#documents-add-button,#documents-admin-button,#documents-responsible-button,#documents-unviewed-button,#documents-outgoing-button,#documents-journals-button{width:25px;min-width:25px;max-width:25px;height:27px;min-height:27px;padding:0;border-radius:7px;}' +
+      '#documents-admin-button,#documents-responsible-button,#documents-unviewed-button,#documents-outgoing-button,#documents-journals-button{font-size:0;overflow:hidden;}' +
       '#documents-unviewed-button{overflow:visible;}' +
       '#documents-unviewed-button .documents-unviewed-button__counter{position:absolute;top:-7px;right:-7px;min-width:16px;height:16px;padding:0 4px;border:1px solid #fff;font-size:10px;}' +
       '#documents-admin-button::before{content:"A";font-size:11px;font-weight:900;line-height:1;}' +
       '#documents-responsible-button::before{content:"О";font-size:11px;font-weight:900;line-height:1;}' +
       '#documents-unviewed-button::before{content:"!";font-size:13px;font-weight:900;line-height:1;}' +
       '#documents-outgoing-button::before{content:"И";font-size:11px;font-weight:900;line-height:1;}' +
-      '#documents-orders-button::before{content:"П";font-size:11px;font-weight:900;line-height:1;}' +
+      '#documents-journals-button::before{content:"Ж";font-size:11px;font-weight:900;line-height:1;}' +
       '.documents-panel-icon-button__icon,.documents-panel-action-icon{width:14px;height:14px;}' +
       '}' +
       '@media (max-width:760px){' +
@@ -11474,42 +11475,11 @@
       '.documents-template-modal__button--secondary{background:rgba(148,163,184,0.18);color:#0f172a;}' +
       '.documents-template-modal__button:hover:not(:disabled){transform:translateY(-1px);}' +
       '.documents-admin__archive-button{margin-right:8px;}' +
-      '.documents-admin__storage-panel{display:none;margin-bottom:16px;padding:14px;border:1px solid rgba(148,163,184,0.28);border-radius:16px;background:rgba(248,250,252,0.88);}' +
-      '.documents-admin__storage-panel.is-visible{display:block;}' +
-      '.documents-admin__storage-header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:10px;}' +
-      '.documents-admin__storage-title{margin:0;font-size:16px;font-weight:700;color:#0f172a;}' +
-      '.documents-admin__storage-subtitle{margin:4px 0 0;color:#64748b;font-size:12px;line-height:1.4;}' +
-      '.documents-admin__storage-status{display:none;margin:10px 0;padding:10px 12px;border-radius:12px;background:rgba(59,130,246,0.12);color:#1d4ed8;font-size:13px;font-weight:600;}' +
-      '.documents-admin__storage-status.is-visible{display:block;}' +
-      '.documents-admin__storage-status--error{background:rgba(239,68,68,0.14);color:#b91c1c;}' +
-      '.documents-admin__storage-status--success{background:rgba(16,185,129,0.15);color:#047857;}' +
-      '.documents-admin__storage-actions{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;}' +
-      '.documents-admin__storage-button{border:none;border-radius:12px;padding:10px 13px;font-size:13px;font-weight:700;cursor:pointer;background:rgba(148,163,184,0.18);color:#0f172a;}' +
-      '.documents-admin__storage-button--primary{background:linear-gradient(120deg,#2563eb,#38bdf8);color:#fff;box-shadow:0 12px 24px rgba(37,99,235,0.22);}' +
-      '.documents-admin__storage-button--danger{background:rgba(239,68,68,0.12);color:#b91c1c;}' +
-      '.documents-admin__storage-button:disabled{opacity:0.6;cursor:default;box-shadow:none;}' +
-      '.documents-admin__storage-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:12px;}' +
-      '.documents-admin__storage-card{border:1px solid rgba(148,163,184,0.25);border-radius:12px;background:#fff;padding:10px;}' +
-      '.documents-admin__storage-card-label{display:block;color:#64748b;font-size:11px;margin-bottom:3px;}' +
-      '.documents-admin__storage-card-value{display:block;color:#0f172a;font-size:15px;font-weight:800;word-break:break-word;}' +
-      '.documents-admin__storage-list{display:grid;gap:8px;margin:0 0 12px;padding:0;list-style:none;}' +
-      '.documents-admin__storage-item{display:flex;align-items:center;justify-content:space-between;gap:10px;border:1px solid rgba(148,163,184,0.24);border-radius:12px;background:#fff;padding:10px;}' +
-      '.documents-admin__storage-item-main{min-width:0;}' +
-      '.documents-admin__storage-item-title{font-weight:700;color:#0f172a;word-break:break-word;}' +
-      '.documents-admin__storage-item-meta{margin-top:3px;color:#64748b;font-size:12px;word-break:break-word;}' +
-      '.documents-admin__storage-samples{display:grid;gap:8px;margin-top:8px;}' +
-      '.documents-admin__storage-sample{display:flex;align-items:center;justify-content:space-between;gap:8px;border:1px solid rgba(148,163,184,0.22);border-radius:12px;background:rgba(255,255,255,0.78);padding:9px;}' +
-      '.documents-admin__storage-empty{color:#64748b;font-size:13px;padding:10px;border:1px dashed rgba(148,163,184,0.34);border-radius:12px;background:#fff;}' +
       '@media (max-width: 720px){' +
       '.documents-template-modal{padding:8px;align-items:flex-end;}' +
       '.documents-template-modal__panel{width:100%;max-height:calc(100vh - 16px);border-radius:20px;padding:14px;}' +
       '.documents-template-modal__actions{display:grid;grid-template-columns:1fr;}' +
       '.documents-template-modal__button{width:100%;}' +
-      '.documents-admin__storage-header{display:block;}' +
-      '.documents-admin__storage-actions{display:grid;grid-template-columns:1fr;}' +
-      '.documents-admin__storage-button{width:100%;}' +
-      '.documents-admin__storage-grid{grid-template-columns:1fr 1fr;}' +
-      '.documents-admin__storage-item,.documents-admin__storage-sample{align-items:stretch;flex-direction:column;}' +
       '}' +
       '';
     document.head.appendChild(style);
@@ -11730,7 +11700,6 @@
     adminElements.templateUploadButton = templateUploadButton;
     adminElements.templateUploadInput = templateUploadInput;
     adminElements.templateCloseButton = templateCloseButton;
-
     closeButton.addEventListener('click', function() {
       closeAdminModal();
     });
@@ -18887,7 +18856,7 @@
 
     var normalized = text.replace(/\s+/g, ' ').toLowerCase().replace(/ё/g, 'е');
     if (normalized === 'в работу') {
-      return WORK_INSTRUCTION_LABEL;
+      return 'В работу';
     }
 
     return text;
@@ -20644,26 +20613,6 @@
     return container;
   }
 
-  function createOwnAssignmentStatusCounter(doc) {
-    var summary = getCurrentResponsibleAssignmentCompletionSummary(doc);
-    if (!summary || summary.total < 1) {
-      return null;
-    }
-
-    var counter = createElement('div', 'documents-status__assignment');
-    counter.dataset.completed = summary.allCompleted ? 'true' : 'false';
-    counter.title = summary.pendingNames && summary.pendingNames.length
-      ? 'Ожидают выполнения: ' + summary.pendingNames.join(', ')
-      : 'Все ваши назначения выполнены';
-    counter.setAttribute('aria-label', 'Мои назначения: выполнено ' + summary.completed + ' из ' + summary.total);
-
-    counter.appendChild(createElement('span', 'documents-status__assignment-label', 'Мои назначения'));
-    counter.appendChild(createElement('span', 'documents-status__assignment-count', summary.completed + '/' + summary.total));
-    counter.appendChild(createElement('span', 'documents-status__assignment-state', summary.allCompleted ? 'готово' : 'в работе'));
-
-    return counter;
-  }
-
   function handleStatusSelectChange(doc, select, meta) {
     if (!doc || !doc.id || !select) {
       return;
@@ -20757,11 +20706,6 @@
       container.appendChild(select);
     } else {
       container.appendChild(createStatusBadge(statusText, getStatusTone(statusText)));
-    }
-
-    var ownAssignmentCounter = createOwnAssignmentStatusCounter(doc);
-    if (ownAssignmentCounter) {
-      container.appendChild(ownAssignmentCounter);
     }
 
     container.appendChild(meta);
@@ -24918,15 +24862,115 @@
     });
     return map;
   })();
+  var ORDER_JOURNAL_CONFIGS = {
+    orders: {
+      type: 'orders',
+      menuLabel: 'Основная деятельность',
+      title: 'Журнал регистрации приказов по основной деятельности',
+      loadingText: 'Загружаем журнал приказов...',
+      countLabel: 'приказов',
+      addLabel: 'Добавить приказ',
+      addTitle: 'Добавить приказ',
+      editTitle: 'Изменить приказ',
+      itemLabel: 'приказ',
+      itemLabelCapital: 'Приказ',
+      itemGenitive: 'приказа',
+      numberLabel: '№ приказа',
+      fileColumnLabel: 'Файл приказа',
+      sectionTitle: 'Реквизиты приказа',
+      sectionHint: 'Основные поля журнала регистрации приказов по основной деятельности.'
+    },
+    directives: {
+      type: 'directives',
+      menuLabel: 'Распоряжения',
+      title: 'Журнал распоряжений',
+      loadingText: 'Загружаем журнал распоряжений...',
+      countLabel: 'распоряжений',
+      addLabel: 'Добавить распоряжение',
+      addTitle: 'Добавить распоряжение',
+      editTitle: 'Изменить распоряжение',
+      itemLabel: 'распоряжение',
+      itemLabelCapital: 'Распоряжение',
+      itemGenitive: 'распоряжения',
+      numberLabel: '№ распоряжения',
+      fileColumnLabel: 'Файл распоряжения',
+      sectionTitle: 'Реквизиты распоряжения',
+      sectionHint: 'Основные поля журнала распоряжений.'
+    },
+    disciplinary: {
+      type: 'disciplinary',
+      menuLabel: 'Дисциплинарные взыскания',
+      title: 'Журнал дисциплинарных взысканий',
+      loadingText: 'Загружаем журнал дисциплинарных взысканий...',
+      countLabel: 'взысканий',
+      addLabel: 'Добавить взыскание',
+      addTitle: 'Добавить взыскание',
+      editTitle: 'Изменить взыскание',
+      itemLabel: 'взыскание',
+      itemLabelCapital: 'Взыскание',
+      itemGenitive: 'взыскания',
+      numberLabel: '№ взыскания',
+      fileColumnLabel: 'Файл взыскания',
+      sectionTitle: 'Реквизиты взыскания',
+      sectionHint: 'Основные поля журнала дисциплинарных взысканий.'
+    }
+  };
 
-  function getDefaultOrdersColumnOrder() {
+  function getOrderJournalConfig(type) {
+    var fallback = ORDER_JOURNAL_CONFIGS.orders || {
+      type: 'orders',
+      menuLabel: 'Основная деятельность',
+      title: 'Журнал регистрации приказов по основной деятельности',
+      loadingText: 'Загружаем журнал приказов...',
+      countLabel: 'записей',
+      addLabel: 'Добавить запись',
+      addTitle: 'Добавить запись',
+      editTitle: 'Изменить запись',
+      itemLabel: 'запись',
+      itemLabelCapital: 'Запись',
+      itemGenitive: 'записи',
+      numberLabel: '№ записи',
+      fileColumnLabel: 'Файл',
+      sectionTitle: 'Реквизиты записи',
+      sectionHint: 'Основные поля журнала.'
+    };
+    var key = String(type || 'orders').toLowerCase();
+    return ORDER_JOURNAL_CONFIGS[key] || fallback;
+  }
+
+  function getOrderJournalColumns(config) {
+    var journalConfig = getOrderJournalConfig(config && config.type);
     return ORDERS_REGISTRY_COLUMNS.map(function(column) {
+      var nextColumn = {
+        key: column.key,
+        label: column.label,
+        type: column.type
+      };
+      if (nextColumn.key === 'orderNumber') {
+        nextColumn.label = journalConfig.numberLabel;
+      } else if (nextColumn.key === 'files') {
+        nextColumn.label = journalConfig.fileColumnLabel;
+      }
+      return nextColumn;
+    });
+  }
+
+  function getOrderJournalColumnMap(config) {
+    var map = {};
+    getOrderJournalColumns(config).forEach(function(column) {
+      map[column.key] = column;
+    });
+    return map;
+  }
+
+  function getDefaultOrdersColumnOrder(config) {
+    return getOrderJournalColumns(config).map(function(column) {
       return column.key;
     });
   }
 
-  function normalizeOrdersColumnOrder(order) {
-    var defaults = getDefaultOrdersColumnOrder();
+  function normalizeOrdersColumnOrder(order, config) {
+    var defaults = getDefaultOrdersColumnOrder(config);
     var source = Array.isArray(order) ? order : defaults;
     var allowed = {};
     var seen = {};
@@ -24950,9 +24994,10 @@
     return normalized;
   }
 
-  function getOrderedOrdersColumns(order) {
-    return normalizeOrdersColumnOrder(order).map(function(key) {
-      return ORDERS_REGISTRY_COLUMN_MAP[key];
+  function getOrderedOrdersColumns(order, config) {
+    var columnMap = getOrderJournalColumnMap(config);
+    return normalizeOrdersColumnOrder(order, config).map(function(key) {
+      return columnMap[key];
     }).filter(Boolean);
   }
 
@@ -24960,66 +25005,71 @@
     return getCurrentUserKey() || getAccessProfileKey(state.access) || state.telegramUserId || 'guest';
   }
 
-  function getOrdersColumnOrderStorageKey() {
+  function getOrdersColumnOrderStorageKey(journalType) {
     var organization = state.organization || '';
     if (!organization) {
       return '';
     }
-    return ORDERS_COLUMN_ORDER_STORAGE_PREFIX + organization + ':' + getOrdersColumnOrderUserKey();
+    return ORDERS_COLUMN_ORDER_STORAGE_PREFIX + getOrderJournalConfig(journalType).type + ':' + organization + ':' + getOrdersColumnOrderUserKey();
   }
 
-  function loadOrdersColumnOrderFromLocalStorage() {
+  function loadOrdersColumnOrderFromLocalStorage(journalType) {
+    var config = getOrderJournalConfig(journalType);
     if (typeof window === 'undefined' || !window.localStorage) {
-      return getDefaultOrdersColumnOrder();
+      return getDefaultOrdersColumnOrder(config);
     }
-    var key = getOrdersColumnOrderStorageKey();
+    var key = getOrdersColumnOrderStorageKey(config.type);
     if (!key) {
-      return getDefaultOrdersColumnOrder();
+      return getDefaultOrdersColumnOrder(config);
     }
     try {
       var raw = window.localStorage.getItem(key);
-      return raw ? normalizeOrdersColumnOrder(JSON.parse(raw)) : getDefaultOrdersColumnOrder();
+      return raw ? normalizeOrdersColumnOrder(JSON.parse(raw), config) : getDefaultOrdersColumnOrder(config);
     } catch (error) {
-      return getDefaultOrdersColumnOrder();
+      return getDefaultOrdersColumnOrder(config);
     }
   }
 
-  function saveOrdersColumnOrderToLocalStorage(order) {
+  function saveOrdersColumnOrderToLocalStorage(order, journalType) {
+    var config = getOrderJournalConfig(journalType);
     if (typeof window === 'undefined' || !window.localStorage) {
       return;
     }
-    var key = getOrdersColumnOrderStorageKey();
+    var key = getOrdersColumnOrderStorageKey(config.type);
     if (!key) {
       return;
     }
     try {
-      window.localStorage.setItem(key, JSON.stringify(normalizeOrdersColumnOrder(order)));
+      window.localStorage.setItem(key, JSON.stringify(normalizeOrdersColumnOrder(order, config)));
     } catch (error) {
       if (typeof docsLogger.warn === 'function') {
-        docsLogger.warn('Не удалось сохранить порядок столбцов журнала приказов:', error);
+        docsLogger.warn('Не удалось сохранить порядок столбцов журнала:', error);
       }
     }
   }
 
-  function requestOrdersColumnOrder() {
+  function requestOrdersColumnOrder(journalType) {
+    var config = getOrderJournalConfig(journalType);
     if (!state.organization) {
-      return Promise.resolve(getDefaultOrdersColumnOrder());
+      return Promise.resolve(getDefaultOrdersColumnOrder(config));
     }
     return fetch(buildApiUrl('orders_column_order_load', {
       organization: state.organization,
+      journal_type: config.type,
       user_key: getOrdersColumnOrderUserKey(),
       cacheBust: Date.now()
     }), {
       credentials: 'same-origin',
       cache: 'no-store'
     }).then(handleResponse).then(function(data) {
-      return normalizeOrdersColumnOrder(data && data.columns);
+      return normalizeOrdersColumnOrder(data && data.columns, config);
     });
   }
 
-  function saveOrdersColumnOrder(order) {
-    var columns = normalizeOrdersColumnOrder(order);
-    saveOrdersColumnOrderToLocalStorage(columns);
+  function saveOrdersColumnOrder(order, journalType) {
+    var config = getOrderJournalConfig(journalType);
+    var columns = normalizeOrdersColumnOrder(order, config);
+    saveOrdersColumnOrderToLocalStorage(columns, config.type);
     if (!state.organization) {
       return Promise.resolve(columns);
     }
@@ -25033,20 +25083,23 @@
       },
       body: JSON.stringify({
         organization: state.organization,
+        journal_type: config.type,
         user_key: getOrdersColumnOrderUserKey(),
         columns: columns
       })
     }).then(handleResponse).then(function(data) {
-      return normalizeOrdersColumnOrder(data && data.columns);
+      return normalizeOrdersColumnOrder(data && data.columns, config);
     });
   }
 
-  function requestOrdersRegistryRecords() {
+  function requestOrdersRegistryRecords(journalType) {
+    var config = getOrderJournalConfig(journalType);
     if (!state.organization) {
       return Promise.reject(new Error('Организация не определена.'));
     }
     return fetch(buildApiUrl('orders_list', {
       organization: state.organization,
+      journal_type: config.type,
       cacheBust: Date.now()
     }), {
       credentials: 'same-origin',
@@ -25244,11 +25297,12 @@
     tbody.textContent = '';
     var list = Array.isArray(records) ? records : [];
     var config = options && typeof options === 'object' ? options : {};
+    var journalConfig = getOrderJournalConfig(config.journalType);
     var canManage = Boolean(config.canManage);
-    var columns = getOrderedOrdersColumns(config.columnOrder);
+    var columns = getOrderedOrdersColumns(config.columnOrder, journalConfig);
     if (!list.length) {
       var emptyRow = document.createElement('tr');
-      var emptyCell = createElement('td', 'documents-outgoing-table__empty', config.emptyMessage || 'Записей приказов пока нет.');
+      var emptyCell = createElement('td', 'documents-outgoing-table__empty', config.emptyMessage || ('Записей журнала пока нет.'));
       emptyCell.colSpan = columns.length;
       emptyRow.appendChild(emptyCell);
       tbody.appendChild(emptyRow);
@@ -25262,21 +25316,21 @@
         if (column.key === 'actions') {
           var actions = createElement('div', 'documents-outgoing-table__actions');
           if (canManage && record && record.id) {
-            var attachButton = createOutgoingActionIconButton('paperclip', 'Прикрепить файл приказа', 'documents-outgoing-table__action--attach');
+            var attachButton = createOutgoingActionIconButton('paperclip', 'Прикрепить ' + journalConfig.fileColumnLabel.toLowerCase(), 'documents-outgoing-table__action--attach');
             attachButton.addEventListener('click', function() {
               if (typeof config.onAttach === 'function') {
                 config.onAttach(record);
               }
             });
             actions.appendChild(attachButton);
-            var editButton = createOutgoingActionIconButton('pencil', 'Редактировать приказ', 'documents-outgoing-table__action--edit');
+            var editButton = createOutgoingActionIconButton('pencil', 'Редактировать ' + journalConfig.itemLabel, 'documents-outgoing-table__action--edit');
             editButton.addEventListener('click', function() {
               if (typeof config.onEdit === 'function') {
                 config.onEdit(record);
               }
             });
             actions.appendChild(editButton);
-            var deleteButton = createOutgoingActionIconButton('trash', 'Удалить приказ', 'documents-outgoing-table__action--danger');
+            var deleteButton = createOutgoingActionIconButton('trash', 'Удалить ' + journalConfig.itemLabel, 'documents-outgoing-table__action--danger');
             deleteButton.addEventListener('click', function() {
               if (typeof config.onDelete === 'function') {
                 config.onDelete(record);
@@ -25295,7 +25349,7 @@
           cell.className = 'documents-outgoing-table__summary';
         }
         if (column.key === 'files') {
-          renderOrderFilesCell(cell, record);
+          renderOrderFilesCell(cell, record, journalConfig);
           row.appendChild(cell);
           return;
         }
@@ -25310,7 +25364,29 @@
     });
   }
 
-  function renderOrderFilesCell(cell, record) {
+  function buildOrderFilePreviewUrl(record, file, journalType) {
+    var organization = state && state.organization ? String(state.organization) : '';
+    var recordId = record && record.id ? String(record.id).trim() : '';
+    var fileKey = buildOutgoingFileKey(file);
+    var config = getOrderJournalConfig(journalType);
+    if (!organization || !recordId || !fileKey) {
+      return resolveAttachmentUrl(file, { bustCache: true });
+    }
+
+    var params = new URLSearchParams();
+    params.set('action', 'orders_file');
+    params.set('organization', organization);
+    params.set('record_id', recordId);
+    params.set('file', fileKey);
+    params.set('journal_type', config.type || 'orders');
+    params.set('_', String(Date.now()));
+
+    return '/docs.php?' + params.toString();
+  }
+
+  function renderOrderFilesCell(cell, record, journalConfig) {
+    var config = getOrderJournalConfig(journalConfig && journalConfig.type);
+    var fileColumnLabel = config && config.fileColumnLabel ? String(config.fileColumnLabel) : 'Файл';
     var files = record && Array.isArray(record.files) ? record.files : [];
     if (!files.length) {
       cell.classList.add('documents-outgoing-table__muted');
@@ -25323,7 +25399,7 @@
       if (!file || typeof file !== 'object') {
         return;
       }
-      var url = resolveAttachmentUrl(file, { bustCache: true });
+      var url = buildOrderFilePreviewUrl(record, file, config.type);
       var fileName = getAttachmentName(file, index + 1);
       var uploader = getOutgoingFileUploader(file);
       var item = createElement('div', 'documents-outgoing-file-item');
@@ -25332,7 +25408,7 @@
       link.target = '_blank';
       link.rel = 'noopener noreferrer';
       link.title = fileName;
-      link.setAttribute('aria-label', 'Открыть файл приказа ' + fileName);
+      link.setAttribute('aria-label', 'Открыть ' + fileColumnLabel.toLowerCase() + ' ' + fileName);
       link.appendChild(createElement('span', 'documents-outgoing-file-link__icon', getAttachmentExtensionLabel(file)));
       var text = createElement('span', 'documents-outgoing-file-link__text');
       text.appendChild(createElement('span', 'documents-outgoing-file-link__name', fileName));
@@ -25343,7 +25419,7 @@
       link.addEventListener('click', function(event) {
         event.preventDefault();
         if (!url) {
-          showMessage('error', 'Не удалось открыть файл приказа: ссылка недоступна.');
+          showMessage('error', 'Не удалось открыть файл: ссылка недоступна.');
           return;
         }
         openOutgoingAttachmentInNewTab(file, url);
@@ -25380,13 +25456,14 @@
     return null;
   }
 
-  function openOrdersAttachFilesModal(record, onSaved) {
+  function openOrdersAttachFilesModal(record, onSaved, journalType) {
+    var journalConfig = getOrderJournalConfig(journalType);
     if (!state.organization) {
       showMessage('error', 'Организация не определена.');
       return;
     }
     if (!record || !record.id) {
-      showMessage('error', 'Запись приказа не найдена.');
+      showMessage('error', 'Запись журнала не найдена.');
       return;
     }
     ensureOutgoingRegistryStyle();
@@ -25397,13 +25474,13 @@
     modal.setAttribute('aria-labelledby', 'documents-orders-attach-title');
     var shell = createElement('div', 'documents-modal__shell documents-outgoing-form-modal__shell');
     var header = createElement('div', 'documents-modal__header documents-outgoing-form-modal__header');
-    var eyebrow = createElement('p', 'documents-outgoing-form-modal__eyebrow', 'Журнал приказов');
-    var title = createElement('h3', 'documents-modal__title documents-outgoing-form-modal__title', 'Прикрепить файл приказа');
+    var eyebrow = createElement('p', 'documents-outgoing-form-modal__eyebrow', journalConfig.title);
+    var title = createElement('h3', 'documents-modal__title documents-outgoing-form-modal__title', 'Прикрепить файл');
     title.id = 'documents-orders-attach-title';
     var recordLabel = [record.orderNumber, getOrderRecordValue(record, 'summary')].filter(function(value) {
       return value !== undefined && value !== null && String(value).trim() !== '' && String(value).trim() !== '—';
     }).join(' · ');
-    var subtitle = createElement('p', 'documents-outgoing-form-modal__subtitle', recordLabel || 'Выберите один или несколько файлов приказа.');
+    var subtitle = createElement('p', 'documents-outgoing-form-modal__subtitle', recordLabel || 'Выберите один или несколько файлов.');
     var body = createElement('div', 'documents-outgoing-form-modal__body');
     var form = createElement('form', 'documents-form documents-outgoing-form-modal__form');
     var formId = 'documents-orders-attach-form-' + Date.now();
@@ -25435,7 +25512,7 @@
     header.appendChild(title);
     header.appendChild(subtitle);
 
-    var uploadSection = createOutgoingFormSection('Файл приказа', 'Выберите один или несколько файлов для выбранной записи.');
+    var uploadSection = createOutgoingFormSection(journalConfig.fileColumnLabel, 'Выберите один или несколько файлов для выбранной записи.');
     var filesField = createOutgoingFormField({ name: 'attachments[]', label: 'Файлы', type: 'file', wide: true });
     filesField.input.multiple = true;
     filesField.input.accept = '.pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.txt,.rtf,.odt,.ods';
@@ -25481,7 +25558,7 @@
       event.preventDefault();
       var selectedFiles = Array.from(filesField.input.files || []);
       if (!selectedFiles.length) {
-        showMessage('error', 'Выберите минимум один файл приказа.');
+        showMessage('error', 'Выберите минимум один файл.');
         filesField.input.focus();
         return;
       }
@@ -25496,6 +25573,7 @@
       var requestPayload = new FormData();
       requestPayload.append('action', 'orders_attach_files');
       requestPayload.append('organization', state.organization);
+      requestPayload.append('journal_type', journalConfig.type);
       requestPayload.append('id', record.id);
       selectedFiles.forEach(function(file) {
         requestPayload.append('attachments[]', file);
@@ -25504,7 +25582,7 @@
       postOutgoingRegistryAction('orders_attach_files', requestPayload)
         .then(function(data) {
           closeAttachForm();
-          showMessage('success', data && data.message ? data.message : 'Файлы приказа прикреплены.');
+          showMessage('success', data && data.message ? data.message : 'Файлы прикреплены.');
           if (typeof onSaved === 'function') {
             onSaved(data);
           }
@@ -25513,7 +25591,7 @@
           submitButton.disabled = false;
           cancelButton.disabled = false;
           submitButton.textContent = 'Прикрепить';
-          showMessage('error', error && error.message ? error.message : 'Не удалось прикрепить файлы приказа.');
+          showMessage('error', error && error.message ? error.message : 'Не удалось прикрепить файлы.');
         });
     });
 
@@ -25531,7 +25609,8 @@
     filesUploadButton.focus();
   }
 
-  function openOrdersRecordForm(record, onSaved, knownRecords) {
+  function openOrdersRecordForm(record, onSaved, knownRecords, journalType) {
+    var journalConfig = getOrderJournalConfig(journalType);
     if (!state.organization) {
       showMessage('error', 'Организация не определена.');
       return;
@@ -25544,10 +25623,10 @@
     modal.setAttribute('aria-labelledby', 'documents-orders-form-title');
     var shell = createElement('div', 'documents-modal__shell documents-outgoing-form-modal__shell');
     var header = createElement('div', 'documents-modal__header documents-outgoing-form-modal__header');
-    var eyebrow = createElement('p', 'documents-outgoing-form-modal__eyebrow', 'Журнал приказов');
-    var title = createElement('h3', 'documents-modal__title documents-outgoing-form-modal__title', isEditMode ? 'Изменить приказ' : 'Добавить приказ');
+    var eyebrow = createElement('p', 'documents-outgoing-form-modal__eyebrow', journalConfig.title);
+    var title = createElement('h3', 'documents-modal__title documents-outgoing-form-modal__title', isEditMode ? journalConfig.editTitle : journalConfig.addTitle);
     title.id = 'documents-orders-form-title';
-    var subtitle = createElement('p', 'documents-outgoing-form-modal__subtitle', isEditMode ? 'Обновите реквизиты приказа и файлы.' : 'Заполните реквизиты приказа и прикрепите файл при необходимости.');
+    var subtitle = createElement('p', 'documents-outgoing-form-modal__subtitle', isEditMode ? 'Обновите реквизиты и файлы.' : 'Заполните реквизиты и прикрепите файл при необходимости.');
     var body = createElement('div', 'documents-outgoing-form-modal__body');
     var form = createElement('form', 'documents-form documents-outgoing-form-modal__form');
     var formId = 'documents-orders-form-' + Date.now();
@@ -25579,9 +25658,9 @@
     header.appendChild(title);
     header.appendChild(subtitle);
 
-    var detailsSection = createOutgoingFormSection('Реквизиты приказа', 'Основные поля журнала регистрации приказов по основной деятельности.');
-    var filesSection = createOutgoingFormSection('Файл приказа', 'Добавьте новые файлы или удалите уже прикреплённые.');
-    var orderNumberField = createOutgoingFormField({ name: 'orderNumber', label: '№ приказа *', value: record && record.orderNumber, required: true });
+    var detailsSection = createOutgoingFormSection(journalConfig.sectionTitle, journalConfig.sectionHint);
+    var filesSection = createOutgoingFormSection(journalConfig.fileColumnLabel, 'Добавьте новые файлы или удалите уже прикреплённые.');
+    var orderNumberField = createOutgoingFormField({ name: 'orderNumber', label: journalConfig.numberLabel + ' *', value: record && record.orderNumber, required: true });
     var orderDateField = createOutgoingFormField({ name: 'orderDate', label: 'Дата *', type: 'date', value: record && record.orderDate, required: true });
     var summaryField = createOutgoingFormField({ name: 'summary', label: 'Краткое содержание *', type: 'textarea', value: record && record.summary, wide: true, rows: 5, required: true });
     var executorField = createOutgoingFormField({ name: 'executor', label: 'Исполнитель', value: record && record.executor, placeholder: 'Введите ФИО исполнителя' });
@@ -25589,7 +25668,7 @@
 
     var validateOrderNumberField = function() {
       var duplicate = findOrderNumberDuplicate(knownRecords, orderNumberField.input.value, isEditMode ? record.id : '');
-      var message = duplicate ? 'Этот № приказа уже зарегистрирован.' : '';
+      var message = duplicate ? 'Этот номер уже зарегистрирован.' : '';
       setOutgoingFormFieldError(orderNumberField, message);
       return !duplicate;
     };
@@ -25601,7 +25680,7 @@
       }
     });
 
-    var filesField = createOutgoingFormField({ name: 'attachments[]', label: isEditMode ? 'Добавить файлы' : 'Файлы приказа', type: 'file', wide: true });
+    var filesField = createOutgoingFormField({ name: 'attachments[]', label: isEditMode ? 'Добавить файлы' : journalConfig.fileColumnLabel, type: 'file', wide: true });
     filesField.input.multiple = true;
     filesField.input.accept = '.pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.txt,.rtf,.odt,.ods';
     filesField.input.classList.add('documents-outgoing-file-upload__input');
@@ -25648,7 +25727,7 @@
       }
       existingFilesPanel.textContent = '';
       if (!existingFiles.length) {
-        existingFilesPanel.appendChild(createElement('div', 'documents-outgoing-file-manager__empty', 'Прикреплённых файлов приказа нет.'));
+        existingFilesPanel.appendChild(createElement('div', 'documents-outgoing-file-manager__empty', 'Прикреплённых файлов нет.'));
         return;
       }
       existingFiles.forEach(function(file, index) {
@@ -25677,7 +25756,7 @@
         });
         nameLine.appendChild(nameNode);
         text.appendChild(nameLine);
-        text.appendChild(createElement('div', 'documents-outgoing-file-manager__meta', metaParts.join(' · ') || 'Файл приказа'));
+        text.appendChild(createElement('div', 'documents-outgoing-file-manager__meta', metaParts.join(' · ') || journalConfig.fileColumnLabel));
         info.appendChild(icon);
         info.appendChild(text);
         row.appendChild(info);
@@ -25700,7 +25779,7 @@
     var existingFilesField = null;
     if (isEditMode) {
       existingFilesField = createElement('div', 'documents-form__field documents-outgoing-form__wide documents-outgoing-file-manager');
-      existingFilesField.appendChild(createElement('div', 'documents-outgoing-file-manager__title', 'Текущие файлы приказа'));
+      existingFilesField.appendChild(createElement('div', 'documents-outgoing-file-manager__title', 'Текущие файлы'));
       existingFilesPanel = createElement('div', 'documents-outgoing-file-manager__list');
       existingFilesField.appendChild(existingFilesPanel);
       renderExistingOrderFiles();
@@ -25720,7 +25799,8 @@
       event.preventDefault();
       submitButton.disabled = true;
       var payload = {
-        organization: state.organization
+        organization: state.organization,
+        journal_type: journalConfig.type
       };
       if (isEditMode) {
         payload.id = record.id;
@@ -25781,7 +25861,7 @@
       postOutgoingRegistryAction('orders_save', requestPayload)
         .then(function(data) {
           closeOrdersForm();
-          showMessage('success', data && data.message ? data.message : 'Приказ сохранён.');
+          showMessage('success', data && data.message ? data.message : 'Запись сохранена.');
           if (typeof onSaved === 'function') {
             onSaved(data);
           }
@@ -25789,7 +25869,7 @@
         .catch(function(error) {
           submitButton.disabled = false;
           if (error && error.reason === 'order_number_exists') {
-            setOutgoingFormFieldError(orderNumberField, error.message || 'Этот № приказа уже зарегистрирован.');
+            setOutgoingFormFieldError(orderNumberField, error.message || 'Этот номер уже зарегистрирован.');
             orderNumberField.input.focus();
             return;
           }
@@ -25805,9 +25885,9 @@
           }
           var message = error && error.message ? error.message : 'Сервер не вернул текст ошибки.';
           if (typeof docsLogger.error === 'function') {
-            docsLogger.error('Не удалось сохранить приказ:', error);
+            docsLogger.error('Не удалось сохранить запись журнала:', error);
           }
-          showMessage('error', 'Не удалось сохранить приказ: ' + message);
+          showMessage('error', 'Не удалось сохранить запись журнала: ' + message);
         });
     });
 
@@ -25825,25 +25905,27 @@
     orderNumberField.input.focus();
   }
 
-  function deleteOrderRecord(record, onDeleted) {
+  function deleteOrderRecord(record, onDeleted, journalType) {
+    var journalConfig = getOrderJournalConfig(journalType);
     if (!record || !record.id) {
       return;
     }
-    if (!window.confirm('Удалить приказ из журнала?')) {
+    if (!window.confirm('Удалить запись из журнала?')) {
       return;
     }
     postOutgoingRegistryAction('orders_delete', {
       organization: state.organization,
+      journal_type: journalConfig.type,
       id: record.id
     })
       .then(function(data) {
-        showMessage('success', data && data.message ? data.message : 'Приказ удалён.');
+        showMessage('success', data && data.message ? data.message : 'Запись удалена.');
         if (typeof onDeleted === 'function') {
           onDeleted(data);
         }
       })
       .catch(function(error) {
-        showMessage('error', error && error.message ? error.message : 'Не удалось удалить приказ.');
+        showMessage('error', error && error.message ? error.message : 'Не удалось удалить запись журнала.');
       });
   }
 
@@ -25861,7 +25943,84 @@
     }
   }
 
-  function openOrdersRegistryModal() {
+  function closeJournalsMenu() {
+    var menu = document.querySelector('.documents-journals-menu');
+    if (menu) {
+      menu.classList.remove('documents-journals-menu--visible');
+      menu.setAttribute('hidden', '');
+    }
+    if (elements.ordersButton) {
+      elements.ordersButton.setAttribute('aria-expanded', 'false');
+    }
+    if (journalsMenuOutsideHandler) {
+      document.removeEventListener('pointerdown', journalsMenuOutsideHandler);
+      journalsMenuOutsideHandler = null;
+    }
+  }
+
+  function positionJournalsMenu(button, menu) {
+    if (!button || !menu) {
+      return;
+    }
+    var rect = button.getBoundingClientRect();
+    var width = Math.min(280, Math.max(220, window.innerWidth - 24));
+    var left = Math.min(Math.max(12, rect.left), Math.max(12, window.innerWidth - width - 12));
+    var top = Math.min(rect.bottom + 8, Math.max(12, window.innerHeight - 168));
+    menu.style.width = width + 'px';
+    menu.style.left = left + 'px';
+    menu.style.top = top + 'px';
+  }
+
+  function ensureJournalsMenu(button) {
+    var menu = document.querySelector('.documents-journals-menu');
+    if (!menu) {
+      menu = createElement('div', 'documents-journals-menu');
+      menu.setAttribute('role', 'menu');
+      menu.setAttribute('hidden', '');
+      Object.keys(ORDER_JOURNAL_CONFIGS).forEach(function(key) {
+        var config = getOrderJournalConfig(key);
+        var item = createElement('button', 'documents-journals-menu__item', config.menuLabel);
+        item.type = 'button';
+        item.dataset.journalType = config.type;
+        item.setAttribute('role', 'menuitem');
+        item.addEventListener('click', function(event) {
+          event.preventDefault();
+          closeJournalsMenu();
+          openOrdersRegistryModal(config.type);
+        });
+        menu.appendChild(item);
+      });
+      document.body.appendChild(menu);
+    }
+    positionJournalsMenu(button, menu);
+    return menu;
+  }
+
+  function toggleJournalsMenu(button) {
+    if (!button) {
+      return;
+    }
+    var menu = ensureJournalsMenu(button);
+    var visible = menu.classList.contains('documents-journals-menu--visible');
+    if (visible) {
+      closeJournalsMenu();
+      return;
+    }
+    menu.removeAttribute('hidden');
+    menu.classList.add('documents-journals-menu--visible');
+    button.setAttribute('aria-expanded', 'true');
+    journalsMenuOutsideHandler = function(event) {
+      var target = event.target;
+      if ((menu && menu.contains(target)) || button.contains(target)) {
+        return;
+      }
+      closeJournalsMenu();
+    };
+    document.addEventListener('pointerdown', journalsMenuOutsideHandler);
+  }
+
+  function openOrdersRegistryModal(journalType) {
+    var journalConfig = getOrderJournalConfig(journalType);
     ensureOutgoingRegistryStyle();
     var existingModal = document.querySelector('.documents-orders-modal');
     if (existingModal) {
@@ -25874,17 +26033,17 @@
     var panel = createElement('div', 'documents-outgoing-modal__panel');
     var header = createElement('div', 'documents-outgoing-modal__header');
     var titleWrap = createElement('div', 'documents-outgoing-modal__title-wrap');
-    var title = createElement('h3', 'documents-outgoing-modal__title', 'Журнал регистрации приказов по основной деятельности');
+    var title = createElement('h3', 'documents-outgoing-modal__title', journalConfig.title);
     title.id = 'documents-orders-title';
-    var summary = createElement('p', 'documents-outgoing-modal__summary', 'Загружаем журнал приказов...');
+    var summary = createElement('p', 'documents-outgoing-modal__summary', journalConfig.loadingText);
     var headerActions = createElement('div', 'documents-outgoing-modal__actions');
     var resetFiltersButton = createElement('button', 'documents-outgoing-modal__add', 'Сбросить фильтры');
     resetFiltersButton.type = 'button';
-    var addRecordButton = createElement('button', 'documents-outgoing-modal__add', 'Добавить приказ');
+    var addRecordButton = createElement('button', 'documents-outgoing-modal__add', journalConfig.addLabel);
     addRecordButton.type = 'button';
     var closeButton = createElement('button', 'documents-outgoing-modal__close', '×');
     closeButton.type = 'button';
-    closeButton.setAttribute('aria-label', 'Закрыть журнал приказов');
+    closeButton.setAttribute('aria-label', 'Закрыть журнал');
     titleWrap.appendChild(title);
     titleWrap.appendChild(summary);
     header.appendChild(titleWrap);
@@ -25921,7 +26080,8 @@
         direction: 'desc'
       },
       organization: state.organization || '',
-      columnOrder: loadOrdersColumnOrderFromLocalStorage(),
+      journalType: journalConfig.type,
+      columnOrder: loadOrdersColumnOrderFromLocalStorage(journalConfig.type),
       columnOrderDirty: false
     };
     var columnDragState = null;
@@ -25945,26 +26105,28 @@
       var filteredRecords = filterOrdersRegistryRecords(modalState.records, modalState.filters);
       var sortedRecords = sortOrdersRegistryRecords(filteredRecords, modalState.sort);
       var hasFilters = ordersHasActiveFilters(modalState.filters);
+      var columnMap = getOrderJournalColumnMap(journalConfig);
       summary.textContent = 'Организация: ' + (modalState.organization || state.organization || 'не выбрана')
-        + ' · приказов: ' + modalState.records.length
+        + ' · ' + journalConfig.countLabel + ': ' + modalState.records.length
         + (hasFilters ? ' · показано: ' + sortedRecords.length : '')
-        + ' · сортировка: ' + ((ORDERS_REGISTRY_COLUMN_MAP[modalState.sort.key] || {}).label || 'Дата') + ' '
+        + ' · сортировка: ' + ((columnMap[modalState.sort.key] || {}).label || 'Дата') + ' '
         + (modalState.sort.direction === 'asc' ? '↑' : '↓');
       resetFiltersButton.disabled = !hasFilters;
       renderOrdersRegistryRows(tbody, sortedRecords, {
         canManage: modalState.canManage,
+        journalType: journalConfig.type,
         columnOrder: modalState.columnOrder,
-        emptyMessage: hasFilters ? 'По выбранным фильтрам приказов нет.' : 'Записей приказов пока нет.',
+        emptyMessage: hasFilters ? 'По выбранным фильтрам записей нет.' : 'Записей журнала пока нет.',
         onAttach: function(row) {
           showOrdersNotice('', '');
-          openOrdersAttachFilesModal(row, syncOrdersRows);
+          openOrdersAttachFilesModal(row, syncOrdersRows, journalConfig.type);
         },
         onEdit: function(row) {
           showOrdersNotice('', '');
-          openOrdersRecordForm(row, syncOrdersRows, modalState.records);
+          openOrdersRecordForm(row, syncOrdersRows, modalState.records, journalConfig.type);
         },
         onDelete: function(row) {
-          deleteOrderRecord(row, syncOrdersRows);
+          deleteOrderRecord(row, syncOrdersRows, journalConfig.type);
         }
       });
       renderOrdersHeader();
@@ -25972,7 +26134,7 @@
 
     function renderOrdersHeader() {
       headerRow.textContent = '';
-      getOrderedOrdersColumns(modalState.columnOrder).forEach(function(column) {
+      getOrderedOrdersColumns(modalState.columnOrder, journalConfig).forEach(function(column) {
         var cell = document.createElement('th');
         cell.scope = 'col';
         cell.dataset.columnKey = column.key;
@@ -26087,7 +26249,7 @@
       }
       event.preventDefault();
       var draggedKey = columnDragState.columnKey;
-      var order = normalizeOrdersColumnOrder(modalState.columnOrder);
+      var order = normalizeOrdersColumnOrder(modalState.columnOrder, journalConfig);
       var fromIndex = order.indexOf(draggedKey);
       var dropIndex = getOrdersColumnDropIndex(event.clientX);
       if (fromIndex !== -1) {
@@ -26096,10 +26258,10 @@
           dropIndex -= 1;
         }
         order.splice(Math.max(0, Math.min(dropIndex, order.length)), 0, draggedKey);
-        modalState.columnOrder = normalizeOrdersColumnOrder(order);
+        modalState.columnOrder = normalizeOrdersColumnOrder(order, journalConfig);
         modalState.columnOrderDirty = true;
         refreshOrdersView();
-        saveOrdersColumnOrder(modalState.columnOrder).catch(function(error) {
+        saveOrdersColumnOrder(modalState.columnOrder, journalConfig.type).catch(function(error) {
           showMessage('warning', error && error.message ? error.message : 'Порядок сохранён локально, но не записан в JSON.');
         });
       }
@@ -26120,7 +26282,7 @@
       event.preventDefault();
       event.stopPropagation();
       var columnKey = handle.dataset.columnKey || '';
-      var column = ORDERS_REGISTRY_COLUMN_MAP[columnKey];
+      var column = getOrderJournalColumnMap(journalConfig)[columnKey];
       if (!column) {
         return;
       }
@@ -26160,7 +26322,7 @@
       refreshOrdersView();
     });
     addRecordButton.addEventListener('click', function() {
-      openOrdersRecordForm(null, syncOrdersRows, modalState.records);
+      openOrdersRecordForm(null, syncOrdersRows, modalState.records, journalConfig.type);
     });
     closeButton.addEventListener('click', function() {
       stopOrdersColumnDrag();
@@ -26192,36 +26354,37 @@
     renderOrdersHeader();
     renderOrdersRegistryRows(tbody, [], {
       canManage: false,
+      journalType: journalConfig.type,
       columnOrder: modalState.columnOrder
     });
-    requestOrdersColumnOrder()
+    requestOrdersColumnOrder(journalConfig.type)
       .then(function(order) {
         if (modalState.columnOrderDirty) {
           return;
         }
-        modalState.columnOrder = normalizeOrdersColumnOrder(order);
-        saveOrdersColumnOrderToLocalStorage(modalState.columnOrder);
+        modalState.columnOrder = normalizeOrdersColumnOrder(order, journalConfig);
+        saveOrdersColumnOrderToLocalStorage(modalState.columnOrder, journalConfig.type);
         refreshOrdersView();
       })
       .catch(function(error) {
         if (typeof docsLogger.warn === 'function') {
-          docsLogger.warn('Не удалось загрузить порядок столбцов журнала приказов:', error);
+          docsLogger.warn('Не удалось загрузить порядок столбцов журнала:', error);
         }
       });
-    requestOrdersRegistryRecords()
+    requestOrdersRegistryRecords(journalConfig.type)
       .then(function(data) {
         syncOrdersRows(data);
       })
       .catch(function(error) {
         var message = error && error.message ? error.message : String(error);
-        summary.textContent = 'Не удалось загрузить журнал приказов.';
+        summary.textContent = 'Не удалось загрузить журнал.';
         tbody.textContent = '';
         var row = document.createElement('tr');
         var cell = createElement('td', 'documents-outgoing-table__empty', message);
-        cell.colSpan = getOrderedOrdersColumns(modalState.columnOrder).length;
+        cell.colSpan = getOrderedOrdersColumns(modalState.columnOrder, journalConfig).length;
         row.appendChild(cell);
         tbody.appendChild(row);
-        showMessage('error', 'Не удалось загрузить журнал приказов: ' + message);
+        showMessage('error', 'Не удалось загрузить журнал: ' + message);
       });
   }
 
@@ -29870,10 +30033,10 @@
       outgoingButton.setAttribute('aria-label', 'Открыть исходящую корреспонденцию');
     }
 
-    var ordersButton = document.getElementById('documents-orders-button');
+    var ordersButton = document.getElementById('documents-journals-button') || document.getElementById('documents-orders-button');
     if (!ordersButton && buttonContainer) {
-      ordersButton = createElement('button', 'documents-panel__admin documents-panel__admin--orders', 'Приказы');
-      ordersButton.id = 'documents-orders-button';
+      ordersButton = createElement('button', 'documents-panel__admin documents-panel__admin--orders', 'Журналы');
+      ordersButton.id = 'documents-journals-button';
       ordersButton.type = 'button';
       var ordersAnchor = outgoingButton || adminButton || settingsButton || null;
       if (ordersAnchor && ordersAnchor.parentElement === buttonContainer) {
@@ -29882,15 +30045,21 @@
         buttonContainer.appendChild(ordersButton);
       }
     }
+    if (ordersButton && ordersButton.id !== 'documents-journals-button') {
+      ordersButton.id = 'documents-journals-button';
+    }
     if (ordersButton && !ordersButton.dataset.ordersBound) {
       ordersButton.dataset.ordersBound = 'true';
       ordersButton.addEventListener('click', function() {
-        openOrdersRegistryModal();
+        toggleJournalsMenu(ordersButton);
       });
     }
     if (ordersButton) {
-      ordersButton.title = 'Открыть журнал приказов по основной деятельности';
-      ordersButton.setAttribute('aria-label', 'Открыть журнал приказов по основной деятельности');
+      ordersButton.textContent = 'Журналы';
+      ordersButton.title = 'Открыть журналы';
+      ordersButton.setAttribute('aria-label', 'Открыть меню журналов');
+      ordersButton.setAttribute('aria-haspopup', 'menu');
+      ordersButton.setAttribute('aria-expanded', 'false');
     }
 
     var message = elements.message || createElement('div', 'documents-message');

@@ -698,26 +698,27 @@
       }
 
       .appdosc-assignee-picker__panel {
+        box-sizing: border-box;
         position: absolute;
         left: 0;
         right: 0;
         bottom: 0;
-        height: 85vh;
-        max-height: 85vh;
-        padding: 8px 16px calc(12px + env(safe-area-inset-bottom));
-        border-radius: 20px 20px 0 0;
-        background: rgba(255, 255, 255, 0.96);
+        height: 96vh;
+        max-height: 96vh;
+        padding: 8px 14px calc(10px + env(safe-area-inset-bottom));
+        border-radius: 16px 16px 0 0;
+        background: #ffffff;
+        color: #111827;
         box-shadow: 0 -12px 32px rgba(0, 0, 0, 0.16);
-        backdrop-filter: blur(10px);
-        -webkit-backdrop-filter: blur(10px);
         display: flex;
         flex-direction: column;
+        overflow: hidden;
       }
 
       @supports (height: 1lvh) {
         .appdosc-assignee-picker__panel {
-          height: 85lvh;
-          max-height: 85lvh;
+          height: 96lvh;
+          max-height: 96lvh;
         }
       }
 
@@ -762,6 +763,15 @@
         flex: 0 0 auto;
       }
 
+      .appdosc-card__assign-search-meta {
+        display: block;
+        min-height: 16px;
+        margin-bottom: 5px;
+        color: #64748b;
+        font-size: 12px;
+        line-height: 1.25;
+      }
+
       .appdosc-assignee-picker__search {
         width: 100%;
         height: 44px;
@@ -779,11 +789,473 @@
         box-shadow: 0 0 0 3px rgba(22, 119, 255, 0.12);
       }
 
+      .appdosc-assignee-template {
+        display: grid;
+        gap: 6px;
+        margin-top: 8px;
+        padding: 7px;
+        border: 1px solid rgba(80, 120, 201, 0.18);
+        border-radius: 10px;
+        background: rgba(84, 126, 212, 0.045);
+      }
+
+      .appdosc-assignee-template__head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .appdosc-assignee-template__head-text {
+        min-width: 0;
+        display: grid;
+        gap: 1px;
+      }
+
+      .appdosc-assignee-template__title {
+        color: #0f213f;
+        font-size: 11px;
+        font-weight: 800;
+        line-height: 1.2;
+        text-transform: uppercase;
+      }
+
+      .appdosc-assignee-template__meta {
+        color: #64748b;
+        font-size: 11px;
+        font-weight: 700;
+        line-height: 1.2;
+      }
+
+      .appdosc-assignee-template__manage {
+        flex: 0 0 auto;
+        min-height: 30px;
+        border: 1px solid rgba(37, 99, 235, 0.22);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.78);
+        color: #1d4ed8;
+        padding: 0 9px;
+        font-size: 11px;
+        font-weight: 800;
+        line-height: 1;
+      }
+
+      .appdosc-assignee-template__row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 8px;
+        align-items: center;
+      }
+
+      .appdosc-assignee-template__row[hidden],
+      .appdosc-assignee-template__people-list[hidden] {
+        display: none;
+      }
+
+      .appdosc-assignee-template__input,
+      .appdosc-assignee-template__select {
+        box-sizing: border-box;
+        width: 100%;
+        min-width: 0;
+        height: 38px;
+        border: 1px solid #d9dee8;
+        border-radius: 10px;
+        background: #ffffff;
+        color: #111827;
+        padding: 0 10px;
+        font-size: 13px;
+      }
+
+      .appdosc-assignee-template__select[hidden] {
+        display: none;
+      }
+
+      .appdosc-assignee-template__list {
+        display: flex;
+        gap: 6px;
+        overflow-x: auto;
+        padding-bottom: 1px;
+        scrollbar-width: thin;
+        scrollbar-gutter: stable;
+        -webkit-overflow-scrolling: touch;
+      }
+
+      .appdosc-assignee-template__chip {
+        box-sizing: border-box;
+        flex: 0 0 auto;
+        display: grid;
+        gap: 2px;
+        max-width: min(190px, 62vw);
+        min-height: 34px;
+        padding: 6px 9px;
+        border: 1px solid rgba(80, 120, 201, 0.2);
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.78);
+        color: #1d2d4c;
+        text-align: left;
+      }
+
+      .appdosc-assignee-template__empty-chip {
+        min-height: 34px;
+        border: 1px dashed rgba(80, 120, 201, 0.28);
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.52);
+        color: #64748b;
+        padding: 0 10px;
+        font-size: 11px;
+        font-weight: 800;
+      }
+
+      .appdosc-assignee-template__chip-name {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 12px;
+        font-weight: 800;
+        line-height: 1.15;
+      }
+
+      .appdosc-assignee-template__chip-meta {
+        color: #64748b;
+        font-size: 10px;
+        font-weight: 700;
+        line-height: 1.1;
+        white-space: nowrap;
+      }
+
+      .appdosc-assignee-template__input:focus,
+      .appdosc-assignee-template__select:focus {
+        outline: none;
+        border-color: #1677ff;
+        box-shadow: 0 0 0 3px rgba(22, 119, 255, 0.12);
+      }
+
+      .appdosc-assignee-template__nav {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 6px;
+      }
+
+      .appdosc-assignee-template__button {
+        min-height: 36px;
+        border: 1px solid rgba(37, 99, 235, 0.28);
+        border-radius: 9px;
+        background: rgba(255, 255, 255, 0.88);
+        color: #1d4ed8;
+        padding: 0 8px;
+        font-size: 12px;
+        font-weight: 800;
+        line-height: 1.15;
+      }
+
+      .appdosc-assignee-template__button--wide {
+        width: 100%;
+      }
+
+      .appdosc-assignee-template__button--danger {
+        border-color: rgba(239, 68, 68, 0.28);
+        color: #b91c1c;
+      }
+
+      .appdosc-assignee-template__button:disabled {
+        opacity: 0.46;
+      }
+
+      .appdosc-assignee-template-manager[hidden] {
+        display: none;
+      }
+
+      .appdosc-assignee-template-manager {
+        position: fixed;
+        inset: 0;
+        z-index: 130000;
+        display: grid;
+        align-items: stretch;
+      }
+
+      .appdosc-assignee-template-manager__backdrop {
+        position: absolute;
+        inset: 0;
+        border: 0;
+        background: rgba(15, 23, 42, 0.46);
+      }
+
+      .appdosc-assignee-template-manager__panel {
+        position: relative;
+        box-sizing: border-box;
+        width: 100%;
+        height: 100vh;
+        height: 100dvh;
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+        gap: 10px;
+        padding: 14px 14px calc(14px + env(safe-area-inset-bottom));
+        border-radius: 0;
+        background: #ffffff;
+        color: #111827;
+        box-shadow: 0 -18px 48px rgba(15, 23, 42, 0.24);
+        overflow: hidden;
+      }
+
+      .appdosc-assignee-template-manager__header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .appdosc-assignee-template-manager__title {
+        min-width: 0;
+        color: #0f213f;
+        font-size: 16px;
+        font-weight: 850;
+        line-height: 1.2;
+      }
+
+      .appdosc-assignee-template-manager__close {
+        width: 36px;
+        height: 36px;
+        border: 0;
+        border-radius: 10px;
+        background: rgba(15, 23, 42, 0.06);
+        color: #334155;
+        font-size: 24px;
+        line-height: 1;
+      }
+
+      .appdosc-assignee-template-manager__body {
+        position: relative;
+        min-height: 0;
+        display: grid;
+        overflow: hidden;
+      }
+
+      .appdosc-assignee-template-manager__list[hidden],
+      .appdosc-assignee-template-manager__footer[hidden] {
+        display: none;
+      }
+
+      .appdosc-assignee-template-manager__list {
+        min-height: 0;
+        display: grid;
+        align-content: start;
+        gap: 8px;
+        overflow-y: auto;
+        padding-right: 2px;
+        scrollbar-width: thin;
+        scrollbar-gutter: stable;
+      }
+
+      .appdosc-assignee-template-manager__item {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 10px;
+        align-items: center;
+        padding: 10px;
+        border: 1px solid rgba(80, 120, 201, 0.18);
+        border-radius: 12px;
+        background: rgba(248, 250, 252, 0.92);
+      }
+
+      .appdosc-assignee-template-manager__item-main {
+        min-width: 0;
+        display: grid;
+        gap: 3px;
+      }
+
+      .appdosc-assignee-template-manager__item-name {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: #111827;
+        font-size: 13px;
+        font-weight: 850;
+      }
+
+      .appdosc-assignee-template-manager__item-meta,
+      .appdosc-assignee-template-manager__empty {
+        color: #64748b;
+        font-size: 12px;
+        font-weight: 700;
+        line-height: 1.35;
+      }
+
+      .appdosc-assignee-template-manager__empty {
+        padding: 12px;
+        border: 1px dashed rgba(80, 120, 201, 0.26);
+        border-radius: 12px;
+        background: rgba(248, 250, 252, 0.84);
+      }
+
+      .appdosc-assignee-template-manager__item-actions {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .appdosc-assignee-template-manager__button {
+        min-height: 34px;
+        border: 1px solid rgba(37, 99, 235, 0.24);
+        border-radius: 9px;
+        background: #ffffff;
+        color: #1d4ed8;
+        padding: 0 10px;
+        font-size: 12px;
+        font-weight: 800;
+      }
+
+      .appdosc-assignee-template-manager__button--danger {
+        border-color: rgba(239, 68, 68, 0.28);
+        color: #b91c1c;
+      }
+
+      .appdosc-assignee-template-manager__footer {
+        display: grid;
+        gap: 8px;
+      }
+
+      .appdosc-assignee-template__wizard {
+        min-height: 0;
+        display: grid;
+        grid-template-rows: auto auto auto auto minmax(0, 1fr) auto auto;
+        gap: 8px;
+      }
+
+      .appdosc-assignee-template-manager[data-mode='wizard'] .appdosc-assignee-template-manager__panel {
+        grid-template-rows: auto minmax(0, 1fr);
+      }
+
+      .appdosc-assignee-template-manager[data-mode='wizard'] .appdosc-assignee-template-manager__body {
+        border: 1px solid rgba(80, 120, 201, 0.18);
+        border-radius: 16px;
+        background: linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(239, 246, 255, 0.92));
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+      }
+
+      .appdosc-assignee-template-manager[data-mode='wizard'] .appdosc-assignee-template__wizard {
+        padding: 12px;
+      }
+
+      .appdosc-assignee-template__wizard[hidden] {
+        display: none;
+      }
+
+      .appdosc-assignee-template__steps {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 4px;
+      }
+
+      .appdosc-assignee-template__step {
+        min-width: 0;
+        padding: 5px 6px;
+        border-radius: 9px;
+        background: rgba(255, 255, 255, 0.58);
+        color: #64748b;
+        font-size: 10px;
+        font-weight: 800;
+        line-height: 1.15;
+        text-align: center;
+      }
+
+      .appdosc-assignee-template__step.is-active {
+        background: rgba(37, 99, 235, 0.14);
+        color: #1d4ed8;
+      }
+
+      .appdosc-assignee-template__wizard-title {
+        color: #0f213f;
+        font-size: 12px;
+        font-weight: 800;
+        line-height: 1.25;
+      }
+
+      .appdosc-assignee-template__wizard-hint,
+      .appdosc-assignee-template__summary,
+      .appdosc-assignee-template__empty {
+        color: #64748b;
+        font-size: 11px;
+        font-weight: 700;
+        line-height: 1.3;
+      }
+
+      .appdosc-assignee-template__people-list {
+        display: grid;
+        align-content: start;
+        gap: 6px;
+        min-height: 0;
+        overflow-y: auto;
+        padding-right: 2px;
+        scrollbar-width: thin;
+        scrollbar-gutter: stable;
+        -webkit-overflow-scrolling: touch;
+      }
+
+      .appdosc-assignee-template__person {
+        margin-bottom: 0;
+      }
+
+      .appdosc-assignee-template__person.is-selected,
+      .appdosc-assignee-template__person[aria-pressed='true'] {
+        border-color: rgba(37, 99, 235, 0.38);
+        background: rgba(37, 99, 235, 0.1);
+        box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.12);
+      }
+
+      .appdosc-assignee-template__person-badge {
+        font-weight: 800;
+      }
+
+      @media (max-width: 380px) {
+        .appdosc-assignee-template__steps {
+          grid-template-columns: 1fr;
+        }
+
+        .appdosc-assignee-template__nav {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+
+        .appdosc-assignee-template__button {
+          padding: 0 6px;
+          font-size: 11px;
+        }
+      }
+
+      @media (min-width: 620px) {
+        .appdosc-assignee-template-manager {
+          align-items: center;
+          justify-items: center;
+          padding: 20px;
+        }
+
+        .appdosc-assignee-template-manager__panel {
+          width: min(620px, calc(100vw - 40px));
+          height: min(720px, calc(100vh - 40px));
+          height: min(720px, calc(100dvh - 40px));
+          border-radius: 18px;
+        }
+      }
+
+      @media (max-width: 430px) {
+        .appdosc-assignee-template-manager__item {
+          grid-template-columns: 1fr;
+        }
+
+        .appdosc-assignee-template-manager__item-actions {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+      }
+
       .appdosc-assignee-picker__list {
         margin-top: 8px;
         min-height: 160px;
         flex: 1 1 auto;
         overflow-y: auto;
+        overscroll-behavior: contain;
+        scrollbar-gutter: stable;
         -webkit-overflow-scrolling: touch;
       }
 
@@ -2911,6 +3383,196 @@
         min-width: 0 !important;
         white-space: normal !important;
         overflow-wrap: anywhere !important;
+      }
+
+      @media (min-width: 760px) {
+        .appdosc-assignee-picker__panel {
+          left: 50%;
+          right: auto;
+          width: min(560px, calc(100vw - 32px));
+          transform: translateX(-50%);
+        }
+      }
+
+      @media (max-width: 430px) {
+        .appdosc-assignee-picker__panel {
+          height: 96dvh;
+          max-height: 96dvh;
+          padding-left: 12px;
+          padding-right: 12px;
+        }
+
+        .appdosc-assignee-picker__search-wrap {
+          margin-top: 8px;
+        }
+
+        .appdosc-assignee-picker__list {
+          min-height: 180px;
+        }
+      }
+
+      :root[data-theme='dark'] .appdosc-assignee-picker__backdrop {
+        background: rgba(2, 6, 23, .64);
+      }
+
+      :root[data-theme='dark'] .appdosc-assignee-picker__panel {
+        background: #0f172a;
+        color: #f8fafc;
+        box-shadow: 0 -18px 42px rgba(0, 0, 0, .44);
+      }
+
+      :root[data-theme='dark'] .appdosc-assignee-picker__handle {
+        background: rgba(148, 163, 184, .55);
+      }
+
+      :root[data-theme='dark'] .appdosc-assignee-picker__title {
+        color: #f8fafc;
+      }
+
+      :root[data-theme='dark'] .appdosc-assignee-picker__close,
+      :root[data-theme='dark'] .appdosc-card__assign-search-meta {
+        color: #94a3b8;
+      }
+
+      :root[data-theme='dark'] .appdosc-assignee-picker__search {
+        background: rgba(15, 23, 42, .84);
+        border-color: rgba(100, 116, 139, .6);
+        color: #f8fafc;
+      }
+
+      :root[data-theme='dark'] .appdosc-assignee-template {
+        background: rgba(30, 41, 59, .58);
+        border-color: rgba(100, 116, 139, .46);
+      }
+
+      :root[data-theme='dark'] .appdosc-assignee-template__title {
+        color: #f8fafc;
+      }
+
+      :root[data-theme='dark'] .appdosc-assignee-template__meta {
+        color: #cbd5e1;
+      }
+
+      :root[data-theme='dark'] .appdosc-assignee-template__manage,
+      :root[data-theme='dark'] .appdosc-assignee-template__empty-chip {
+        background: rgba(15, 23, 42, .74);
+        border-color: rgba(148, 163, 184, .34);
+        color: #dbeafe;
+      }
+
+      :root[data-theme='dark'] .appdosc-assignee-template__wizard-title {
+        color: #f8fafc;
+      }
+
+      :root[data-theme='dark'] .appdosc-assignee-template__wizard-hint,
+      :root[data-theme='dark'] .appdosc-assignee-template__summary,
+      :root[data-theme='dark'] .appdosc-assignee-template__empty {
+        color: #cbd5e1;
+      }
+
+      :root[data-theme='dark'] .appdosc-assignee-template__step {
+        background: rgba(15, 23, 42, .5);
+        color: #cbd5e1;
+      }
+
+      :root[data-theme='dark'] .appdosc-assignee-template__step.is-active {
+        background: rgba(96, 165, 250, .18);
+        color: #bfdbfe;
+      }
+
+      :root[data-theme='dark'] .appdosc-assignee-template__person.is-selected,
+      :root[data-theme='dark'] .appdosc-assignee-template__person[aria-pressed='true'] {
+        background: rgba(96, 165, 250, .16);
+        border-color: rgba(147, 197, 253, .42);
+        box-shadow: inset 0 0 0 1px rgba(147, 197, 253, .16);
+      }
+
+      :root[data-theme='dark'] .appdosc-assignee-template__input,
+      :root[data-theme='dark'] .appdosc-assignee-template__select,
+      :root[data-theme='dark'] .appdosc-assignee-template__button {
+        background: rgba(15, 23, 42, .74);
+        border-color: rgba(148, 163, 184, .42);
+        color: #dbeafe;
+      }
+
+      :root[data-theme='dark'] .appdosc-assignee-template__chip {
+        background: rgba(15, 23, 42, .62);
+        border-color: rgba(148, 163, 184, .28);
+        color: #e2e8f0;
+      }
+
+      :root[data-theme='dark'] .appdosc-assignee-template__chip-meta {
+        color: #cbd5e1;
+      }
+
+      :root[data-theme='dark'] .appdosc-assignee-template__button--danger {
+        color: #fecaca;
+      }
+
+      :root[data-theme='dark'] .appdosc-assignee-template-manager__backdrop {
+        background: rgba(2, 6, 23, .72);
+      }
+
+      :root[data-theme='dark'] .appdosc-assignee-template-manager__panel {
+        background: #0f172a;
+        color: #f8fafc;
+        box-shadow: 0 -18px 52px rgba(0, 0, 0, .52);
+      }
+
+      :root[data-theme='dark'] .appdosc-assignee-template-manager[data-mode='wizard'] .appdosc-assignee-template-manager__body {
+        background: linear-gradient(180deg, rgba(15, 23, 42, .74), rgba(15, 23, 42, .56));
+        border-color: rgba(148, 163, 184, .28);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08);
+      }
+
+      :root[data-theme='dark'] .appdosc-assignee-template-manager__title,
+      :root[data-theme='dark'] .appdosc-assignee-template-manager__item-name {
+        color: #f8fafc;
+      }
+
+      :root[data-theme='dark'] .appdosc-assignee-template-manager__close {
+        background: rgba(148, 163, 184, .12);
+        color: #e2e8f0;
+      }
+
+      :root[data-theme='dark'] .appdosc-assignee-template-manager__item,
+      :root[data-theme='dark'] .appdosc-assignee-template-manager__empty {
+        background: rgba(15, 23, 42, .58);
+        border-color: rgba(148, 163, 184, .26);
+      }
+
+      :root[data-theme='dark'] .appdosc-assignee-template-manager__item-meta,
+      :root[data-theme='dark'] .appdosc-assignee-template-manager__empty {
+        color: #cbd5e1;
+      }
+
+      :root[data-theme='dark'] .appdosc-assignee-template-manager__button {
+        background: rgba(15, 23, 42, .74);
+        border-color: rgba(148, 163, 184, .42);
+        color: #dbeafe;
+      }
+
+      :root[data-theme='dark'] .appdosc-assignee-template-manager__button--danger {
+        color: #fecaca;
+      }
+
+      :root[data-theme='dark'] .appdosc-assignee-picker__search::placeholder {
+        color: #94a3b8;
+      }
+
+      :root[data-theme='dark'] .appdosc-assignee-picker__option {
+        background: rgba(30, 41, 59, .76);
+        border-color: rgba(100, 116, 139, .46);
+        color: #e2e8f0;
+      }
+
+      :root[data-theme='dark'] .appdosc-assignee-picker__option-name {
+        color: #f8fafc;
+      }
+
+      :root[data-theme='dark'] .appdosc-assignee-picker__option-role,
+      :root[data-theme='dark'] .appdosc-assignee-picker__option-badge {
+        color: #cbd5e1;
       }
 
       .appdosc-card__status-label {

@@ -10,6 +10,7 @@ preloadPdfjs();
 
 const API_URL = '/docs.php?action=mini_app_tasks';
 const THEME_SETTINGS_SAVE_ENDPOINT = '/docs.php?action=mini_app_save_theme';
+const ASSIGNMENT_TEMPLATES_ENDPOINT = '/docs.php?action=mini_app_assignment_templates';
 const TASK_SNAPSHOT_API_URL = '/docs.php?action=mini_app_task_snapshot';
 const CLIENT_LOG_ENDPOINT = '/docs.php?action=mini_app_log';
 const ENTRY_LOG_ENDPOINT = '/docs.php?action=mini_app_entry_log';
@@ -886,8 +887,8 @@ const TELEGRAM_MISSING_MESSAGE = 'У пользователя нет ID Telegram
 const RESPONSIBLE_PANEL_TITLE = 'Назначенные задачи по ответственным';
 const SUBORDINATE_PANEL_TITLE = 'Назначенные задачи на подчинённых';
 const WORK_INSTRUCTION_LABEL = 'Подготовить ответ';
-const WORK_INSTRUCTION_KEYS = new Set(['в работу', 'подготовить ответ']);
-const INSTRUCTION_OPTIONS = [WORK_INSTRUCTION_LABEL, 'Для информации', 'Для участия', 'Пояснить', 'Предоставить объяснение', 'Предоставить информацию'];
+const WORK_INSTRUCTION_KEYS = new Set(['подготовить ответ']);
+const INSTRUCTION_OPTIONS = ['В работу', WORK_INSTRUCTION_LABEL, 'Для информации', 'Для участия', 'Пояснить', 'Предоставить объяснение', 'Предоставить информацию'];
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'heic', 'heif', 'avif', 'tif', 'tiff', 'ico', 'jfif', 'jxl']);
 const VIDEO_EXTENSIONS = new Set(['mp4', 'mov', 'webm', 'mkv', 'avi', 'm4v', '3gp', 'ogv', 'mpeg', 'mpg']);
 const OFFICE_EXTENSIONS = new Set(['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods']);
@@ -4576,7 +4577,6 @@ function updateStateFromPayload(payload) {
     : state.organizationsChecked;
   state.lastUpdated = payload.generatedAt || new Date().toISOString();
   state.userDirectoryEntries = collectUserDirectoryEntries(payload);
-
   if (payload.telegramUserId && !state.telegram.id) {
     state.telegram.id = String(payload.telegramUserId);
   }
@@ -16566,7 +16566,7 @@ function normalizeAssignmentInstruction(value) {
 
   const normalized = normalizeAssignmentInstructionKey(trimmed);
   if (normalized === 'в работу') {
-    return WORK_INSTRUCTION_LABEL;
+    return 'В работу';
   }
 
   return trimmed.slice(0, 600);
@@ -23819,6 +23819,965 @@ function setAssignmentRowBusy(row, loading, assignButton, removeButton, commentI
   }
 }
 
+const ASSIGNMENT_TEMPLATE_CACHE_PREFIX = 'appdosc.assignmentTemplates.v1';
+const ASSIGNMENT_TEMPLATE_LIMIT = 24;
+const ASSIGNMENT_TEMPLATE_ENTRY_LIMIT = 80;
+const ASSIGNMENT_TEMPLATE_FULL_ROLE = 'full';
+const assignmentTemplateCardControllers = new WeakMap();
+const assignmentTemplateCache = new Map();
+
+function getAssignmentTemplateCacheKey(organization, role) {
+  const roleKey = role === 'responsible' || role === 'subordinate'
+    ? role
+    : ASSIGNMENT_TEMPLATE_FULL_ROLE;
+  const organizationKey = normalizeIdentifier(organization)
+    || normalizeValue(organization).toLowerCase().replace(/\s+/g, '_')
+    || 'default';
+  return `${ASSIGNMENT_TEMPLATE_CACHE_PREFIX}:${roleKey}:${organizationKey}`;
+}
+
+function normalizeAssignmentTemplateName(value) {
+  return normalizeValue(value).slice(0, 80);
+}
+
+function normalizeAssignmentTemplateEntry(entry) {
+  if (!entry || typeof entry !== 'object') {
+    return null;
+  }
+
+  const id = normalizeValue(entry.id || entry.value || entry.assigneeId || entry.subordinateId);
+  if (!id) {
+    return null;
+  }
+
+  const result = {
+    id,
+    label: normalizeValue(entry.label || entry.name || entry.responsible || ''),
+  };
+  const comment = normalizeAssignmentComment(entry.assignmentComment || entry.comment);
+  const dueDate = normalizeAssignmentDueDate(entry.assignmentDueDate || entry.dueDate);
+  const instruction = normalizeAssignmentInstruction(entry.assignmentInstruction || entry.instruction);
+
+  if (comment) {
+    result.assignmentComment = comment;
+  }
+  if (dueDate) {
+    result.assignmentDueDate = dueDate;
+  }
+  if (instruction) {
+    result.assignmentInstruction = instruction;
+  }
+
+  return result;
+}
+
+function normalizeAssignmentTemplate(rawTemplate, fallbackRole = '') {
+  if (!rawTemplate || typeof rawTemplate !== 'object') {
+    return null;
+  }
+
+  const name = normalizeAssignmentTemplateName(rawTemplate.name);
+  if (!name) {
+    return null;
+  }
+
+  const legacyEntries = Array.isArray(rawTemplate.entries)
+    ? rawTemplate.entries
+      .map(normalizeAssignmentTemplateEntry)
+      .filter(Boolean)
+      .slice(0, ASSIGNMENT_TEMPLATE_ENTRY_LIMIT)
+    : [];
+  let responsibles = Array.isArray(rawTemplate.responsibles)
+    ? rawTemplate.responsibles
+      .map(normalizeAssignmentTemplateEntry)
+      .filter(Boolean)
+      .slice(0, ASSIGNMENT_TEMPLATE_ENTRY_LIMIT)
+    : [];
+  let subordinates = Array.isArray(rawTemplate.subordinates)
+    ? rawTemplate.subordinates
+      .map(normalizeAssignmentTemplateEntry)
+      .filter(Boolean)
+      .slice(0, ASSIGNMENT_TEMPLATE_ENTRY_LIMIT)
+    : [];
+
+  if (!responsibles.length && !subordinates.length && legacyEntries.length) {
+    if (fallbackRole === 'subordinate') {
+      subordinates = legacyEntries;
+    } else {
+      responsibles = legacyEntries;
+    }
+  }
+
+  if (!responsibles.length && !subordinates.length) {
+    return null;
+  }
+
+  return {
+    name,
+    responsibles,
+    subordinates,
+    entries: responsibles.length ? responsibles : subordinates,
+    updatedAt: normalizeValue(rawTemplate.updatedAt) || new Date().toISOString(),
+  };
+}
+
+function readAssignmentTemplates(organization, role) {
+  const key = getAssignmentTemplateCacheKey(organization, role);
+  const cached = assignmentTemplateCache.get(key);
+  return Array.isArray(cached) ? cached.map((item) => ({ ...item })).slice(0, ASSIGNMENT_TEMPLATE_LIMIT) : [];
+}
+
+function writeAssignmentTemplates(organization, role, templates) {
+  const normalizedTemplates = Array.isArray(templates)
+    ? templates
+      .map((item) => normalizeAssignmentTemplate(item))
+      .filter(Boolean)
+      .slice(0, ASSIGNMENT_TEMPLATE_LIMIT)
+    : [];
+
+  assignmentTemplateCache.set(getAssignmentTemplateCacheKey(organization, ASSIGNMENT_TEMPLATE_FULL_ROLE), normalizedTemplates);
+  assignmentTemplateCache.set(getAssignmentTemplateCacheKey(organization, 'responsible'), normalizedTemplates);
+  assignmentTemplateCache.set(getAssignmentTemplateCacheKey(organization, 'subordinate'), normalizedTemplates);
+  return true;
+}
+
+async function requestAssignmentTemplatesFromServer(organization, role, templates = null) {
+  if (typeof fetch !== 'function') {
+    throw new Error('fetch_unavailable');
+  }
+
+  const headers = {
+    'Content-Type': 'application/json',
+  };
+  if (state && state.telegram && state.telegram.initData) {
+    headers['X-Telegram-Init-Data'] = state.telegram.initData;
+  }
+
+  const payload = {
+    ...buildRequestBody(),
+    organization,
+    role: role === 'responsible' || role === 'subordinate' ? role : ASSIGNMENT_TEMPLATE_FULL_ROLE,
+  };
+  if (Array.isArray(templates)) {
+    payload.operation = 'save';
+    payload.templates = templates
+      .map((item) => normalizeAssignmentTemplate(item))
+      .filter(Boolean)
+      .slice(0, ASSIGNMENT_TEMPLATE_LIMIT);
+  } else {
+    payload.operation = 'load';
+  }
+
+  const response = await fetch(ASSIGNMENT_TEMPLATES_ENDPOINT, {
+    method: 'POST',
+    headers,
+    credentials: 'include',
+    cache: 'no-store',
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data || !data.success) {
+    throw new Error(data && data.error ? data.error : `assignment_templates_${response.status}`);
+  }
+  const normalizedTemplates = Array.isArray(data.templates)
+    ? data.templates
+      .map((item) => normalizeAssignmentTemplate(item))
+      .filter(Boolean)
+      .slice(0, ASSIGNMENT_TEMPLATE_LIMIT)
+    : [];
+  writeAssignmentTemplates(organization, role, normalizedTemplates);
+  return normalizedTemplates;
+}
+
+function getAssignmentTemplateCardController(card) {
+  if (!card) {
+    return null;
+  }
+  let controller = assignmentTemplateCardControllers.get(card);
+  if (!controller) {
+    controller = {
+      roles: {},
+      apply(template) {
+        const result = { added: 0, skipped: 0, missing: 0 };
+        ['responsible', 'subordinate'].forEach((roleName) => {
+          const roleController = this.roles[roleName];
+          if (!roleController || typeof roleController.applyTemplate !== 'function') {
+            return;
+          }
+          const roleResult = roleController.applyTemplate(template) || {};
+          result.added += Number(roleResult.added || 0);
+          result.skipped += Number(roleResult.skipped || 0);
+          result.missing += Number(roleResult.missing || 0);
+        });
+        return result;
+      },
+    };
+    assignmentTemplateCardControllers.set(card, controller);
+  }
+  return controller;
+}
+
+function buildAssignmentTemplateOptionEntries(candidates, role) {
+  const seen = new Set();
+  return (Array.isArray(candidates) ? candidates : [])
+    .map((entry) => {
+      const value = resolveResponsibleOptionValue(entry);
+      const label = role === 'subordinate'
+        ? buildSubordinateOptionLabel(entry)
+        : buildResponsibleOptionLabel(entry);
+      const key = buildAssignmentDirectoryKey(value) || normalizeIdentifier(value) || value.toLowerCase();
+      if (!value || !key || seen.has(key)) {
+        return null;
+      }
+      seen.add(key);
+      return {
+        id: value,
+        label,
+        name: normalizeValue(entry && entry.responsible) || label,
+        subtitle: buildAssigneeOptionSubtitle(entry),
+        entry,
+        selectable: Boolean(resolveEntryTelegramId(entry)),
+      };
+    })
+    .filter(Boolean);
+}
+
+function setupAssignmentTemplateControls({
+  card,
+  sheet,
+  optionsList,
+  organization,
+  role,
+  responsibleCandidates = [],
+  subordinateCandidates = [],
+  applyTemplate,
+  setStatus,
+}) {
+  if (!sheet || !optionsList || typeof applyTemplate !== 'function') {
+    return null;
+  }
+
+  const panel = optionsList.parentElement;
+  if (!panel || panel.querySelector('[data-assignment-template]')) {
+    return null;
+  }
+
+  let templates = readAssignmentTemplates(organization, role);
+  const controller = getAssignmentTemplateCardController(card);
+  if (controller && (role === 'responsible' || role === 'subordinate')) {
+    controller.roles[role] = { applyTemplate };
+  }
+  const wizardOptions = {
+    responsible: buildAssignmentTemplateOptionEntries(responsibleCandidates, 'responsible'),
+    subordinate: buildAssignmentTemplateOptionEntries(subordinateCandidates, 'subordinate'),
+  };
+  const wizardSelections = {
+    responsible: new Set(),
+    subordinate: new Set(),
+  };
+  let wizardStep = 1;
+  let editingTemplateIndex = -1;
+  let templatesSaving = false;
+  let templatesLoadedFromServer = false;
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'appdosc-assignee-template';
+  wrapper.dataset.assignmentTemplate = 'true';
+
+  const head = document.createElement('div');
+  head.className = 'appdosc-assignee-template__head';
+
+  const title = document.createElement('div');
+  title.className = 'appdosc-assignee-template__title';
+  title.textContent = 'Шаблон назначения';
+
+  const meta = document.createElement('div');
+  meta.className = 'appdosc-assignee-template__meta';
+
+  const manageButton = document.createElement('button');
+  manageButton.type = 'button';
+  manageButton.className = 'appdosc-assignee-template__manage';
+  manageButton.textContent = 'Управление';
+  manageButton.setAttribute('aria-label', 'Открыть управление шаблонами назначения');
+
+  const headText = document.createElement('div');
+  headText.className = 'appdosc-assignee-template__head-text';
+  headText.append(title, meta);
+  head.append(headText, manageButton);
+
+  const nameRow = document.createElement('div');
+  nameRow.className = 'appdosc-assignee-template__row';
+
+  const nameInput = document.createElement('input');
+  nameInput.type = 'text';
+  nameInput.className = 'appdosc-assignee-template__input';
+  nameInput.placeholder = 'Название шаблона';
+  nameInput.maxLength = 80;
+
+  nameRow.append(nameInput);
+  nameRow.hidden = true;
+
+  const select = document.createElement('select');
+  select.className = 'appdosc-assignee-template__select';
+  select.setAttribute('aria-label', 'Выберите шаблон назначения');
+  select.hidden = true;
+
+  const templateList = document.createElement('div');
+  templateList.className = 'appdosc-assignee-template__list';
+  templateList.setAttribute('aria-label', 'Сохранённые шаблоны назначения');
+
+  const createButton = document.createElement('button');
+  createButton.type = 'button';
+  createButton.className = 'appdosc-assignee-template__button appdosc-assignee-template__button--wide';
+  createButton.textContent = 'Новый шаблон';
+
+  const manager = document.createElement('div');
+  manager.className = 'appdosc-assignee-template-manager';
+  manager.hidden = true;
+  manager.setAttribute('role', 'dialog');
+  manager.setAttribute('aria-modal', 'true');
+  manager.setAttribute('aria-label', 'Управление шаблонами назначения');
+
+  const managerBackdrop = document.createElement('button');
+  managerBackdrop.type = 'button';
+  managerBackdrop.className = 'appdosc-assignee-template-manager__backdrop';
+  managerBackdrop.setAttribute('aria-label', 'Закрыть управление шаблонами');
+
+  const managerPanel = document.createElement('div');
+  managerPanel.className = 'appdosc-assignee-template-manager__panel';
+
+  const managerHeader = document.createElement('div');
+  managerHeader.className = 'appdosc-assignee-template-manager__header';
+
+  const managerTitle = document.createElement('div');
+  managerTitle.className = 'appdosc-assignee-template-manager__title';
+  managerTitle.textContent = 'Шаблоны назначения';
+
+  const managerClose = document.createElement('button');
+  managerClose.type = 'button';
+  managerClose.className = 'appdosc-assignee-template-manager__close';
+  managerClose.textContent = '×';
+  managerClose.setAttribute('aria-label', 'Закрыть управление шаблонами');
+
+  managerHeader.append(managerTitle, managerClose);
+
+  const managerBody = document.createElement('div');
+  managerBody.className = 'appdosc-assignee-template-manager__body';
+
+  const managerList = document.createElement('div');
+  managerList.className = 'appdosc-assignee-template-manager__list';
+
+  const managerFooter = document.createElement('div');
+  managerFooter.className = 'appdosc-assignee-template-manager__footer';
+
+  const wizard = document.createElement('div');
+  wizard.className = 'appdosc-assignee-template__wizard';
+  wizard.hidden = true;
+
+  const wizardSteps = document.createElement('div');
+  wizardSteps.className = 'appdosc-assignee-template__steps';
+  const stepLabels = ['1. Ответственные', '2. Подчинённые', '3. Название'];
+  stepLabels.forEach((label, index) => {
+    const step = document.createElement('span');
+    step.className = 'appdosc-assignee-template__step';
+    step.dataset.step = String(index + 1);
+    step.textContent = label;
+    wizardSteps.appendChild(step);
+  });
+
+  const wizardTitle = document.createElement('div');
+  wizardTitle.className = 'appdosc-assignee-template__wizard-title';
+
+  const wizardHint = document.createElement('div');
+  wizardHint.className = 'appdosc-assignee-template__wizard-hint';
+
+  const wizardSearch = document.createElement('input');
+  wizardSearch.type = 'search';
+  wizardSearch.className = 'appdosc-assignee-template__input';
+
+  const wizardList = document.createElement('div');
+  wizardList.className = 'appdosc-assignee-template__people-list';
+
+  const wizardSummary = document.createElement('div');
+  wizardSummary.className = 'appdosc-assignee-template__summary';
+
+  const wizardNav = document.createElement('div');
+  wizardNav.className = 'appdosc-assignee-template__nav';
+
+  const prevButton = document.createElement('button');
+  prevButton.type = 'button';
+  prevButton.className = 'appdosc-assignee-template__button';
+  prevButton.textContent = 'Назад';
+
+  const nextButton = document.createElement('button');
+  nextButton.type = 'button';
+  nextButton.className = 'appdosc-assignee-template__button';
+  nextButton.textContent = 'Далее';
+
+  const cancelButton = document.createElement('button');
+  cancelButton.type = 'button';
+  cancelButton.className = 'appdosc-assignee-template__button appdosc-assignee-template__button--danger';
+  cancelButton.textContent = 'Закрыть';
+
+  wizardNav.append(prevButton, nextButton, cancelButton);
+  wizard.append(wizardSteps, wizardTitle, wizardHint, wizardSearch, wizardList, nameRow, wizardSummary, wizardNav);
+  managerBody.append(managerList, wizard);
+  managerFooter.append(createButton);
+  managerPanel.append(managerHeader, managerBody, managerFooter);
+  manager.append(managerBackdrop, managerPanel);
+  wrapper.append(head, templateList, select);
+  panel.insertBefore(wrapper, optionsList);
+  sheet.appendChild(manager);
+
+  const selectedCount = (roleName) => wizardSelections[roleName].size;
+
+  const buildTemplateEntriesFromSelection = (roleName) => {
+    const selected = wizardSelections[roleName];
+    return wizardOptions[roleName]
+      .filter((option) => selected.has(option.id))
+      .map((option) => ({
+        id: option.id,
+        label: option.label,
+      }))
+      .slice(0, ASSIGNMENT_TEMPLATE_ENTRY_LIMIT);
+  };
+
+  const updateWizardSummary = () => {
+    wizardSummary.textContent = `Ответственные: ${selectedCount('responsible')} · Подчинённые: ${selectedCount('subordinate')}`;
+  };
+
+  const createWizardOptionAvatar = (entry, label) => {
+    const avatar = document.createElement('div');
+    avatar.className = 'appdosc-avatar appdosc-assignee-picker__option-avatar';
+    avatar.setAttribute('aria-hidden', 'true');
+
+    const image = document.createElement('img');
+    image.className = 'appdosc-avatar__img';
+    image.alt = label ? `Аватар: ${label}` : 'Аватар пользователя';
+    image.hidden = true;
+
+    const placeholder = document.createElement('span');
+    placeholder.className = 'appdosc-avatar__placeholder';
+    placeholder.setAttribute('aria-hidden', 'true');
+
+    const avatarUrl = resolveAvatarUrlFromEntry(entry)
+      || (resolveTelegramUserIdFromEntry(entry)
+        ? `${TELEGRAM_AVATAR_ENDPOINT}&user_id=${encodeURIComponent(resolveTelegramUserIdFromEntry(entry))}`
+        : '');
+    if (avatarUrl) {
+      image.src = avatarUrl;
+      image.hidden = false;
+      placeholder.hidden = true;
+      image.onerror = () => {
+        image.hidden = true;
+        image.removeAttribute('src');
+        placeholder.hidden = false;
+      };
+    }
+
+    avatar.append(image, placeholder);
+    return avatar;
+  };
+
+  const toggleWizardOption = (roleName, option) => {
+    if (!option || !option.selectable) {
+      return;
+    }
+    if (wizardSelections[roleName].has(option.id)) {
+      wizardSelections[roleName].delete(option.id);
+    } else {
+      wizardSelections[roleName].add(option.id);
+    }
+    renderWizardList();
+    updateWizardSummary();
+  };
+
+  const renderWizardList = () => {
+    const roleName = wizardStep === 1 ? 'responsible' : 'subordinate';
+    const query = normalizeValue(wizardSearch.value).toLowerCase();
+    const options = wizardOptions[roleName].filter((option) => {
+      if (!query) {
+        return true;
+      }
+      return option.label.toLowerCase().includes(query) || option.id.toLowerCase().includes(query);
+    });
+    wizardList.innerHTML = '';
+
+    if (!options.length) {
+      const empty = document.createElement('div');
+      empty.className = 'appdosc-assignee-template__empty';
+      empty.textContent = query ? 'Совпадений не найдено.' : 'Список пуст.';
+      wizardList.appendChild(empty);
+      return;
+    }
+
+    options.forEach((option) => {
+      const isSelected = wizardSelections[roleName].has(option.id);
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'appdosc-card__assign-option appdosc-assignee-picker__option appdosc-assignee-template__person';
+      item.dataset.templatePersonId = option.id;
+      item.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+      item.disabled = !option.selectable;
+
+      const avatar = createWizardOptionAvatar(option.entry, option.label);
+
+      const main = document.createElement('span');
+      main.className = 'appdosc-assignee-picker__option-main';
+
+      const text = document.createElement('span');
+      text.className = 'appdosc-assignee-picker__option-name';
+      text.textContent = option.name || option.label;
+
+      const roleNode = document.createElement('span');
+      roleNode.className = 'appdosc-assignee-picker__option-role';
+      const roleIcon = document.createElement('i');
+      roleIcon.className = 'fab fa-telegram-plane appdosc-assignee-picker__option-role-icon';
+      roleIcon.setAttribute('aria-hidden', 'true');
+      roleNode.append(roleIcon);
+      roleNode.append(document.createTextNode(option.subtitle || 'Должность не указана'));
+
+      main.append(text, roleNode);
+      item.append(avatar, main);
+
+      const badge = document.createElement('span');
+      badge.className = 'appdosc-assignee-picker__option-badge appdosc-assignee-template__person-badge';
+      badge.textContent = option.selectable ? (isSelected ? 'Выбран' : 'Выбрать') : 'Нет Telegram ID';
+      item.append(badge);
+
+      if (isSelected) {
+        item.classList.add('is-selected');
+      }
+      if (option.selectable) {
+        item.addEventListener('click', () => {
+          toggleWizardOption(roleName, option);
+        });
+      }
+      wizardList.appendChild(item);
+    });
+  };
+
+  const renderWizard = () => {
+    const isNameStep = wizardStep === 3;
+    wizard.dataset.wizardStep = String(wizardStep);
+    wizardSteps.querySelectorAll('[data-step]').forEach((step) => {
+      step.classList.toggle('is-active', Number(step.dataset.step) === wizardStep);
+    });
+    if (wizardStep === 1) {
+      managerTitle.textContent = 'Шаг 1 из 3';
+      wizardTitle.textContent = 'Шаг 1: выберите ответственных';
+      wizardHint.textContent = 'Отметьте всех ответственных, которые должны попадать в шаблон.';
+      wizardSearch.placeholder = 'Поиск ответственного';
+    } else if (wizardStep === 2) {
+      managerTitle.textContent = 'Шаг 2 из 3';
+      wizardTitle.textContent = 'Шаг 2: выберите подчинённых';
+      wizardHint.textContent = 'Отметьте подчинённых, которых нужно добавлять вместе с ответственными.';
+      wizardSearch.placeholder = 'Поиск подчинённого';
+    } else {
+      managerTitle.textContent = 'Шаг 3 из 3';
+      wizardTitle.textContent = 'Шаг 3: сохраните название';
+      wizardHint.textContent = 'Введите понятное имя шаблона. Он будет доступен в меню ответственных и подчинённых.';
+      wizardSearch.value = '';
+    }
+    wizardSearch.hidden = isNameStep;
+    wizardList.hidden = isNameStep;
+    nameRow.hidden = !isNameStep;
+    prevButton.disabled = wizardStep === 1;
+    nextButton.hidden = false;
+    nextButton.disabled = templatesSaving;
+    nextButton.textContent = isNameStep
+      ? (editingTemplateIndex >= 0 ? 'Сохранить изменения' : 'Сохранить')
+      : 'Далее';
+    updateWizardSummary();
+    if (!isNameStep) {
+      renderWizardList();
+    }
+  };
+
+  const setManagerWizardMode = (isWizardOpen) => {
+    manager.dataset.mode = isWizardOpen ? 'wizard' : 'list';
+    managerList.hidden = Boolean(isWizardOpen);
+    createButton.hidden = Boolean(isWizardOpen);
+    managerFooter.hidden = Boolean(isWizardOpen);
+    if (!isWizardOpen) {
+      managerTitle.textContent = 'Шаблоны назначения';
+    }
+  };
+
+  const refreshTemplatesFromServer = (showWarning = false) => requestAssignmentTemplatesFromServer(organization, role)
+    .then((serverTemplates) => {
+      templates = serverTemplates;
+      writeAssignmentTemplates(organization, role, templates);
+      renderTemplates();
+      templatesLoadedFromServer = true;
+      return true;
+    })
+    .catch(() => {
+      if (showWarning && !templatesLoadedFromServer && typeof setStatus === 'function') {
+        setStatus('warning', 'Не удалось загрузить шаблоны с сервера.');
+      }
+      return false;
+    });
+
+  const openManager = () => {
+    closeWizard();
+    renderTemplates();
+    manager.hidden = false;
+    refreshTemplatesFromServer(false);
+  };
+
+  const closeManager = () => {
+    closeWizard();
+    manager.hidden = true;
+  };
+
+  const openWizard = () => {
+    manager.hidden = false;
+    setManagerWizardMode(true);
+    wizard.hidden = false;
+    wizardStep = 1;
+    editingTemplateIndex = -1;
+    wizardSelections.responsible.clear();
+    wizardSelections.subordinate.clear();
+    nameInput.value = '';
+    wizardSearch.value = '';
+    renderWizard();
+  };
+
+  const closeWizard = () => {
+    wizard.hidden = true;
+    setManagerWizardMode(false);
+    editingTemplateIndex = -1;
+    nameRow.hidden = true;
+  };
+
+  const renderTemplates = () => {
+    const selectedIndex = Math.max(0, Number(select.value || 0));
+    select.innerHTML = '';
+    templateList.innerHTML = '';
+    managerList.innerHTML = '';
+
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = templates.length ? 'Выберите сохранённый шаблон' : 'Сохранённых шаблонов нет';
+    select.appendChild(placeholder);
+
+    templates.forEach((template, index) => {
+      const option = document.createElement('option');
+      option.value = String(index);
+      const responsibleCount = Array.isArray(template.responsibles) ? template.responsibles.length : 0;
+      const subordinateCount = Array.isArray(template.subordinates) ? template.subordinates.length : 0;
+      option.textContent = `${template.name} (${responsibleCount}/${subordinateCount})`;
+      select.appendChild(option);
+
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'appdosc-assignee-template__chip';
+      chip.dataset.templateIndex = String(index);
+      chip.dataset.templateApply = 'true';
+      chip.setAttribute('aria-label', `Применить шаблон ${template.name}`);
+
+      const chipName = document.createElement('span');
+      chipName.className = 'appdosc-assignee-template__chip-name';
+      chipName.textContent = template.name;
+
+      const chipMeta = document.createElement('span');
+      chipMeta.className = 'appdosc-assignee-template__chip-meta';
+      chipMeta.textContent = `отв. ${responsibleCount} · подч. ${subordinateCount}`;
+
+      chip.append(chipName, chipMeta);
+      templateList.appendChild(chip);
+
+      const managerItem = document.createElement('div');
+      managerItem.className = 'appdosc-assignee-template-manager__item';
+      managerItem.dataset.templateIndex = String(index);
+
+      const managerItemMain = document.createElement('div');
+      managerItemMain.className = 'appdosc-assignee-template-manager__item-main';
+
+      const managerItemName = document.createElement('div');
+      managerItemName.className = 'appdosc-assignee-template-manager__item-name';
+      managerItemName.textContent = template.name;
+
+      const managerItemMeta = document.createElement('div');
+      managerItemMeta.className = 'appdosc-assignee-template-manager__item-meta';
+      managerItemMeta.textContent = `Ответственные: ${responsibleCount} · Подчинённые: ${subordinateCount}`;
+
+      managerItemMain.append(managerItemName, managerItemMeta);
+
+      const managerItemActions = document.createElement('div');
+      managerItemActions.className = 'appdosc-assignee-template-manager__item-actions';
+
+      const managerApply = document.createElement('button');
+      managerApply.type = 'button';
+      managerApply.className = 'appdosc-assignee-template-manager__button';
+      managerApply.dataset.templateAction = 'apply';
+      managerApply.textContent = 'Применить';
+
+      const managerEdit = document.createElement('button');
+      managerEdit.type = 'button';
+      managerEdit.className = 'appdosc-assignee-template-manager__button';
+      managerEdit.dataset.templateAction = 'edit';
+      managerEdit.textContent = 'Изменить';
+
+      const managerDelete = document.createElement('button');
+      managerDelete.type = 'button';
+      managerDelete.className = 'appdosc-assignee-template-manager__button appdosc-assignee-template-manager__button--danger';
+      managerDelete.dataset.templateAction = 'delete';
+      managerDelete.textContent = 'Удалить';
+
+      managerItemActions.append(managerApply, managerEdit, managerDelete);
+      managerItem.append(managerItemMain, managerItemActions);
+      managerList.appendChild(managerItem);
+    });
+
+    if (!templates.length) {
+      const emptyChip = document.createElement('button');
+      emptyChip.type = 'button';
+      emptyChip.className = 'appdosc-assignee-template__empty-chip';
+      emptyChip.textContent = 'Шаблонов пока нет';
+      emptyChip.addEventListener('click', openManager);
+      templateList.appendChild(emptyChip);
+
+      const emptyManager = document.createElement('div');
+      emptyManager.className = 'appdosc-assignee-template-manager__empty';
+      emptyManager.textContent = 'Сохранённых шаблонов ещё нет. Создайте первый шаблон по шагам: ответственные, подчинённые, название.';
+      managerList.appendChild(emptyManager);
+    }
+
+    if (templates[selectedIndex]) {
+      select.value = String(selectedIndex);
+    }
+
+    meta.textContent = templates.length ? `${templates.length} шабл.` : 'Пока пусто';
+    templateList.hidden = false;
+  };
+
+  const persistTemplates = async (previousTemplates = null) => {
+    writeAssignmentTemplates(organization, role, templates);
+    renderTemplates();
+    templatesSaving = true;
+    if (!wizard.hidden) {
+      renderWizard();
+    }
+    try {
+      const savedTemplates = await requestAssignmentTemplatesFromServer(organization, role, templates);
+      templates = savedTemplates;
+      writeAssignmentTemplates(organization, role, templates);
+      renderTemplates();
+      return true;
+    } catch (_) {
+      if (Array.isArray(previousTemplates)) {
+        templates = previousTemplates;
+        writeAssignmentTemplates(organization, role, templates);
+        renderTemplates();
+      }
+      if (typeof setStatus === 'function') {
+        setStatus('error', 'Не удалось сохранить шаблон на сервере.');
+      }
+      return false;
+    } finally {
+      templatesSaving = false;
+      if (!wizard.hidden) {
+        renderWizard();
+      }
+    }
+  };
+
+  const saveCurrentTemplate = async () => {
+    if (templatesSaving) {
+      return;
+    }
+    const name = normalizeAssignmentTemplateName(nameInput.value);
+    if (!name) {
+      if (typeof setStatus === 'function') {
+        setStatus('warning', 'Введите название шаблона.');
+      }
+      return;
+    }
+
+    const responsibles = buildTemplateEntriesFromSelection('responsible');
+    const subordinates = buildTemplateEntriesFromSelection('subordinate');
+    if (!responsibles.length && !subordinates.length) {
+      if (typeof setStatus === 'function') {
+        setStatus('warning', 'Выберите ответственных или подчинённых для шаблона.');
+      }
+      wizardStep = 1;
+      renderWizard();
+      return;
+    }
+
+    const normalizedName = name.toLowerCase();
+    const previousTemplates = templates.map((template) => ({ ...template }));
+    const nextTemplate = {
+      name,
+      responsibles,
+      subordinates,
+      updatedAt: new Date().toISOString(),
+    };
+    const existingIndex = templates.findIndex((template) => template.name.toLowerCase() === normalizedName);
+    if (editingTemplateIndex >= 0 && templates[editingTemplateIndex]) {
+      if (existingIndex >= 0 && existingIndex !== editingTemplateIndex) {
+        if (typeof setStatus === 'function') {
+          setStatus('warning', 'Шаблон с таким названием уже существует.');
+        }
+        return;
+      }
+      templates.splice(editingTemplateIndex, 1, nextTemplate);
+    } else if (existingIndex >= 0) {
+      if (typeof setStatus === 'function') {
+        setStatus('warning', 'Шаблон с таким названием уже существует.');
+      }
+      return;
+    } else {
+      templates.unshift(nextTemplate);
+    }
+    templates = templates.slice(0, ASSIGNMENT_TEMPLATE_LIMIT);
+
+    if (await persistTemplates(previousTemplates) && typeof setStatus === 'function') {
+      setStatus('success', `Шаблон сохранён: ответственных ${responsibles.length}, подчинённых ${subordinates.length}.`);
+      closeWizard();
+    }
+  };
+
+  const applyTemplateByIndex = (index) => {
+    const template = templates[index];
+    if (!template) {
+      return;
+    }
+
+    const result = controller ? controller.apply(template) : (applyTemplate(template) || {});
+    const added = Number(result.added || 0);
+    const skipped = Number(result.skipped || 0);
+    const missing = Number(result.missing || 0);
+    const details = [];
+    if (skipped) {
+      details.push(`пропущено ${skipped}`);
+    }
+    if (missing) {
+      details.push(`без Telegram ID ${missing}`);
+    }
+    if (typeof setStatus === 'function') {
+      if (added) {
+        setStatus('success', details.length
+          ? `Из шаблона добавлено: ${added}, ${details.join(', ')}.`
+          : `Из шаблона добавлено: ${added}.`);
+      } else {
+        setStatus('info', details.length ? `Новых строк нет: ${details.join(', ')}.` : 'Все сотрудники из шаблона уже выбраны.');
+      }
+    }
+  };
+
+  const editTemplateByIndex = (index) => {
+    const template = templates[index];
+    if (!template) {
+      return;
+    }
+    select.value = String(index);
+    nameInput.value = template.name;
+    editingTemplateIndex = index;
+    wizardSelections.responsible = new Set((template.responsibles || []).map((entry) => entry.id));
+    wizardSelections.subordinate = new Set((template.subordinates || []).map((entry) => entry.id));
+    manager.hidden = false;
+    setManagerWizardMode(true);
+    wizard.hidden = false;
+    wizardStep = 1;
+    wizardSearch.value = '';
+    renderWizard();
+  };
+
+  const deleteTemplateByIndex = async (index) => {
+    if (!templates[index]) {
+      return;
+    }
+    const previousTemplates = templates.map((template) => ({ ...template }));
+    const deletedName = templates[index].name;
+    templates.splice(index, 1);
+    if (await persistTemplates(previousTemplates) && typeof setStatus === 'function') {
+      setStatus('success', `Шаблон удалён: ${deletedName}.`);
+    }
+  };
+
+  templateList.addEventListener('click', (event) => {
+    const chip = event.target instanceof HTMLElement
+      ? event.target.closest('[data-template-index]')
+      : null;
+    if (!(chip instanceof HTMLElement)) {
+      return;
+    }
+    const index = Number(chip.dataset.templateIndex);
+    if (!Number.isFinite(index)) {
+      return;
+    }
+    const applyTarget = event.target instanceof HTMLElement
+      ? event.target.closest('[data-template-apply]')
+      : null;
+    if (!(applyTarget instanceof HTMLElement)) {
+      return;
+    }
+    select.value = String(index);
+    applyTemplateByIndex(index);
+  });
+
+  managerList.addEventListener('click', (event) => {
+    const item = event.target instanceof HTMLElement
+      ? event.target.closest('[data-template-index]')
+      : null;
+    const action = event.target instanceof HTMLElement
+      ? event.target.closest('[data-template-action]')
+      : null;
+    if (!(item instanceof HTMLElement) || !(action instanceof HTMLElement)) {
+      return;
+    }
+    const index = Number(item.dataset.templateIndex);
+    if (!Number.isFinite(index)) {
+      return;
+    }
+    select.value = String(index);
+    const actionName = action.dataset.templateAction || '';
+    if (actionName === 'apply') {
+      applyTemplateByIndex(index);
+      closeManager();
+      return;
+    }
+    if (actionName === 'edit') {
+      editTemplateByIndex(index);
+      return;
+    }
+    if (actionName === 'delete') {
+      deleteTemplateByIndex(index);
+    }
+  });
+
+  manageButton.addEventListener('click', openManager);
+  managerBackdrop.addEventListener('click', closeManager);
+  managerClose.addEventListener('click', closeManager);
+  createButton.addEventListener('click', openWizard);
+  cancelButton.addEventListener('click', closeManager);
+  wizardSearch.addEventListener('input', renderWizardList);
+  prevButton.addEventListener('click', () => {
+    wizardStep = Math.max(1, wizardStep - 1);
+    wizardSearch.value = '';
+    renderWizard();
+  });
+  nextButton.addEventListener('click', () => {
+    if (wizardStep < 3) {
+      wizardStep += 1;
+      wizardSearch.value = '';
+      renderWizard();
+      return;
+    }
+    saveCurrentTemplate();
+  });
+  select.addEventListener('change', renderTemplates);
+  renderTemplates();
+  refreshTemplatesFromServer(true);
+
+  return {
+    refresh: renderTemplates,
+  };
+}
+
 
 const RESPONSE_IMAGE_COMPRESS_THRESHOLD_BYTES = 1800 * 1024;
 const RESPONSE_IMAGE_MAX_EDGE = 1920;
@@ -24354,8 +25313,8 @@ function setupAssignmentControls(card, task) {
     return;
   }
 
-  const canManageResponsibles = userIsDirectorForOrganization(organization)
-    || userIsResponsibleForTask(task);
+  const canRevokeAnyResponsibles = userIsDirectorForOrganization(organization);
+  const canManageResponsibles = canRevokeAnyResponsibles || userIsResponsibleForTask(task);
 
   const responsibles = getResponsiblesForOrganization(organization);
   const subordinates = getSubordinatesForOrganization(organization);
@@ -24936,7 +25895,7 @@ function setupAssignmentControls(card, task) {
     row.appendChild(info);
 
     const canRevokeAssignedEntry = canEditRow
-      && (!assigned || canCurrentUserRevokeAssignmentEntry(referenceEntry));
+      && (!assigned || canRevokeAnyResponsibles || canCurrentUserRevokeAssignmentEntry(referenceEntry));
     let removeButton = null;
     if (canRevokeAssignedEntry) {
       removeButton = document.createElement('button');
@@ -25024,7 +25983,7 @@ function setupAssignmentControls(card, task) {
         return;
       }
 
-      if (!canCurrentUserRevokeAssignmentEntry(referenceEntry)) {
+      if (!canRevokeAnyResponsibles && !canCurrentUserRevokeAssignmentEntry(referenceEntry)) {
         setStatus('error', 'Отозвать задачу может только тот, кто её назначил.');
         return;
       }
@@ -25484,9 +26443,17 @@ function setupAssignmentControls(card, task) {
         alreadyAssigned,
       });
       if (existingRow) {
+        const removeButton = existingRow.querySelector('[data-assignment-action="remove"]');
+        if (removeButton instanceof HTMLButtonElement && !removeButton.disabled) {
+          removeButton.click();
+          comboInput.value = '';
+          populateComboOptions();
+          closeSheet();
+          return;
+        }
         existingRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
-      setStatus('info', 'Ответственный уже назначен.');
+      setStatus('info', 'Ответственный уже выбран. Снять его можно в строке назначения.');
       comboInput.value = '';
       populateComboOptions();
       return;
@@ -25556,6 +26523,104 @@ function setupAssignmentControls(card, task) {
     closeSheet();
   };
 
+  const applyResponsibleTemplate = (template) => {
+    if (!canManageResponsibles || !template) {
+      return { added: 0, skipped: 0, missing: 0 };
+    }
+
+    let added = 0;
+    let skipped = 0;
+    let missing = 0;
+
+    const templateEntries = Array.isArray(template.responsibles)
+      ? template.responsibles
+      : template.entries;
+    (Array.isArray(templateEntries) ? templateEntries : []).forEach((templateEntry) => {
+      const normalizedEntry = normalizeAssignmentTemplateEntry(templateEntry);
+      if (!normalizedEntry) {
+        return;
+      }
+
+      const selectedValue = normalizedEntry.id;
+      const normalizedValue = normalizeIdentifier(selectedValue);
+      const rowKey = buildAssignmentRowKey(selectedValue, normalizedValue);
+      const directoryKey = buildAssignmentDirectoryKey(selectedValue);
+      const knownKeys = [rowKey, normalizedValue, directoryKey].filter(Boolean);
+      const existingRow = knownKeys.reduce((result, candidate) => {
+        if (result || !candidate) {
+          return result;
+        }
+        return findAssignmentRow(entriesContainer, candidate);
+      }, null);
+      const alreadyAssigned = knownKeys.some((candidate) => existingKeys.has(candidate) || assignedKeyRegistry.has(candidate));
+      if (existingRow || alreadyAssigned) {
+        skipped += 1;
+        return;
+      }
+
+      let label = normalizedEntry.label;
+      let referenceEntry = null;
+      if (normalizedValue && directory.has(normalizedValue)) {
+        const directorySnapshot = directory.get(normalizedValue);
+        label = label || directorySnapshot.label;
+        referenceEntry = directorySnapshot.entry || null;
+      }
+      if (!referenceEntry) {
+        referenceEntry = findAssignmentEntryByIdentifier(
+          assignmentCandidates,
+          normalizedValue || selectedValue.toLowerCase(),
+        );
+      }
+      if (!label && referenceEntry && typeof referenceEntry === 'object') {
+        label = buildResponsibleOptionLabel(referenceEntry);
+      }
+      if (!label) {
+        label = selectedValue;
+      }
+
+      if (!resolveEntryTelegramId(referenceEntry)) {
+        missing += 1;
+        return;
+      }
+
+      const row = createResponsibleRow({
+        value: selectedValue,
+        label,
+        normalized: normalizedValue,
+        assigned: false,
+        comment: normalizedEntry.assignmentComment || resolveCommentForEntry(selectedValue, normalizedValue, referenceEntry),
+        dueDate: normalizedEntry.assignmentDueDate || resolveDueForEntry(selectedValue, normalizedValue, referenceEntry),
+        instruction: normalizedEntry.assignmentInstruction || resolveInstructionForEntry(selectedValue, normalizedValue, referenceEntry),
+        referenceEntry,
+      });
+      if (row) {
+        added += 1;
+      } else {
+        skipped += 1;
+      }
+    });
+
+    if (added) {
+      comboButtonText.textContent = `Из шаблона: ${added}`;
+      comboButton.classList.add('is-selected');
+    }
+    populateComboOptions();
+    updateBulkState();
+    return { added, skipped, missing };
+  };
+
+  setupAssignmentTemplateControls({
+    card,
+    sheet: comboSheet,
+    optionsList,
+    organization,
+    role: 'responsible',
+    responsibleCandidates: assignmentCandidates,
+    subordinateCandidates: buildAssignmentCandidateList([], subordinates),
+    applyTemplate: applyResponsibleTemplate,
+    setStatus,
+  });
+
   const openSheet = () => {
     if (!canManageResponsibles) {
       return;
@@ -25623,8 +26688,8 @@ function setupSubordinateControls(card, task) {
 
   const subordinates = getSubordinatesForOrganization(organization);
   const assignmentCandidates = buildAssignmentCandidateList([], subordinates);
-  const canManageSubordinates = userIsDirectorForOrganization(organization)
-    || userIsResponsibleForTask(task);
+  const canRevokeAnySubordinates = userIsDirectorForOrganization(organization);
+  const canManageSubordinates = canRevokeAnySubordinates || userIsResponsibleForTask(task);
   const assignedEntries = collectTaskAssignments(task, 'subordinate');
   const canAuthorSubordinates = assignedEntries.some((entry) => canCurrentUserRevokeAssignmentEntry(entry));
   const canUseSubordinateAuthorScope = canManageSubordinates || canAuthorSubordinates;
@@ -26217,7 +27282,7 @@ function setupSubordinateControls(card, task) {
     row.appendChild(info);
 
     const canRevokeAssignedEntry = canEditRow
-      && (!assigned || canCurrentUserRevokeAssignmentEntry(referenceEntry));
+      && (!assigned || canRevokeAnySubordinates || canCurrentUserRevokeAssignmentEntry(referenceEntry));
     let removeButton = null;
     if (canRevokeAssignedEntry) {
       removeButton = document.createElement('button');
@@ -26287,7 +27352,7 @@ function setupSubordinateControls(card, task) {
         return;
       }
 
-      if (!canCurrentUserRevokeAssignmentEntry(referenceEntry)) {
+      if (!canRevokeAnySubordinates && !canCurrentUserRevokeAssignmentEntry(referenceEntry)) {
         setStatus('error', 'Отозвать задачу может только тот, кто её назначил.');
         return;
       }
@@ -26743,6 +27808,108 @@ function setupSubordinateControls(card, task) {
     pickerButton.classList.add('is-selected');
     closeSheet();
   };
+
+  const applySubordinateTemplate = (template) => {
+    if (!canManageSubordinates || !template) {
+      return { added: 0, skipped: 0, missing: 0 };
+    }
+
+    let added = 0;
+    let skipped = 0;
+    let missing = 0;
+
+    const templateEntries = Array.isArray(template.subordinates)
+      ? template.subordinates
+      : template.entries;
+    (Array.isArray(templateEntries) ? templateEntries : []).forEach((templateEntry) => {
+      const normalizedEntry = normalizeAssignmentTemplateEntry(templateEntry);
+      if (!normalizedEntry) {
+        return;
+      }
+
+      const selectedValue = normalizedEntry.id;
+      const normalizedValue = normalizeIdentifier(selectedValue);
+      const rowKey = buildAssignmentRowKey(selectedValue, normalizedValue);
+      const existingRow = findAssignmentRow(entriesContainer, rowKey);
+      if (existingRow) {
+        skipped += 1;
+        return;
+      }
+
+      let label = normalizedEntry.label;
+      let referenceEntry = null;
+      if (normalizedValue && directory.has(normalizedValue)) {
+        const directorySnapshot = directory.get(normalizedValue);
+        label = label || directorySnapshot.label;
+        referenceEntry = directorySnapshot.entry || null;
+      }
+      if (!referenceEntry) {
+        referenceEntry = findAssignmentEntryByIdentifier(
+          assignmentCandidates,
+          normalizedValue || selectedValue.toLowerCase(),
+        );
+      }
+      if (hasRenderedEntry(referenceEntry, selectedValue, normalizedValue)) {
+        skipped += 1;
+        return;
+      }
+      if (!label && referenceEntry && typeof referenceEntry === 'object') {
+        label = buildSubordinateOptionLabel(referenceEntry);
+      }
+      if (!label) {
+        label = selectedValue;
+      }
+
+      if (!resolveEntryTelegramId(referenceEntry)) {
+        missing += 1;
+        return;
+      }
+
+      const matchedEntry = findAssignmentEntryByIdentifier(
+        assignedEntries,
+        normalizedValue || selectedValue.toLowerCase(),
+      );
+      const row = createSubordinateRow({
+        value: selectedValue,
+        label,
+        normalized: normalizedValue,
+        assigned: Boolean(currentIdentifiers.has(normalizedValue)),
+        comment: normalizedEntry.assignmentComment || resolveCommentForEntry(selectedValue, normalizedValue, matchedEntry),
+        dueDate: normalizedEntry.assignmentDueDate || resolveDueForEntry(selectedValue, normalizedValue, matchedEntry),
+        instruction: normalizedEntry.assignmentInstruction || resolveInstructionForEntry(selectedValue, normalizedValue, matchedEntry),
+        referenceEntry: referenceEntry || matchedEntry || null,
+      });
+      if (row) {
+        registerRenderedEntry(referenceEntry || matchedEntry, selectedValue, normalizedValue);
+        added += 1;
+      } else {
+        skipped += 1;
+      }
+    });
+
+    if (added) {
+      pickerButtonText.textContent = `Из шаблона: ${added}`;
+      pickerButton.classList.add('is-selected');
+    }
+    populateComboOptions();
+    updateBulkState();
+    return { added, skipped, missing };
+  };
+
+  setupAssignmentTemplateControls({
+    card,
+    sheet: pickerSheet,
+    optionsList,
+    organization,
+    role: 'subordinate',
+    responsibleCandidates: buildAssignmentCandidateList(
+      getResponsiblesForOrganization(organization),
+      getSubordinatesForOrganization(organization),
+    ),
+    subordinateCandidates: assignmentCandidates,
+    applyTemplate: applySubordinateTemplate,
+    setStatus,
+  });
 
   const openSheet = () => {
     if (!canManageSubordinates) {
