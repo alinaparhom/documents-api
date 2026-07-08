@@ -12,6 +12,8 @@ const API_URL = '/docs.php?action=mini_app_tasks';
 const THEME_SETTINGS_SAVE_ENDPOINT = '/docs.php?action=mini_app_save_theme';
 const ASSIGNMENT_TEMPLATES_ENDPOINT = '/docs.php?action=mini_app_assignment_templates';
 const TASK_SNAPSHOT_API_URL = '/docs.php?action=mini_app_task_snapshot';
+const TASK_AI_SEARCH_API_URL = '/docs.php?action=mini_app_ai_task_search';
+const TASK_AI_ASSISTANT_WELCOME = 'Напишите как помощнику: что нужно найти в задачах, файлах или ответах.';
 const CLIENT_LOG_ENDPOINT = '/docs.php?action=mini_app_log';
 const ENTRY_LOG_ENDPOINT = '/docs.php?action=mini_app_entry_log';
 const PDF_LOG_ENDPOINT = '/docs.php?action=mini_app_pdf_log';
@@ -37,7 +39,14 @@ let systemThemeMediaQuery = null;
 let isSystemThemeListenerBound = false;
 const THEME_MODE_OPTIONS = ['dark', 'light'];
 const TASK_LIST_MODE_OPTIONS = ['default', 'insight'];
+const TASK_AI_SEARCH_MODE_OPTIONS = ['local', 'ai'];
 const TASK_LIST_MODE_STORAGE_KEY = 'appdosc_task_list_mode';
+const TASK_SEARCH_SESSION_STORAGE_KEY = 'appdosc_task_search_session';
+const TASK_SEARCH_EXCLUDED_FIELD_NAMES = new Set(['aiBrief', 'briefai']);
+const TASK_SEARCH_SCROLLABLE_SELECTOR = [
+  '.appdosc-ai-task-search__messages',
+  '.appdosc-ai-task-search__input',
+].join(',');
 const taskAttachmentPreviewCache = new Map();
 const taskPdfBinaryCache = new Map();
 const TASK_PDF_BINARY_CACHE_TTL_MS = 3 * 60 * 1000;
@@ -458,7 +467,7 @@ async function fetchPdfBinaryForViewer(previewUrl, source = 'user_click', reques
   }
   const requestPromise = fetch(previewUrl, {
     credentials: sameOrigin ? 'include' : 'omit',
-    cache: sameOrigin ? 'no-cache' : 'no-store',
+    cache: sameOrigin ? 'default' : 'no-store',
     ...(abortController ? { signal: abortController.signal } : {}),
   }).then(async (response) => {
     clearFetchTimeout();
@@ -957,6 +966,9 @@ const STATUS_LABEL_TO_KEY = (() => {
 })();
 
 const STATUS_FILTERS = Object.values(STATUS_SUMMARY_CONFIG).map((config) => config.filter);
+const TASK_SEARCH_SCOPE_ALL = 'all';
+const TASK_SEARCH_SCOPE_ACTIVE = 'active';
+const TASK_SEARCH_SCOPE_NO_FOLDER = 'folder:no-folder';
 
 const DIRECTOR_LOG_TASK_LIMIT = 15;
 const SUMMARY_FILE_LABEL = 'Общее';
@@ -2510,6 +2522,7 @@ function extractFoldersFromTasks(tasks) {
 function refreshFolderUi() {
   updateVisibleTasks();
   renderFolders();
+  syncTaskSearchControls();
   renderCards();
   renderBulkFolderPanel();
 }
@@ -2546,6 +2559,338 @@ function getFolderColorRgba(color, alpha = 1) {
   const green = parseInt(normalizedColor.slice(3, 5), 16);
   const blue = parseInt(normalizedColor.slice(5, 7), 16);
   return `rgba(${red}, ${green}, ${blue}, ${safeAlpha})`;
+}
+
+function normalizeTaskSearchText(value) {
+  return normalizeValue(value)
+    .toLowerCase()
+    .replace(/ё/g, 'е')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function collectTaskSearchTextParts(value, parts, depth = 0) {
+  const maxDepth = 6;
+  const maxParts = 900;
+  const maxItemsPerLevel = 180;
+  if (!parts || depth > maxDepth || parts.length >= maxParts || value === null || value === undefined) {
+    return;
+  }
+
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    const normalized = normalizeValue(value);
+    if (normalized) {
+      parts.push(normalized);
+    }
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    value.slice(0, maxItemsPerLevel).forEach((item) => collectTaskSearchTextParts(item, parts, depth + 1));
+    return;
+  }
+
+  if (isPlainObject(value)) {
+    Object.entries(value)
+      .slice(0, maxItemsPerLevel)
+      .forEach(([key, item]) => {
+        if (TASK_SEARCH_EXCLUDED_FIELD_NAMES.has(key)) {
+          return;
+        }
+        collectTaskSearchTextParts(item, parts, depth + 1);
+      });
+  }
+}
+
+function collectTaskSearchEntryFieldParts(entries, fields, parts) {
+  if (!Array.isArray(entries) || !Array.isArray(fields) || !Array.isArray(parts)) {
+    return;
+  }
+  entries.slice(0, 80).forEach((entry) => {
+    if (!isPlainObject(entry)) {
+      return;
+    }
+    fields.forEach((field) => {
+      if (Array.isArray(entry[field]) || isPlainObject(entry[field])) {
+        return;
+      }
+      const text = normalizeValue(entry[field]);
+      if (text) {
+        parts.push(text);
+      }
+    });
+  });
+}
+
+function collectTaskSearchFileTextParts(task, parts) {
+  if (!isPlainObject(task) || !Array.isArray(parts)) {
+    return;
+  }
+  ['files', 'attachments', 'fileList', 'taskFiles'].forEach((field) => {
+    const entries = Array.isArray(task[field]) ? task[field] : [];
+    collectTaskSearchEntryFieldParts(entries, ['originalName', 'name', 'storedName', 'url'], parts);
+  });
+  ['responses', 'answers', 'executorResponses'].forEach((field) => {
+    const entries = Array.isArray(task[field]) ? task[field] : [];
+    collectTaskSearchEntryFieldParts(entries, ['originalName', 'name', 'storedName', 'url', 'textContent', 'comment', 'note'], parts);
+  });
+}
+
+function getTaskSearchCollectionCount(task, fields) {
+  if (!isPlainObject(task) || !Array.isArray(fields)) {
+    return null;
+  }
+  for (let index = 0; index < fields.length; index += 1) {
+    const field = fields[index];
+    if (!Object.prototype.hasOwnProperty.call(task, field)) {
+      continue;
+    }
+    const value = task[field];
+    if (Array.isArray(value)) {
+      return value.length;
+    }
+    if (isPlainObject(value)) {
+      return Object.keys(value).length;
+    }
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return Math.max(0, Math.round(value));
+    }
+    if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
+      return Math.max(0, Number.parseInt(value.trim(), 10));
+    }
+  }
+  return null;
+}
+
+function appendTaskSearchCountPhrases(parts, count, labelSets, zeroPhrases = []) {
+  if (!Array.isArray(parts) || !Array.isArray(labelSets)) {
+    return;
+  }
+  const safeCount = Math.max(0, Math.round(Number(count) || 0));
+  labelSets.forEach((labelSet) => {
+    if (!Array.isArray(labelSet) || labelSet.length < 3) {
+      return;
+    }
+    parts.push(formatPeopleCount(safeCount, labelSet[0], labelSet[1], labelSet[2]));
+    parts.push(`количество ${labelSet[2]} ${safeCount}`);
+  });
+  if (safeCount === 0 && Array.isArray(zeroPhrases)) {
+    zeroPhrases.forEach((phrase) => {
+      if (phrase) {
+        parts.push(phrase);
+      }
+    });
+  }
+}
+
+function collectTaskDerivedSearchTextParts(task, parts) {
+  if (!isPlainObject(task) || !Array.isArray(parts)) {
+    return;
+  }
+  [
+    {
+      fields: ['files', 'attachments', 'fileList', 'taskFiles', 'filesCount', 'fileCount', 'attachmentsCount', 'attachmentCount'],
+      labels: [['вложение', 'вложения', 'вложений'], ['файл', 'файла', 'файлов']],
+      zero: ['без вложений', 'нет вложений', '0 вложений', 'без файлов', 'нет файлов', '0 файлов'],
+    },
+    {
+      fields: ['responses', 'answers', 'executorResponses', 'responseCount', 'responsesCount', 'answersCount'],
+      labels: [['ответ', 'ответа', 'ответов'], ['ответ исполнителя', 'ответа исполнителей', 'ответов исполнителей']],
+      zero: ['без ответов', 'нет ответов', '0 ответов'],
+    },
+    {
+      fields: ['responsibles', 'assignees', 'executors', 'responsibleProfiles', 'responsibleCount', 'assigneeCount'],
+      labels: [['ответственный', 'ответственных', 'ответственных'], ['исполнитель', 'исполнителя', 'исполнителей']],
+      zero: ['без ответственных', 'нет ответственных', '0 ответственных'],
+    },
+    {
+      fields: ['subordinates', 'subordinateProfiles', 'subordinateCount'],
+      labels: [['подчиненный', 'подчиненных', 'подчиненных'], ['подчинённый', 'подчинённых', 'подчинённых']],
+      zero: ['без подчиненных', 'нет подчиненных', '0 подчиненных', 'без подчинённых', 'нет подчинённых', '0 подчинённых'],
+    },
+  ].forEach((config) => {
+    const count = getTaskSearchCollectionCount(task, config.fields);
+    if (count === null) {
+      return;
+    }
+    appendTaskSearchCountPhrases(parts, count, config.labels, config.zero);
+  });
+
+  [
+    { fields: ['instruction', 'resolution', 'assignmentInstruction', 'assignmentComment'], phrases: ['есть поручение', 'с поручением', 'поручение', 'резолюция'] },
+    { fields: ['files', 'attachments', 'fileList', 'taskFiles'], phrases: ['есть вложения', 'есть файлы', 'вложения', 'файлы'] },
+    { fields: ['responses', 'answers', 'executorResponses'], phrases: ['есть ответы', 'ответы исполнителей', 'ответ исполнителя'] },
+    { fields: ['responsibles', 'assignees', 'executors', 'responsibleProfiles', 'executor', 'assignee', 'responsible'], phrases: ['есть ответственный', 'ответственный', 'исполнитель'] },
+    { fields: ['subordinates', 'subordinateProfiles'], phrases: ['есть подчиненные', 'подчиненные', 'подчинённые'] },
+    { fields: ['correspondent', 'sender', 'author'], phrases: ['корреспондент', 'отправитель', 'от кого'] },
+    { fields: ['document', 'summary', 'content', 'description'], phrases: ['тема документа', 'содержание документа', 'описание'] },
+  ].forEach((config) => {
+    const hasValue = config.fields.some((field) => {
+      if (!Object.prototype.hasOwnProperty.call(task, field)) {
+        return false;
+      }
+      const value = task[field];
+      if (Array.isArray(value)) {
+        return value.length > 0;
+      }
+      if (isPlainObject(value)) {
+        return Object.keys(value).length > 0;
+      }
+      return normalizeValue(value) !== '';
+    });
+    if (!hasValue) {
+      return;
+    }
+    config.phrases.forEach((phrase) => parts.push(phrase));
+  });
+}
+
+function buildTaskSearchHaystack(task) {
+  if (!isPlainObject(task)) {
+    return '';
+  }
+  const parts = [];
+  collectTaskSearchTextParts(task, parts);
+  collectTaskSearchFileTextParts(task, parts);
+  collectTaskDerivedSearchTextParts(task, parts);
+
+  return normalizeTaskSearchText(parts.join(' '));
+}
+
+function taskMatchesUniversalSearch(task, query) {
+  const normalizedQuery = normalizeTaskSearchText(query);
+  if (!normalizedQuery) {
+    return true;
+  }
+
+  const tokens = normalizedQuery.split(' ').filter(Boolean);
+  if (!tokens.length) {
+    return true;
+  }
+
+  const haystack = buildTaskSearchHaystack(task);
+  if (!haystack) {
+    return false;
+  }
+
+  return tokens.every((token) => haystack.includes(token));
+}
+
+function normalizeTaskSearchScope(value) {
+  const normalized = normalizeValue(value);
+  if (!normalized || normalized === TASK_SEARCH_SCOPE_ACTIVE || normalized === TASK_SEARCH_SCOPE_ALL) {
+    return normalized || TASK_SEARCH_SCOPE_ACTIVE;
+  }
+  if (normalized === TASK_SEARCH_SCOPE_NO_FOLDER) {
+    return normalized;
+  }
+  if (normalized.startsWith('folder:')) {
+    const folderId = normalized.slice('folder:'.length);
+    return ensureActiveFolderId(folderId) === folderId ? normalized : TASK_SEARCH_SCOPE_ACTIVE;
+  }
+  return TASK_SEARCH_SCOPE_ACTIVE;
+}
+
+function resolveTaskSearchFolderId() {
+  const scope = normalizeTaskSearchScope(state.activeFilters.searchScope);
+  if (scope === TASK_SEARCH_SCOPE_ALL) {
+    return 'all';
+  }
+  if (scope === TASK_SEARCH_SCOPE_NO_FOLDER) {
+    return 'no-folder';
+  }
+  if (scope.startsWith('folder:')) {
+    return ensureActiveFolderId(scope.slice('folder:'.length));
+  }
+  return ensureActiveFolderId(state.activeFilters.folderId || activeFolderId);
+}
+
+function getTaskSearchScopeLabel() {
+  const scope = normalizeTaskSearchScope(state.activeFilters.searchScope);
+  if (scope === TASK_SEARCH_SCOPE_ALL) {
+    return 'во всех папках';
+  }
+  if (scope === TASK_SEARCH_SCOPE_NO_FOLDER) {
+    return 'в папке «Без папки»';
+  }
+  if (scope.startsWith('folder:')) {
+    return `в папке «${getFolderName(scope.slice('folder:'.length))}»`;
+  }
+  return `в текущей папке «${getFolderName(state.activeFilters.folderId || activeFolderId)}»`;
+}
+
+function getTaskSearchMetaLabel() {
+  const query = normalizeValue(state.activeFilters.searchQuery);
+  const visibleCount = getVisibleTaskCount();
+  if (query) {
+    return `Найдено: ${visibleCount} ${formatTaskCountLabel(visibleCount)} ${getTaskSearchScopeLabel()}`;
+  }
+  return `Показано: ${visibleCount} ${formatTaskCountLabel(visibleCount)}`;
+}
+
+function populateTaskSearchScopeSelect(select, scopeValue) {
+  if (!(select instanceof HTMLSelectElement)) {
+    return TASK_SEARCH_SCOPE_ACTIVE;
+  }
+
+  const scope = normalizeTaskSearchScope(scopeValue);
+  select.innerHTML = '';
+  select.appendChild(new Option('Все папки', TASK_SEARCH_SCOPE_ALL));
+  select.appendChild(new Option('Текущая папка', TASK_SEARCH_SCOPE_ACTIVE));
+  select.appendChild(new Option('Без папки', TASK_SEARCH_SCOPE_NO_FOLDER));
+  folders
+    .filter((folder) => folder && !folder.system)
+    .forEach((folder) => select.appendChild(new Option(folder.name, `folder:${folder.id}`)));
+
+  select.value = Array.from(select.options).some((option) => option.value === scope)
+    ? scope
+    : TASK_SEARCH_SCOPE_ACTIVE;
+
+  return select.value;
+}
+
+function syncTaskSearchControls() {
+  const query = normalizeValue(state.activeFilters.searchQuery);
+  const scope = normalizeTaskSearchScope(state.activeFilters.searchScope);
+  state.activeFilters.searchQuery = query;
+  state.activeFilters.searchScope = scope;
+
+  const hasQuery = query !== '';
+
+  if (elements.taskSearchInput instanceof HTMLInputElement && elements.taskSearchInput.value !== query) {
+    elements.taskSearchInput.value = query;
+  }
+
+  if (elements.taskSearchClear instanceof HTMLButtonElement) {
+    elements.taskSearchClear.hidden = !hasQuery;
+  }
+
+  if (elements.taskSearchScope instanceof HTMLSelectElement) {
+    const previousValue = elements.taskSearchScope.value;
+    state.activeFilters.searchScope = populateTaskSearchScopeSelect(elements.taskSearchScope, scope);
+    if (previousValue && previousValue !== state.activeFilters.searchScope && previousValue === scope) {
+      updateVisibleTasks();
+    }
+  }
+
+  if (elements.taskSearchMeta instanceof HTMLElement) {
+    elements.taskSearchMeta.textContent = getTaskSearchMetaLabel();
+  }
+
+  if (elements.taskSearchOpen instanceof HTMLElement) {
+    elements.taskSearchOpen.setAttribute('aria-pressed', hasQuery ? 'true' : 'false');
+    elements.taskSearchOpen.title = hasQuery
+      ? `Поиск активен: ${getTaskSearchMetaLabel()}`
+      : 'Открыть поиск';
+  }
+
+  if (elements.taskSearchCount instanceof HTMLElement) {
+    elements.taskSearchCount.hidden = !hasQuery;
+    if (hasQuery) {
+      elements.taskSearchCount.textContent = String(getVisibleTaskCount());
+    }
+  }
 }
 
 function applyTaskFolderCardAccent(card, task) {
@@ -2688,6 +3033,8 @@ const state = {
   overdueNoticeShown: false,
   activeFilters: {
     folderId: 'all',
+    searchQuery: '',
+    searchScope: TASK_SEARCH_SCOPE_ACTIVE,
     statusFilters: [],
     quickPreset: '',
     groupFilters: [{ type: '', value: '' }],
@@ -2695,6 +3042,12 @@ const state = {
     dateTo: '',
     overdue: false,
   },
+  taskSearchMode: 'ai',
+  taskSearchCleanup: null,
+  taskSearchSession: null,
+  taskSearchBackgroundLocked: false,
+  fileBriefSnapshotDirty: false,
+  fileBriefSnapshotRefreshPromise: null,
   compactFilters: {
     expanded: false,
     dateFrom: '',
@@ -2990,10 +3343,43 @@ function safeRender(reason) {
 }
 
 function refreshTasksInBackground() {
+  if (isTaskSearchBackgroundLocked()) {
+    logClientEvent('tasks_background_refresh_skipped', { reason: 'task_search_open' });
+    return;
+  }
   const refreshPromise = loadTasks(true, { silent: true });
   if (refreshPromise && typeof refreshPromise.catch === 'function') {
     refreshPromise.catch(() => {});
   }
+}
+
+function isTaskSearchBackgroundLocked() {
+  return Boolean(state.taskSearchBackgroundLocked);
+}
+
+function setTaskSearchBackgroundLocked(locked) {
+  const nextValue = Boolean(locked);
+  state.taskSearchBackgroundLocked = nextValue;
+  if (typeof window !== 'undefined') {
+    window.__APPDOSC_TASK_SEARCH_LOCKED__ = nextValue;
+  }
+}
+
+function attachPublicTaskHooks() {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  const existingHooks = window.__APPDOSC_PUBLIC_HOOKS__;
+  const hooks = existingHooks && typeof existingHooks === 'object' ? existingHooks : {};
+  hooks.isTaskSearchLocked = () => isTaskSearchBackgroundLocked();
+  hooks.loadTasks = (force = false, options = {}) => {
+    if (isTaskSearchBackgroundLocked()) {
+      logClientEvent('public_load_tasks_skipped', { reason: 'task_search_open' });
+      return Promise.resolve(false);
+    }
+    return loadTasks(force, options);
+  };
+  window.__APPDOSC_PUBLIC_HOOKS__ = hooks;
 }
 
 function refreshVisibleTaskUi() {
@@ -3607,6 +3993,12 @@ function initElements() {
   elements.overdue = document.querySelector('[data-overdue]');
   elements.taskFilterToggle = document.querySelector('[data-task-filter-toggle]');
   elements.taskFilterPanel = document.querySelector('[data-task-filter-panel]');
+  elements.taskSearchOpen = document.querySelector('[data-task-search-open]');
+  elements.taskSearchCount = document.querySelector('[data-task-search-count]');
+  elements.taskSearchInput = document.querySelector('[data-task-search-input]');
+  elements.taskSearchScope = document.querySelector('[data-task-search-scope]');
+  elements.taskSearchClear = document.querySelector('[data-task-search-clear]');
+  elements.taskSearchMeta = document.querySelector('[data-task-search-meta]');
   elements.periodButton = document.querySelector('[data-period-button]');
   elements.periodButtonValue = document.querySelector('[data-period-button-value]');
   elements.rangeCalendarRoot = document.querySelector('[data-range-calendar]');
@@ -4321,6 +4713,11 @@ function buildRequestBody(options = {}) {
 
 async function loadTasks(force = false, options = {}) {
   const silent = Boolean(options && options.silent);
+  const allowDuringTaskSearch = Boolean(options && options.allowDuringTaskSearch);
+  if (isTaskSearchBackgroundLocked() && !allowDuringTaskSearch) {
+    logClientEvent('tasks_load_skipped', { force, silent, reason: 'task_search_open' });
+    return false;
+  }
   if (state.loading && !force) {
     return;
   }
@@ -4340,7 +4737,7 @@ async function loadTasks(force = false, options = {}) {
     setLoading(true);
     clearStatus();
   }
-  logClientEvent('tasks_load_start', { force, silent });
+  logClientEvent('tasks_load_start', { force, silent, allowDuringTaskSearch });
   const startedAt = Date.now();
 
   try {
@@ -4402,9 +4799,10 @@ async function loadTasks(force = false, options = {}) {
     });
     preGenerateTaskSummaries();
     maybeShowOverdueOpenNotice();
+    return true;
   } catch (error) {
     if (error && error.name === 'AbortError') {
-      return;
+      return false;
     }
     state.error = error instanceof Error ? error.message : String(error);
     if (!silent) {
@@ -4417,12 +4815,50 @@ async function loadTasks(force = false, options = {}) {
       silent,
       durationMs: Date.now() - startedAt,
     });
+    return false;
   } finally {
     lastTasksLoadAt = Date.now();
     if (!silent) {
       setLoading(false);
     }
   }
+}
+
+function markFileBriefSnapshotDirty() {
+  state.fileBriefSnapshotDirty = true;
+}
+
+async function refreshFileBriefSnapshotForSearch() {
+  if (!state.fileBriefSnapshotDirty) {
+    return true;
+  }
+
+  if (state.fileBriefSnapshotRefreshPromise) {
+    return state.fileBriefSnapshotRefreshPromise;
+  }
+
+  state.fileBriefSnapshotRefreshPromise = loadTasks(true, {
+    silent: true,
+    allowDuringTaskSearch: true,
+  })
+    .then((loaded) => {
+      if (loaded !== false) {
+        state.fileBriefSnapshotDirty = false;
+        return true;
+      }
+      return false;
+    })
+    .catch((error) => {
+      logClientEvent('file_brief_snapshot_refresh_error', {
+        message: error instanceof Error ? error.message : String(error || ''),
+      });
+      return false;
+    })
+    .finally(() => {
+      state.fileBriefSnapshotRefreshPromise = null;
+    });
+
+  return state.fileBriefSnapshotRefreshPromise;
 }
 
 function updateStateFromPayload(payload) {
@@ -4748,6 +5184,7 @@ function render() {
   updateSummaryFilterState();
   renderFolders();
   syncCompactFilterPanelState();
+  syncTaskSearchControls();
   renderCards();
   renderBulkFolderPanel();
   updateFooter();
@@ -4758,6 +5195,7 @@ function renderEmpty() {
   updateStats();
   updateDirectorSummary();
   syncCompactFilterPanelState();
+  syncTaskSearchControls();
   clearCards();
   updateFooter();
   logIosStage('render_empty', {
@@ -5308,7 +5746,11 @@ function applyCompactFilters(visibleItems) {
   const source = Array.isArray(visibleItems) ? visibleItems : [];
   const useOverdueOnly = state.activeFilters.overdue === true;
   const overdueSource = useOverdueOnly
-    ? buildVisibleTaskItemsByMatch(state.tasks, (task) => currentUserParticipatesInTask(task))
+    ? buildVisibleTaskItemsByMatch(
+      resolveFolderScope(state.tasks, state.activeFilters.searchQuery ? resolveTaskSearchFolderId() : state.activeFilters.folderId),
+      (task) => currentUserParticipatesInTask(task)
+        && (!state.activeFilters.searchQuery || taskMatchesUniversalSearch(task, state.activeFilters.searchQuery))
+    )
     : source;
   if (!overdueSource.length) {
     return [];
@@ -5972,7 +6414,10 @@ function renderCards() {
   elements.cardsContainer.innerHTML = '';
 
   if (!visibleItems.length) {
-    setPlaceholderMessage(hasTasks ? FILTER_PLACEHOLDER_MESSAGE : DEFAULT_PLACEHOLDER_MESSAGE);
+    const searchQuery = normalizeValue(state.activeFilters.searchQuery);
+    setPlaceholderMessage(searchQuery
+      ? `По запросу «${searchQuery}» ${getTaskSearchScopeLabel()} задачи не найдены`
+      : (hasTasks ? FILTER_PLACEHOLDER_MESSAGE : DEFAULT_PLACEHOLDER_MESSAGE));
     togglePlaceholder(true);
     updateTaskSelector();
     pruneExpandedCardAnchors(new Set());
@@ -6367,13 +6812,1602 @@ function openBottomSheet(contentBuilder) {
   if (content instanceof HTMLElement && content.classList.contains('task-history-modal')) {
     sheet.classList.add('bottom-sheet--task-history');
   }
+  if (content instanceof HTMLElement && content.classList.contains('appdosc-task-search-modal')) {
+    sheet.classList.add('bottom-sheet--task-search');
+  }
   sheet.appendChild(content);
   document.body.appendChild(overlay);
   document.body.appendChild(sheet);
 }
 
 function closeBottomSheet() {
+  if (typeof state.taskSearchCleanup === 'function') {
+    const cleanup = state.taskSearchCleanup;
+    state.taskSearchCleanup = null;
+    try {
+      cleanup();
+    } catch (error) {
+      // Закрытие модального окна не должно падать из-за остановки голосового ввода.
+    }
+  }
   document.querySelectorAll('.bottom-sheet-overlay, .bottom-sheet').forEach((el) => el.remove());
+}
+
+function getTaskAiSearchTargetCandidates(result) {
+  if (!result || typeof result !== 'object') {
+    return [];
+  }
+  return [
+    result.id,
+    result.taskId,
+    result.documentId,
+    result.entryNumber,
+    result.registryNumber,
+    result.documentNumber,
+  ]
+    .map((value) => normalizeValue(value))
+    .filter(Boolean);
+}
+
+function openTaskFromAiSearchResult(result) {
+  const candidates = getTaskAiSearchTargetCandidates(result);
+  const matchedTask = Array.isArray(state.tasks)
+    ? state.tasks.find((task) => candidates.some((candidate) => taskMatchesEntryTask(task, candidate)))
+    : null;
+  const targetId = matchedTask
+    ? (normalizeValue(matchedTask.id)
+      || normalizeValue(matchedTask.entryNumber)
+      || normalizeValue(matchedTask.registryNumber)
+      || normalizeValue(matchedTask.documentNumber))
+    : candidates[0];
+
+  if (targetId) {
+    rememberTaskAiSearchOpenedResult(result, targetId);
+    closeBottomSheet();
+    state.activeFilters.searchQuery = '';
+    state.activeFilters.searchScope = TASK_SEARCH_SCOPE_ACTIVE;
+    applyEntryTaskId(targetId, 'ai_task_search', `task:${targetId}`);
+    updateVisibleTasks();
+    syncTaskSearchControls();
+    updateStats();
+    renderCards();
+    updateFooter();
+    window.setTimeout(() => {
+      focusEntryTaskCard(getVisibleTaskItems());
+    }, 90);
+    return;
+  }
+
+  const openUrl = normalizeValue(result && result.openUrl);
+  if (openUrl) {
+    rememberTaskAiSearchOpenedResult(result, candidates[0] || '');
+    window.location.href = openUrl;
+  }
+}
+
+function normalizeTaskAiSearchReason(reason) {
+  if (!reason || typeof reason !== 'object') {
+    return null;
+  }
+  const normalized = {};
+  ['label', 'value', 'preview'].forEach((key) => {
+    const value = normalizeValue(reason[key]);
+    if (value) {
+      normalized[key] = value;
+    }
+  });
+  return normalized.label && (normalized.value || normalized.preview) ? normalized : null;
+}
+
+function normalizeTaskAiSearchResult(result) {
+  if (!result || typeof result !== 'object') {
+    return null;
+  }
+  const normalized = {};
+  [
+    'id',
+    'taskId',
+    'documentId',
+    'entryNumber',
+    'registryNumber',
+    'documentNumber',
+    'organization',
+    'status',
+    'dueDate',
+    'title',
+    'summary',
+    'matchPreview',
+    'folderId',
+    'startParam',
+    'openUrl',
+  ].forEach((key) => {
+    const value = normalizeValue(result[key]);
+    if (value) {
+      normalized[key] = value;
+    }
+  });
+  const matchReasons = Array.isArray(result.matchReasons)
+    ? result.matchReasons
+      .map((reason) => normalizeTaskAiSearchReason(reason))
+      .filter(Boolean)
+      .slice(0, 8)
+    : [];
+  if (matchReasons.length) {
+    normalized.matchReasons = matchReasons;
+  }
+  return Object.keys(normalized).length ? normalized : null;
+}
+
+function normalizeTaskAiSearchSession(rawSession) {
+  const source = rawSession && typeof rawSession === 'object' && !Array.isArray(rawSession)
+    ? rawSession
+    : {};
+  const messages = Array.isArray(source.messages)
+    ? source.messages
+      .map((message) => ({
+        role: message && message.role === 'user' ? 'user' : 'assistant',
+        text: normalizeValue(message && message.text),
+      }))
+      .filter((message) => message.text)
+      .slice(-24)
+    : [];
+  const results = Array.isArray(source.results)
+    ? source.results
+      .map((result) => normalizeTaskAiSearchResult(result))
+      .filter(Boolean)
+      .slice(0, 12)
+    : [];
+
+  return {
+    aiInput: normalizeValue(source.aiInput),
+    searchMode: normalizeTaskAiSearchMode(source.searchMode),
+    folderScope: normalizeTaskSearchScope(source.folderScope),
+    messages,
+    results,
+    statusMessage: normalizeValue(source.statusMessage),
+    statusTone: normalizeValue(source.statusTone),
+    lastQuery: normalizeValue(source.lastQuery),
+    openedTaskId: normalizeValue(source.openedTaskId),
+    updatedAt: Number.isFinite(Number(source.updatedAt)) ? Number(source.updatedAt) : 0,
+  };
+}
+
+function normalizeTaskAiSearchMode(value) {
+  const normalized = normalizeValue(value).toLowerCase();
+  return TASK_AI_SEARCH_MODE_OPTIONS.includes(normalized) ? normalized : 'ai';
+}
+
+function getTaskAiSearchLoadingMessage(mode, source) {
+  const normalizedMode = normalizeTaskAiSearchMode(mode);
+  if (normalizedMode === 'local') {
+    return source === 'voice'
+      ? 'Распознал голос. Ищу совпадения в JSON задач...'
+      : 'Ищу совпадения в JSON задач...';
+  }
+
+  return source === 'voice'
+    ? 'Распознал голос. ИИ Groq проверяет S3-снимок задач, это может занять несколько минут...'
+    : 'ИИ Groq проверяет S3-снимок задач. Если задач много, это может занять несколько минут...';
+}
+
+function resolveTaskAiSearchFolderPayload(scopeValue) {
+  const folderScope = normalizeTaskSearchScope(scopeValue);
+  let folderId = 'all';
+  if (folderScope === TASK_SEARCH_SCOPE_ALL) {
+    folderId = 'all';
+  } else if (folderScope === TASK_SEARCH_SCOPE_NO_FOLDER) {
+    folderId = 'no-folder';
+  } else if (folderScope.startsWith('folder:')) {
+    folderId = ensureActiveFolderId(folderScope.slice('folder:'.length));
+  } else {
+    folderId = ensureActiveFolderId(state.activeFilters.folderId || activeFolderId);
+  }
+
+  return {
+    folderScope,
+    folderId,
+    folderLabel: getFolderName(folderId),
+  };
+}
+
+function copyTaskSearchScalarFields(source, fields, target = {}) {
+  if (!isPlainObject(source) || !Array.isArray(fields)) {
+    return target;
+  }
+  fields.forEach((field) => {
+    if (!field || !Object.prototype.hasOwnProperty.call(source, field)) {
+      return;
+    }
+    const value = source[field];
+    if (value === null || value === undefined || Array.isArray(value) || isPlainObject(value)) {
+      return;
+    }
+    const normalized = normalizeValue(value);
+    if (normalized) {
+      target[field] = normalized;
+    }
+  });
+  return target;
+}
+
+function compactTaskSearchEntries(entries, fields, limit) {
+  if (!Array.isArray(entries) || !Array.isArray(fields)) {
+    return [];
+  }
+  const result = [];
+  entries.forEach((entry) => {
+    if (result.length >= limit || !isPlainObject(entry)) {
+      return;
+    }
+    const compact = copyTaskSearchScalarFields(entry, fields, {});
+    if (Object.keys(compact).length) {
+      result.push(compact);
+    }
+  });
+  return result;
+}
+
+function resolveTaskSearchTextValue(value) {
+  if (isPlainObject(value)) {
+    return normalizeValue(value.summary || value.content || value.description || value.text || value.title || value.name || value.fullName || value.fio);
+  }
+  return normalizeValue(value);
+}
+
+function buildTaskForCurrentSearchSnapshot(task) {
+  if (!isPlainObject(task)) {
+    return null;
+  }
+
+  const compact = copyTaskSearchScalarFields(task, [
+    'id',
+    'entryNumber',
+    'registryNumber',
+    'documentNumber',
+    'organization',
+    'dueDate',
+    'registrationDate',
+    'documentDate',
+    'direction',
+    'folderId',
+  ], {});
+  const status = getTaskStatusValue(task);
+  if (status) {
+    compact.status = status;
+  }
+  const correspondent = resolveTaskSearchTextValue(task.correspondent)
+    || resolveTaskSearchTextValue(task.sender || task.from);
+  if (correspondent) {
+    compact.correspondent = correspondent;
+  }
+  const summary = resolveTaskSearchTextValue(task.summary)
+    || resolveTaskSearchTextValue(task.content)
+    || resolveTaskSearchTextValue(task.description)
+    || resolveTaskSearchTextValue(task.document);
+  if (summary) {
+    compact.summary = summary;
+  }
+  const instruction = normalizeValue(resolveInstructionSummary(task)) || resolveTaskSearchTextValue(task.resolution);
+  if (instruction) {
+    compact.instruction = instruction;
+  }
+  const executor = formatEntityDisplay(resolveExecutor(task), '');
+  if (executor) {
+    compact.executor = executor;
+  }
+  if (isPlainObject(task.folderByUser)) {
+    compact.folderByUser = { ...task.folderByUser };
+  }
+
+  const peopleFields = ['name', 'responsible', 'fio', 'fullName', 'role', 'assignmentInstruction', 'assignmentComment', 'assignmentDueDate', 'status'];
+  ['directors', 'responsibles', 'assignees', 'executors', 'subordinates'].forEach((field) => {
+    const entries = compactTaskSearchEntries(task[field], peopleFields, 12);
+    if (entries.length) {
+      compact[field] = entries;
+    }
+  });
+
+  const files = compactTaskSearchEntries(task.files, ['originalName', 'name', 'storedName', 'url'], 16);
+  if (files.length) {
+    compact.files = files;
+  }
+  const responses = compactTaskSearchEntries(task.responses, ['originalName', 'name', 'storedName', 'textContent', 'comment', 'note', 'uploadedBy'], 12);
+  if (responses.length) {
+    compact.responses = responses;
+  }
+
+  return Object.keys(compact).length ? compact : null;
+}
+
+function buildCurrentTaskSearchSnapshot() {
+  const sourceTasks = Array.isArray(state.tasks) ? state.tasks : [];
+  const tasks = sourceTasks
+    .map((task) => buildTaskForCurrentSearchSnapshot(task))
+    .filter(Boolean);
+
+  return {
+    version: 1,
+    source: 'telegram_app_current_state',
+    generatedAt: state.lastUpdated || new Date().toISOString(),
+    tasksCount: tasks.length,
+    tasks,
+  };
+}
+
+function readTaskAiSearchSessionFromStorage() {
+  if (typeof window === 'undefined' || !window.sessionStorage) {
+    return null;
+  }
+  try {
+    const raw = window.sessionStorage.getItem(TASK_SEARCH_SESSION_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+    return normalizeTaskAiSearchSession(JSON.parse(raw));
+  } catch (error) {
+    return null;
+  }
+}
+
+function writeTaskAiSearchSessionToStorage(session) {
+  if (typeof window === 'undefined' || !window.sessionStorage) {
+    return;
+  }
+  try {
+    window.sessionStorage.setItem(
+      TASK_SEARCH_SESSION_STORAGE_KEY,
+      JSON.stringify(normalizeTaskAiSearchSession(session)),
+    );
+  } catch (error) {
+    // История поиска удобна, но не должна ломать сам поиск при недоступном storage.
+  }
+}
+
+function getTaskAiSearchSession() {
+  if (!state.taskSearchSession || typeof state.taskSearchSession !== 'object') {
+    state.taskSearchSession = readTaskAiSearchSessionFromStorage() || normalizeTaskAiSearchSession(null);
+  } else {
+    state.taskSearchSession = normalizeTaskAiSearchSession(state.taskSearchSession);
+  }
+  return state.taskSearchSession;
+}
+
+function saveTaskAiSearchSession(partial = {}) {
+  const session = {
+    ...getTaskAiSearchSession(),
+    ...(partial && typeof partial === 'object' ? partial : {}),
+    updatedAt: Date.now(),
+  };
+  state.taskSearchSession = normalizeTaskAiSearchSession(session);
+  writeTaskAiSearchSessionToStorage(state.taskSearchSession);
+  return state.taskSearchSession;
+}
+
+function appendTaskAiSearchSessionMessage(role, text) {
+  const normalizedText = normalizeValue(text);
+  if (!normalizedText) {
+    return getTaskAiSearchSession();
+  }
+  const session = getTaskAiSearchSession();
+  return saveTaskAiSearchSession({
+    messages: [
+      ...session.messages,
+      { role: role === 'user' ? 'user' : 'assistant', text: normalizedText },
+    ],
+  });
+}
+
+function rememberTaskAiSearchOpenedResult(result, targetId) {
+  const session = getTaskAiSearchSession();
+  const openedResult = normalizeTaskAiSearchResult(result);
+  saveTaskAiSearchSession({
+    openedTaskId: normalizeValue(targetId),
+    results: session.results.length ? session.results : (openedResult ? [openedResult] : []),
+  });
+}
+
+function resetTaskAiSearchSession() {
+  state.taskSearchSession = normalizeTaskAiSearchSession(null);
+  writeTaskAiSearchSessionToStorage(state.taskSearchSession);
+  return state.taskSearchSession;
+}
+
+function appendTaskAiSearchInlineFormattedText(parent, text) {
+  if (!(parent instanceof HTMLElement)) {
+    return;
+  }
+  const source = normalizeValue(text);
+  if (!source) {
+    return;
+  }
+
+  const pattern = /(\*\*[^*]+\*\*|`[^`]+`)/g;
+  let lastIndex = 0;
+  let match = pattern.exec(source);
+  while (match) {
+    if (match.index > lastIndex) {
+      parent.appendChild(document.createTextNode(source.slice(lastIndex, match.index)));
+    }
+    const token = match[0];
+    if (token.startsWith('**') && token.endsWith('**')) {
+      const strong = document.createElement('strong');
+      strong.textContent = token.slice(2, -2).trim();
+      parent.appendChild(strong);
+    } else if (token.startsWith('`') && token.endsWith('`')) {
+      const code = document.createElement('code');
+      code.textContent = token.slice(1, -1).trim();
+      parent.appendChild(code);
+    }
+    lastIndex = match.index + token.length;
+    match = pattern.exec(source);
+  }
+
+  if (lastIndex < source.length) {
+    parent.appendChild(document.createTextNode(source.slice(lastIndex)));
+  }
+}
+
+function normalizeTaskAiSearchMessageLine(line) {
+  return normalizeValue(line)
+    .replace(/^\s*#{1,4}\s+/u, '')
+    .replace(/^\s*>\s?/u, '')
+    .trim();
+}
+
+function createTaskAiSearchMessageParagraph(line, className = 'appdosc-ai-task-search__message-paragraph') {
+  const paragraph = document.createElement('p');
+  paragraph.className = className;
+  appendTaskAiSearchInlineFormattedText(paragraph, normalizeTaskAiSearchMessageLine(line));
+  return paragraph;
+}
+
+function createTaskAiSearchMessageList(lines, ordered = false) {
+  const list = document.createElement(ordered ? 'ol' : 'ul');
+  list.className = 'appdosc-ai-task-search__message-list';
+  lines.forEach((line) => {
+    const item = document.createElement('li');
+    const cleaned = normalizeTaskAiSearchMessageLine(
+      ordered
+        ? line.replace(/^\s*\d+[.)]\s+/u, '')
+        : line.replace(/^\s*[-*•]\s+/u, ''),
+    );
+    appendTaskAiSearchInlineFormattedText(item, cleaned);
+    list.appendChild(item);
+  });
+  return list;
+}
+
+function renderTaskAiSearchMessageContent(container, text, role) {
+  if (!(container instanceof HTMLElement)) {
+    return;
+  }
+  const normalizedText = normalizeValue(text);
+  if (!normalizedText) {
+    return;
+  }
+  const lines = normalizedText
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line !== '');
+
+  if (!lines.length) {
+    return;
+  }
+
+  if (role === 'user') {
+    container.appendChild(createTaskAiSearchMessageParagraph(lines.join(' ')));
+    return;
+  }
+
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index];
+    const bulletLines = [];
+    while (index < lines.length && /^\s*[-*•]\s+/u.test(lines[index])) {
+      bulletLines.push(lines[index]);
+      index += 1;
+    }
+    if (bulletLines.length) {
+      container.appendChild(createTaskAiSearchMessageList(bulletLines, false));
+      continue;
+    }
+
+    const orderedLines = [];
+    while (index < lines.length && /^\s*\d+[.)]\s+/u.test(lines[index])) {
+      orderedLines.push(lines[index]);
+      index += 1;
+    }
+    if (orderedLines.length) {
+      container.appendChild(createTaskAiSearchMessageList(orderedLines, true));
+      continue;
+    }
+
+    const cleaned = normalizeTaskAiSearchMessageLine(line);
+    const isLead = index === 0 || (/^[^.!?]{3,42}:$/u.test(cleaned) && lines.length > 1);
+    container.appendChild(createTaskAiSearchMessageParagraph(
+      cleaned.replace(/:$/u, ''),
+      isLead ? 'appdosc-ai-task-search__message-lead' : 'appdosc-ai-task-search__message-paragraph',
+    ));
+    index += 1;
+  }
+}
+
+function appendTaskAiSearchMessage(container, role, text, results = []) {
+  if (!(container instanceof HTMLElement)) {
+    return null;
+  }
+  const normalizedRole = role === 'user' ? 'user' : 'assistant';
+  const message = document.createElement('div');
+  message.className = `appdosc-ai-task-search__message appdosc-ai-task-search__message--${normalizedRole}`;
+  message.dataset.messageRole = normalizedRole;
+
+  const header = document.createElement('div');
+  header.className = 'appdosc-ai-task-search__message-header';
+  header.textContent = normalizedRole === 'user' ? 'Вы' : 'Помощник';
+
+  const body = document.createElement('div');
+  body.className = 'appdosc-ai-task-search__message-body';
+  renderTaskAiSearchMessageContent(body, text, normalizedRole);
+
+  message.append(header, body);
+  if (normalizedRole === 'assistant' && Array.isArray(results) && results.length) {
+    message.classList.add('appdosc-ai-task-search__message--with-results');
+    const links = document.createElement('div');
+    links.className = 'appdosc-ai-task-search__message-results';
+    results.forEach((result) => {
+      links.appendChild(createTaskAiSearchResultCard(result));
+    });
+    message.appendChild(links);
+  }
+  container.appendChild(message);
+  container.scrollTop = container.scrollHeight;
+
+  return message;
+}
+
+function renderTaskAiSearchMessages(container, messages, results = []) {
+  if (!(container instanceof HTMLElement)) {
+    return;
+  }
+  container.innerHTML = '';
+  const source = Array.isArray(messages) ? messages : [];
+  let resultMessageIndex = -1;
+  if (Array.isArray(results) && results.length) {
+    for (let index = source.length - 1; index >= 0; index -= 1) {
+      if (source[index] && source[index].role === 'assistant') {
+        resultMessageIndex = index;
+        break;
+      }
+    }
+  }
+  source.forEach((message, index) => {
+    appendTaskAiSearchMessage(
+      container,
+      message && message.role,
+      message && message.text,
+      index === resultMessageIndex ? results : [],
+    );
+  });
+}
+
+function setTaskAiSearchStatus(element, message, tone = '') {
+  if (!(element instanceof HTMLElement)) {
+    return;
+  }
+  const text = normalizeValue(message);
+  element.textContent = text;
+  element.dataset.tone = normalizeValue(tone);
+  element.hidden = text === '';
+}
+
+function createTaskAiSearchResultCard(result) {
+  const card = document.createElement('article');
+  card.className = 'appdosc-ai-task-search__result';
+
+  const taskNumber = normalizeValue(result && (result.registryNumber || result.entryNumber || result.documentNumber || result.id));
+  if (taskNumber) {
+    const badge = document.createElement('div');
+    badge.className = 'appdosc-ai-task-search__result-badge';
+    badge.textContent = `Задача ${taskNumber}`;
+    card.appendChild(badge);
+  }
+
+  const title = document.createElement('h4');
+  title.className = 'appdosc-ai-task-search__result-title';
+  title.textContent = normalizeValue(result && result.title) || 'Задача';
+
+  const metaParts = [
+    normalizeValue(result && result.organization),
+    normalizeValue(result && result.folderId) ? getFolderName(result.folderId) : '',
+    normalizeValue(result && result.status),
+    formatDate(result && result.dueDate),
+  ].filter((part) => part && part !== '—');
+  const meta = document.createElement('div');
+  meta.className = 'appdosc-ai-task-search__result-meta';
+  meta.textContent = metaParts.length ? metaParts.join(' · ') : 'Без дополнительных меток';
+
+  const summary = document.createElement('p');
+  summary.className = 'appdosc-ai-task-search__result-summary';
+  summary.textContent = normalizeValue(result && (result.matchPreview || result.summary)) || 'Описание не указано';
+
+  const reasons = Array.isArray(result && result.matchReasons) ? result.matchReasons : [];
+  const reasonsWrap = document.createElement('div');
+  reasonsWrap.className = 'appdosc-ai-task-search__result-reasons';
+  reasons.slice(0, 4).forEach((reason) => {
+    const label = normalizeValue(reason && reason.label);
+    const value = normalizeValue(reason && (reason.value || reason.preview));
+    if (!label || !value) {
+      return;
+    }
+    const reasonRow = document.createElement('div');
+    reasonRow.className = 'appdosc-ai-task-search__result-reason';
+
+    const reasonLabel = document.createElement('span');
+    reasonLabel.className = 'appdosc-ai-task-search__result-reason-label';
+    reasonLabel.textContent = `${label}:`;
+
+    const reasonValue = document.createElement('span');
+    reasonValue.className = 'appdosc-ai-task-search__result-reason-value';
+    reasonValue.textContent = value;
+
+    reasonRow.append(reasonLabel, reasonValue);
+    reasonsWrap.appendChild(reasonRow);
+  });
+
+  const action = document.createElement('a');
+  action.className = 'appdosc-ai-task-search__result-link';
+  action.href = normalizeValue(result && result.openUrl) || '#';
+  action.textContent = taskNumber ? `Открыть задачу ${taskNumber}` : 'Открыть задачу';
+  action.addEventListener('click', (event) => {
+    event.preventDefault();
+    openTaskFromAiSearchResult(result);
+  });
+
+  card.append(title, meta, summary);
+  if (reasonsWrap.children.length) {
+    card.appendChild(reasonsWrap);
+  }
+  card.appendChild(action);
+
+  return card;
+}
+
+function resolveTaskSpeechRecognitionConstructor() {
+  return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+}
+
+async function requestTaskAiSearch(query, options = {}) {
+  const searchMode = normalizeTaskAiSearchMode(options && options.mode);
+  const folderPayload = resolveTaskAiSearchFolderPayload(options && options.folderScope);
+  const currentSnapshot = buildCurrentTaskSearchSnapshot();
+
+  const headers = {
+    'Content-Type': 'application/json',
+  };
+  if (state.telegram.initData) {
+    headers['X-Telegram-Init-Data'] = state.telegram.initData;
+  }
+
+  let response = null;
+  try {
+    response = await fetch(TASK_AI_SEARCH_API_URL, {
+      method: 'POST',
+      headers,
+      credentials: 'include',
+      cache: 'no-store',
+      body: JSON.stringify({
+        ...buildRequestBody(),
+        query,
+        mode: searchMode,
+        folderScope: folderPayload.folderScope,
+        folderId: folderPayload.folderId,
+        tasksSnapshot: currentSnapshot,
+        limit: 8,
+      }),
+      ...(options.signal ? { signal: options.signal } : {}),
+    });
+  } catch (error) {
+    if (error && error.name === 'AbortError') {
+      throw error;
+    }
+    throw new Error('ИИ-поиск сейчас недоступен. Повторите запрос позже.');
+  }
+
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch (error) {
+    payload = null;
+  }
+
+  if (!response.ok || !payload || payload.success === false) {
+    const message = payload && payload.error
+      ? String(payload.error)
+      : `Ошибка поиска (${response.status})`;
+    throw new Error(message);
+  }
+
+  return payload;
+}
+
+function getTaskAiSearchResultReasonText(result) {
+  if (!result || typeof result !== 'object') {
+    return '';
+  }
+  const preview = normalizeValue(result.matchPreview);
+  if (preview) {
+    return preview;
+  }
+  const reasons = Array.isArray(result.matchReasons) ? result.matchReasons : [];
+  for (let index = 0; index < reasons.length; index += 1) {
+    const reason = reasons[index];
+    const value = normalizeValue(reason && (reason.value || reason.preview));
+    if (value) {
+      return value;
+    }
+  }
+  return '';
+}
+
+function isGenericTaskAiSearchAnswer(answer) {
+  const normalized = normalizeTaskSearchText(answer);
+  if (!normalized) {
+    return true;
+  }
+  return normalized === 'нашел подходящие задачи по вашему запросу ссылки ниже'
+    || normalized === 'нашел подходящие задачи по вашему запросу ссылка ниже'
+    || normalized === 'нашел задачи ссылка ниже'
+    || normalized === 'нашел задачу ссылка ниже';
+}
+
+function buildTaskAiSearchAssistantMessage(results, mode = 'ai', serverAnswer = '') {
+  const resultCount = Array.isArray(results) ? results.length : 0;
+  const normalizedMode = normalizeTaskAiSearchMode(mode);
+  const serverText = normalizeValue(serverAnswer);
+
+  if (resultCount > 0) {
+    if (normalizedMode === 'ai') {
+      const reasonLines = results
+        .slice(0, 8)
+        .map((result, index) => {
+          const taskNumber = normalizeValue(result && (result.registryNumber || result.entryNumber || result.documentNumber || result.id));
+          const title = normalizeValue(result && result.title) || 'Задача';
+          const reason = getTaskAiSearchResultReasonText(result) || 'по актуальным полям задачи есть смысловое совпадение с запросом.';
+          const prefix = taskNumber ? `${index + 1}. № ${taskNumber} — ${title}` : `${index + 1}. ${title}`;
+          return `${prefix}: ${reason}`;
+        });
+      return [
+        `Нашёл ${resultCount} ${formatTaskCountLabel(resultCount)}. Почему дал именно эти задачи:`,
+        ...reasonLines,
+      ].join('\n');
+    }
+    if (serverText && !isGenericTaskAiSearchAnswer(serverText)) {
+      return serverText;
+    }
+    return `Нашёл ${resultCount} ${formatTaskCountLabel(resultCount)}. Ссылка ниже.`;
+  }
+
+  return serverText || 'По этому запросу задач не нашёл.';
+}
+
+function bindTaskSearchKeyboardViewport(wrap, sheet, inputElements = [], dismissButton = null) {
+  if (!(wrap instanceof HTMLElement) || !(sheet instanceof HTMLElement)) {
+    return () => {};
+  }
+
+  const html = document.documentElement;
+  const body = document.body;
+  const visualViewport = window.visualViewport || null;
+  const fields = inputElements.filter((element) => element instanceof HTMLElement);
+  const tools = dismissButton instanceof HTMLElement ? dismissButton.closest('.appdosc-ai-task-search__tools') : null;
+  const compactPointer = !window.matchMedia || window.matchMedia('(pointer: coarse)').matches;
+  const scrollX = typeof window.pageXOffset === 'number' ? window.pageXOffset : 0;
+  const scrollY = typeof window.pageYOffset === 'number' ? window.pageYOffset : 0;
+  const previousHtmlOverflow = html ? html.style.overflow : '';
+  const previousHtmlHeight = html ? html.style.height : '';
+  const previousBodyPosition = body ? body.style.position : '';
+  const previousBodyTop = body ? body.style.top : '';
+  const previousBodyLeft = body ? body.style.left : '';
+  const previousBodyRight = body ? body.style.right : '';
+  const previousBodyWidth = body ? body.style.width : '';
+  const previousBodyOverflow = body ? body.style.overflow : '';
+  const overlay = document.querySelector('.bottom-sheet-overlay');
+  let rafId = 0;
+  let blurTimer = 0;
+  let lastTouchY = 0;
+  let destroyed = false;
+
+  if (html) {
+    html.style.overflow = 'hidden';
+    html.style.height = '100%';
+  }
+  if (body) {
+    body.style.position = 'fixed';
+    body.style.top = `-${scrollY}px`;
+    body.style.left = `-${scrollX}px`;
+    body.style.right = '0';
+    body.style.width = '100%';
+    body.style.overflow = 'hidden';
+  }
+
+  const fieldHasFocus = () => fields.some((element) => document.activeElement === element);
+
+  const updateViewportVars = () => {
+    const layoutHeight = Math.max(window.innerHeight || 0, document.documentElement.clientHeight || 0);
+    const viewportHeight = visualViewport && Number.isFinite(visualViewport.height)
+      ? visualViewport.height
+      : layoutHeight;
+    const viewportTop = visualViewport && Number.isFinite(visualViewport.offsetTop)
+      ? visualViewport.offsetTop
+      : 0;
+    sheet.style.setProperty('--appdosc-task-search-viewport-height', `${Math.max(260, Math.floor(viewportHeight))}px`);
+    sheet.style.setProperty('--appdosc-task-search-viewport-top', `${Math.max(0, Math.floor(viewportTop))}px`);
+  };
+
+  const findScrollableTarget = (target) => {
+    const node = target instanceof Element ? target.closest(TASK_SEARCH_SCROLLABLE_SELECTOR) : null;
+    if (!(node instanceof HTMLElement) || !wrap.contains(node)) {
+      return null;
+    }
+    return node.scrollHeight > node.clientHeight + 1 ? node : null;
+  };
+
+  const handleTouchStart = (event) => {
+    if (event.touches && event.touches.length) {
+      lastTouchY = event.touches[0].clientY;
+    }
+  };
+
+  const handleTouchMove = (event) => {
+    if (!event.touches || event.touches.length !== 1) {
+      return;
+    }
+    const scrollable = findScrollableTarget(event.target);
+    if (!scrollable) {
+      event.preventDefault();
+      return;
+    }
+    const currentY = event.touches[0].clientY;
+    const movingDown = currentY > lastTouchY;
+    const atTop = scrollable.scrollTop <= 0;
+    const atBottom = scrollable.scrollTop + scrollable.clientHeight >= scrollable.scrollHeight - 1;
+    if ((movingDown && atTop) || (!movingDown && atBottom)) {
+      event.preventDefault();
+    }
+    lastTouchY = currentY;
+  };
+
+  const preventOverlayTouchMove = (event) => {
+    event.preventDefault();
+  };
+
+  const resetLayout = () => {
+    if (rafId) {
+      window.cancelAnimationFrame(rafId);
+      rafId = 0;
+    }
+    wrap.classList.remove('is-keyboard-open');
+    sheet.classList.remove('is-keyboard-aware');
+    sheet.style.removeProperty('--appdosc-task-search-sheet-height');
+    sheet.style.removeProperty('--appdosc-task-search-sheet-bottom');
+    if (dismissButton instanceof HTMLElement) {
+      dismissButton.hidden = true;
+    }
+    if (tools instanceof HTMLElement) {
+      tools.classList.remove('is-keyboard-visible');
+    }
+  };
+
+  const applyLayout = () => {
+    rafId = 0;
+    updateViewportVars();
+    if (!wrap.isConnected || !sheet.isConnected || !fieldHasFocus()) {
+      resetLayout();
+      return;
+    }
+
+    wrap.classList.add('is-keyboard-open');
+    if (dismissButton instanceof HTMLElement) {
+      dismissButton.hidden = false;
+    }
+    if (tools instanceof HTMLElement) {
+      tools.classList.add('is-keyboard-visible');
+    }
+
+    if (!compactPointer && window.innerWidth >= 768) {
+      sheet.classList.remove('is-keyboard-aware');
+      return;
+    }
+
+    const viewportHeight = visualViewport && Number.isFinite(visualViewport.height)
+      ? visualViewport.height
+      : Math.max(window.innerHeight || 0, document.documentElement.clientHeight || 0);
+    const availableHeight = Math.max(220, Math.floor(viewportHeight));
+
+    sheet.classList.add('is-keyboard-aware');
+    sheet.style.setProperty('--appdosc-task-search-sheet-height', `${availableHeight}px`);
+    sheet.style.setProperty('--appdosc-task-search-sheet-bottom', '0px');
+  };
+
+  const scheduleLayout = () => {
+    if (rafId) {
+      return;
+    }
+    rafId = window.requestAnimationFrame(applyLayout);
+  };
+
+  const handleFocus = () => {
+    if (blurTimer) {
+      window.clearTimeout(blurTimer);
+      blurTimer = 0;
+    }
+    scheduleLayout();
+  };
+
+  const handleBlur = () => {
+    if (blurTimer) {
+      window.clearTimeout(blurTimer);
+    }
+    blurTimer = window.setTimeout(() => {
+      blurTimer = 0;
+      if (!fieldHasFocus()) {
+        resetLayout();
+      }
+    }, 80);
+  };
+
+  fields.forEach((element) => {
+    element.addEventListener('focus', handleFocus);
+    element.addEventListener('blur', handleBlur);
+  });
+  sheet.addEventListener('touchstart', handleTouchStart, { passive: true });
+  sheet.addEventListener('touchmove', handleTouchMove, { passive: false });
+  if (overlay instanceof HTMLElement) {
+    overlay.addEventListener('touchmove', preventOverlayTouchMove, { passive: false });
+  }
+  if (visualViewport) {
+    visualViewport.addEventListener('resize', scheduleLayout);
+    visualViewport.addEventListener('scroll', scheduleLayout);
+  } else {
+    window.addEventListener('resize', scheduleLayout);
+  }
+
+  scheduleLayout();
+
+  return () => {
+    if (destroyed) {
+      return;
+    }
+    destroyed = true;
+    fields.forEach((element) => {
+      element.removeEventListener('focus', handleFocus);
+      element.removeEventListener('blur', handleBlur);
+    });
+    sheet.removeEventListener('touchstart', handleTouchStart);
+    sheet.removeEventListener('touchmove', handleTouchMove);
+    if (overlay instanceof HTMLElement) {
+      overlay.removeEventListener('touchmove', preventOverlayTouchMove);
+    }
+    if (visualViewport) {
+      visualViewport.removeEventListener('resize', scheduleLayout);
+      visualViewport.removeEventListener('scroll', scheduleLayout);
+    } else {
+      window.removeEventListener('resize', scheduleLayout);
+    }
+    if (blurTimer) {
+      window.clearTimeout(blurTimer);
+      blurTimer = 0;
+    }
+    resetLayout();
+    sheet.style.removeProperty('--appdosc-task-search-viewport-height');
+    sheet.style.removeProperty('--appdosc-task-search-viewport-top');
+    if (html) {
+      html.style.overflow = previousHtmlOverflow;
+      html.style.height = previousHtmlHeight;
+    }
+    if (body) {
+      body.style.position = previousBodyPosition;
+      body.style.top = previousBodyTop;
+      body.style.left = previousBodyLeft;
+      body.style.right = previousBodyRight;
+      body.style.width = previousBodyWidth;
+      body.style.overflow = previousBodyOverflow;
+    }
+    if (typeof window.scrollTo === 'function') {
+      window.scrollTo(scrollX, scrollY);
+    }
+  };
+}
+
+function openTaskSearchModal() {
+  openBottomSheet((close) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'appdosc-task-search-modal';
+    wrap.innerHTML = `
+	      <div class="appdosc-task-search-modal__head">
+	        <span class="appdosc-task-search-modal__kicker">Помощник</span>
+	        <button type="button" class="appdosc-task-search-modal__close" data-task-search-close aria-label="Закрыть помощника">×</button>
+	        <h3 class="appdosc-task-search-modal__title">Поиск задачи</h3>
+	        <p class="appdosc-task-search-modal__subtitle">Ищу только по вашему запросу: по задачам, вложениям, краткому содержанию файлов и ответам.</p>
+          <div class="appdosc-ai-task-search__mode" role="group" aria-label="Режим поиска">
+            <button type="button" class="appdosc-ai-task-search__mode-button" data-ai-task-search-mode="local">Локально</button>
+            <button type="button" class="appdosc-ai-task-search__mode-button" data-ai-task-search-mode="ai">ИИ Groq</button>
+          </div>
+          <label class="appdosc-ai-task-search__folder">
+            <span class="appdosc-ai-task-search__folder-label">Папка</span>
+            <select class="appdosc-ai-task-search__folder-select" data-ai-task-search-folder-scope></select>
+          </label>
+	      </div>
+	      <section class="appdosc-ai-task-search" data-task-search-panel="ai" aria-label="ИИ-помощник по задачам">
+	        <div class="appdosc-ai-task-search__messages" data-ai-task-search-messages></div>
+	        <form class="appdosc-ai-task-search__form" data-ai-task-search-form>
+          <textarea
+	            class="appdosc-ai-task-search__input"
+	            data-ai-task-search-input
+	            rows="2"
+	            placeholder="Например: найди просроченные по договору"
+	            autocomplete="off"
+	            enterkeyhint="send"
+	            aria-label="Вопрос ИИ-помощнику"
+          ></textarea>
+          <div class="appdosc-ai-task-search__tools">
+            <button type="button" class="appdosc-ai-task-search__tool" data-ai-task-search-voice aria-label="Голосовой запрос">
+              <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                <path d="M12 4.5a3 3 0 0 0-3 3v4a3 3 0 0 0 6 0v-4a3 3 0 0 0-3-3Z" fill="none" stroke="currentColor" stroke-width="1.8"></path>
+                <path d="M6.5 11.5a5.5 5.5 0 0 0 11 0M12 17v3M9 20h6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path>
+              </svg>
+            </button>
+            <button type="button" class="appdosc-ai-task-search__keyboard" data-ai-task-search-keyboard-dismiss aria-label="Скрыть клавиатуру" hidden>Готово</button>
+            <button type="submit" class="appdosc-ai-task-search__send" data-ai-task-search-send>Спросить</button>
+          </div>
+	        </form>
+	        <div class="appdosc-ai-task-search__status" data-ai-task-search-status></div>
+	      </section>
+	      <div class="appdosc-task-search-modal__actions">
+	        <button type="button" class="appdosc-task-search-modal__action" data-task-search-reset>Сбросить</button>
+	      </div>
+    `;
+
+    const resetButton = wrap.querySelector('[data-task-search-reset]');
+    const closeButton = wrap.querySelector('[data-task-search-close]');
+    const aiForm = wrap.querySelector('[data-ai-task-search-form]');
+    const aiInput = wrap.querySelector('[data-ai-task-search-input]');
+    const aiSendButton = wrap.querySelector('[data-ai-task-search-send]');
+    const aiVoiceButton = wrap.querySelector('[data-ai-task-search-voice]');
+    const aiKeyboardDismissButton = wrap.querySelector('[data-ai-task-search-keyboard-dismiss]');
+    const aiModeButtons = Array.from(wrap.querySelectorAll('[data-ai-task-search-mode]'));
+    const aiFolderScope = wrap.querySelector('[data-ai-task-search-folder-scope]');
+    const aiMessages = wrap.querySelector('[data-ai-task-search-messages]');
+    const aiStatus = wrap.querySelector('[data-ai-task-search-status]');
+    let recognition = null;
+    let recognitionActive = false;
+    let recognitionStopRequested = false;
+    let voiceInputSupported = false;
+    let aiSearchBusy = false;
+    let aiSearchRequestSeq = 0;
+    let aiSearchAbortController = null;
+    let taskSearchViewportCleanup = null;
+    let aiInputResizeFrame = 0;
+    let cleanedUp = false;
+    const taskSearchSession = getTaskAiSearchSession();
+    state.taskSearchMode = normalizeTaskAiSearchMode(taskSearchSession.searchMode || state.taskSearchMode);
+    const initialFolderScope = normalizeTaskSearchScope(taskSearchSession.folderScope || state.activeFilters.searchScope);
+    setTaskSearchBackgroundLocked(true);
+
+    if (aiInput instanceof HTMLTextAreaElement) {
+      aiInput.value = taskSearchSession.aiInput || taskSearchSession.lastQuery || '';
+    }
+
+    const shouldAutoFocusTaskSearchField = () => {
+      if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) {
+        return false;
+      }
+      return window.innerWidth >= 768;
+    };
+
+    const blurTaskSearchFields = () => {
+      [aiInput].forEach((element) => {
+        if (element instanceof HTMLElement) {
+          element.blur();
+        }
+      });
+      if (document.activeElement instanceof HTMLElement && wrap.contains(document.activeElement)) {
+        document.activeElement.blur();
+      }
+    };
+
+    const resizeAiInputNow = () => {
+      if (!(aiInput instanceof HTMLTextAreaElement)) {
+        return;
+      }
+      aiInput.style.height = 'auto';
+      const maxHeight = Math.max(72, Math.min(126, Math.floor(window.innerHeight * 0.22)));
+      aiInput.style.height = `${Math.min(maxHeight, Math.max(52, aiInput.scrollHeight))}px`;
+    };
+
+    const resizeAiInput = () => {
+      if (aiInputResizeFrame) {
+        return;
+      }
+      const schedule = typeof window.requestAnimationFrame === 'function'
+        ? window.requestAnimationFrame.bind(window)
+        : function fallbackResizeFrame(callback) { return window.setTimeout(callback, 16); };
+      aiInputResizeFrame = schedule(() => {
+        aiInputResizeFrame = 0;
+        resizeAiInputNow();
+      });
+    };
+
+    const updateModalControls = () => {
+      const currentMode = normalizeTaskAiSearchMode(state.taskSearchMode);
+      if (aiFolderScope instanceof HTMLSelectElement) {
+        const currentScope = normalizeTaskSearchScope(getTaskAiSearchSession().folderScope || initialFolderScope);
+        populateTaskSearchScopeSelect(aiFolderScope, currentScope);
+      }
+      aiModeButtons.forEach((button) => {
+        if (!(button instanceof HTMLButtonElement)) {
+          return;
+        }
+        const buttonMode = normalizeTaskAiSearchMode(button.dataset.aiTaskSearchMode);
+        const isActive = buttonMode === currentMode;
+        button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+      });
+      if (resetButton instanceof HTMLButtonElement) {
+        const session = getTaskAiSearchSession();
+        const aiQuery = aiInput instanceof HTMLTextAreaElement ? normalizeValue(aiInput.value) : session.aiInput;
+        const hasAiHistory = aiQuery !== ''
+          || session.messages.length > 1
+          || session.results.length > 0
+          || session.statusMessage !== '';
+        resetButton.disabled = !hasAiHistory;
+      }
+      if (aiSendButton instanceof HTMLButtonElement) {
+        aiSendButton.textContent = currentMode === 'local' ? 'Найти' : 'Спросить';
+      }
+    };
+
+    const setVoiceButtonActive = (active) => {
+      if (!(aiVoiceButton instanceof HTMLButtonElement)) {
+        return;
+      }
+      aiVoiceButton.classList.toggle('appdosc-ai-task-search__tool--active', active);
+      aiVoiceButton.setAttribute('aria-pressed', active ? 'true' : 'false');
+      aiVoiceButton.title = active ? 'Остановить запись' : 'Голосовой запрос';
+    };
+
+    const stopRecognition = (silent = false) => {
+      if (!recognition) {
+        return;
+      }
+      recognitionStopRequested = true;
+      try {
+        if (silent && typeof recognition.abort === 'function') {
+          recognition.abort();
+        } else {
+          recognition.stop();
+        }
+      } catch (error) {
+        recognitionActive = false;
+        setVoiceButtonActive(false);
+      }
+    };
+
+    const runAiSearch = async (source) => {
+      const query = aiInput instanceof HTMLTextAreaElement ? normalizeValue(aiInput.value) : '';
+      if (query.length < 2) {
+        setTaskAiSearchStatus(aiStatus, 'Напишите вопрос хотя бы из двух символов.', 'error');
+        return;
+      }
+      if (aiSearchBusy) {
+        setTaskAiSearchStatus(aiStatus, 'Помощник уже проверяет предыдущий вопрос.', 'loading');
+        return;
+      }
+      blurTaskSearchFields();
+
+      aiSearchBusy = true;
+      const requestSeq = aiSearchRequestSeq + 1;
+      aiSearchRequestSeq = requestSeq;
+      if (aiSearchAbortController) {
+        try { aiSearchAbortController.abort(); } catch (_) {}
+      }
+      aiSearchAbortController = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const searchMode = normalizeTaskAiSearchMode(state.taskSearchMode);
+      const searchFolderScope = aiFolderScope instanceof HTMLSelectElement
+        ? normalizeTaskSearchScope(aiFolderScope.value)
+        : normalizeTaskSearchScope(getTaskAiSearchSession().folderScope || initialFolderScope);
+      const searchFolderPayload = resolveTaskAiSearchFolderPayload(searchFolderScope);
+      const aiSearchLoadingMessage = getTaskAiSearchLoadingMessage(searchMode, source);
+      saveTaskAiSearchSession({
+        aiInput: query,
+        searchMode,
+        folderScope: searchFolderPayload.folderScope,
+        lastQuery: query,
+        results: [],
+        statusMessage: aiSearchLoadingMessage,
+        statusTone: 'loading',
+      });
+      appendTaskAiSearchSessionMessage('user', query);
+      appendTaskAiSearchMessage(aiMessages, 'user', query);
+      setTaskAiSearchStatus(aiStatus, aiSearchLoadingMessage, 'loading');
+      if (aiSendButton instanceof HTMLButtonElement) {
+        aiSendButton.disabled = true;
+      }
+      if (aiVoiceButton instanceof HTMLButtonElement) {
+        aiVoiceButton.disabled = true;
+      }
+
+      try {
+        const data = await requestTaskAiSearch(query, {
+          mode: searchMode,
+          folderScope: searchFolderPayload.folderScope,
+          signal: aiSearchAbortController ? aiSearchAbortController.signal : undefined,
+        });
+        if (cleanedUp || requestSeq !== aiSearchRequestSeq) {
+          return;
+        }
+        const results = Array.isArray(data.results)
+          ? data.results.map((result) => normalizeTaskAiSearchResult(result)).filter(Boolean)
+          : [];
+        const answer = buildTaskAiSearchAssistantMessage(results, searchMode, data && data.answer);
+        appendTaskAiSearchSessionMessage('assistant', answer);
+        saveTaskAiSearchSession({ results });
+        appendTaskAiSearchMessage(aiMessages, 'assistant', answer, results);
+        saveTaskAiSearchSession({
+          statusMessage: '',
+          statusTone: '',
+        });
+        setTaskAiSearchStatus(
+          aiStatus,
+          '',
+          '',
+        );
+      } catch (error) {
+        if (cleanedUp || requestSeq !== aiSearchRequestSeq) {
+          return;
+        }
+        if (error && error.name === 'AbortError') {
+          return;
+        }
+        const message = error instanceof Error ? error.message : 'Помощник не смог проверить задачи.';
+        saveTaskAiSearchSession({
+          statusMessage: message,
+          statusTone: 'error',
+        });
+        setTaskAiSearchStatus(aiStatus, message, 'error');
+      } finally {
+        if (requestSeq === aiSearchRequestSeq) {
+          aiSearchBusy = false;
+          aiSearchAbortController = null;
+        }
+        if (aiSendButton instanceof HTMLButtonElement) {
+          aiSendButton.disabled = false;
+        }
+        if (aiVoiceButton instanceof HTMLButtonElement) {
+          aiVoiceButton.disabled = !voiceInputSupported;
+        }
+      }
+    };
+
+    if (resetButton instanceof HTMLButtonElement) {
+      resetButton.addEventListener('click', () => {
+        const currentMode = normalizeTaskAiSearchMode(state.taskSearchMode);
+        const currentFolderScope = aiFolderScope instanceof HTMLSelectElement
+          ? normalizeTaskSearchScope(aiFolderScope.value)
+          : normalizeTaskSearchScope(getTaskAiSearchSession().folderScope || initialFolderScope);
+        resetTaskAiSearchSession();
+        saveTaskAiSearchSession({ searchMode: currentMode, folderScope: currentFolderScope });
+        if (aiInput instanceof HTMLTextAreaElement) {
+          aiInput.value = '';
+        }
+        renderTaskAiSearchMessages(aiMessages, []);
+        appendTaskAiSearchSessionMessage('assistant', TASK_AI_ASSISTANT_WELCOME);
+        renderTaskAiSearchMessages(aiMessages, getTaskAiSearchSession().messages, getTaskAiSearchSession().results);
+        setTaskAiSearchStatus(aiStatus, '', '');
+        updateModalControls();
+        resizeAiInput();
+        if (shouldAutoFocusTaskSearchField() && aiInput instanceof HTMLTextAreaElement) {
+          aiInput.focus({ preventScroll: true });
+        }
+      });
+    }
+    aiModeButtons.forEach((button) => {
+      if (!(button instanceof HTMLButtonElement)) {
+        return;
+      }
+      button.addEventListener('click', () => {
+        if (aiSearchBusy) {
+          setTaskAiSearchStatus(aiStatus, 'Дождитесь завершения текущего поиска.', 'loading');
+          return;
+        }
+        const nextMode = normalizeTaskAiSearchMode(button.dataset.aiTaskSearchMode);
+        state.taskSearchMode = nextMode;
+        saveTaskAiSearchSession({ searchMode: nextMode });
+        setTaskAiSearchStatus(
+          aiStatus,
+          nextMode === 'local'
+            ? 'Локальный режим: ищу совпадения без обращения к ИИ.'
+            : 'ИИ-режим: Groq будет искать по смыслу в JSON задач.',
+          'success',
+        );
+        updateModalControls();
+      });
+    });
+    if (closeButton instanceof HTMLButtonElement) {
+      closeButton.addEventListener('click', close);
+    }
+    if (aiFolderScope instanceof HTMLSelectElement) {
+      populateTaskSearchScopeSelect(aiFolderScope, initialFolderScope);
+      saveTaskAiSearchSession({ folderScope: normalizeTaskSearchScope(aiFolderScope.value) });
+      aiFolderScope.addEventListener('change', () => {
+        const nextScope = normalizeTaskSearchScope(aiFolderScope.value);
+        saveTaskAiSearchSession({ folderScope: nextScope });
+        const selectedLabel = aiFolderScope.options[aiFolderScope.selectedIndex]?.text || 'выбранная папка';
+        setTaskAiSearchStatus(aiStatus, `Поиск в чате: ${selectedLabel}.`, 'success');
+      });
+    }
+    if (aiForm instanceof HTMLFormElement) {
+      aiForm.addEventListener('submit', (event) => {
+        event.preventDefault();
+        runAiSearch('text');
+      });
+    }
+    if (aiKeyboardDismissButton instanceof HTMLButtonElement) {
+      aiKeyboardDismissButton.addEventListener('pointerdown', (event) => {
+        event.preventDefault();
+        blurTaskSearchFields();
+      });
+      aiKeyboardDismissButton.addEventListener('click', () => {
+        blurTaskSearchFields();
+      });
+    }
+    if (aiInput instanceof HTMLTextAreaElement) {
+      resizeAiInput();
+      aiInput.addEventListener('input', () => {
+        saveTaskAiSearchSession({ aiInput: normalizeValue(aiInput.value) });
+        resizeAiInput();
+        updateModalControls();
+      });
+      aiInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' && !event.shiftKey) {
+          event.preventDefault();
+          runAiSearch('text');
+        }
+      });
+    }
+
+    const SpeechRecognition = resolveTaskSpeechRecognitionConstructor();
+    voiceInputSupported = Boolean(SpeechRecognition);
+    if (aiVoiceButton instanceof HTMLButtonElement) {
+      if (!SpeechRecognition) {
+        aiVoiceButton.disabled = true;
+        aiVoiceButton.title = 'Голосовой ввод недоступен в этом браузере';
+      } else {
+        setVoiceButtonActive(false);
+        aiVoiceButton.addEventListener('click', () => {
+          if (recognitionActive && recognition) {
+            stopRecognition(false);
+            return;
+          }
+          if (aiSearchBusy) {
+            setTaskAiSearchStatus(aiStatus, 'Дождитесь, пока помощник закончит предыдущий вопрос.', 'loading');
+            return;
+          }
+          recognition = new SpeechRecognition();
+          recognition.lang = 'ru-RU';
+          recognition.interimResults = false;
+          recognition.maxAlternatives = 1;
+          recognition.continuous = false;
+          recognition.onstart = () => {
+            if (cleanedUp) {
+              stopRecognition(true);
+              return;
+            }
+            recognitionStopRequested = false;
+            recognitionActive = true;
+            setVoiceButtonActive(true);
+            setTaskAiSearchStatus(aiStatus, 'Слушаю голосовой запрос...', 'loading');
+          };
+          recognition.onend = () => {
+            recognitionActive = false;
+            setVoiceButtonActive(false);
+            recognition = null;
+          };
+          recognition.onerror = (event) => {
+            const errorCode = normalizeValue(event && event.error);
+            if (cleanedUp || recognitionStopRequested || errorCode === 'aborted') {
+              return;
+            }
+            if (errorCode === 'not-allowed' || errorCode === 'service-not-allowed') {
+              setTaskAiSearchStatus(aiStatus, 'Нет доступа к микрофону. Разрешите запись или введите запрос текстом.', 'error');
+              return;
+            }
+            if (errorCode === 'no-speech') {
+              setTaskAiSearchStatus(aiStatus, 'Голос не распознан. Попробуйте ещё раз или введите запрос текстом.', 'error');
+              return;
+            }
+            if (errorCode === 'audio-capture') {
+              setTaskAiSearchStatus(aiStatus, 'Микрофон недоступен на устройстве.', 'error');
+              return;
+            }
+            setTaskAiSearchStatus(aiStatus, 'Не удалось распознать голос. Можно ввести запрос текстом.', 'error');
+          };
+          recognition.onresult = (event) => {
+            if (cleanedUp) {
+              return;
+            }
+            const transcript = normalizeValue(event?.results?.[0]?.[0]?.transcript);
+            if (!transcript) {
+              return;
+            }
+            if (aiInput instanceof HTMLTextAreaElement) {
+              aiInput.value = transcript;
+              resizeAiInput();
+            }
+            saveTaskAiSearchSession({ aiInput: transcript, lastQuery: transcript });
+            setTaskAiSearchStatus(aiStatus, `Распознал: «${transcript}»`, 'loading');
+            runAiSearch('voice');
+          };
+          try {
+            recognition.start();
+          } catch (error) {
+            recognition = null;
+            recognitionActive = false;
+            recognitionStopRequested = false;
+            setVoiceButtonActive(false);
+            setTaskAiSearchStatus(aiStatus, 'Голосовой ввод уже запущен или недоступен.', 'error');
+          }
+        });
+      }
+    }
+
+    state.taskSearchCleanup = () => {
+      if (cleanedUp) {
+        return;
+      }
+      cleanedUp = true;
+      try {
+        aiSearchRequestSeq += 1;
+        if (aiSearchAbortController) {
+          try { aiSearchAbortController.abort(); } catch (_) {}
+          aiSearchAbortController = null;
+        }
+        if (recognition && recognitionActive) {
+          stopRecognition(true);
+        }
+        recognition = null;
+        recognitionActive = false;
+        recognitionStopRequested = true;
+        setVoiceButtonActive(false);
+        if (typeof taskSearchViewportCleanup === 'function') {
+          taskSearchViewportCleanup();
+          taskSearchViewportCleanup = null;
+        }
+        if (aiInputResizeFrame) {
+          if (typeof window.cancelAnimationFrame === 'function') {
+            window.cancelAnimationFrame(aiInputResizeFrame);
+          } else {
+            window.clearTimeout(aiInputResizeFrame);
+          }
+          aiInputResizeFrame = 0;
+        }
+      } finally {
+        setTaskSearchBackgroundLocked(false);
+      }
+    };
+
+    updateModalControls();
+    if (!getTaskAiSearchSession().messages.length) {
+      appendTaskAiSearchSessionMessage('assistant', TASK_AI_ASSISTANT_WELCOME);
+    }
+    renderTaskAiSearchMessages(aiMessages, getTaskAiSearchSession().messages, getTaskAiSearchSession().results);
+    setTaskAiSearchStatus(aiStatus, getTaskAiSearchSession().statusMessage, getTaskAiSearchSession().statusTone);
+    window.setTimeout(() => {
+      const sheet = wrap.closest('.bottom-sheet--task-search');
+      if (sheet instanceof HTMLElement && typeof taskSearchViewportCleanup !== 'function') {
+        taskSearchViewportCleanup = bindTaskSearchKeyboardViewport(
+          wrap,
+          sheet,
+          [aiInput],
+          aiKeyboardDismissButton,
+        );
+      }
+    }, 0);
+    window.setTimeout(() => {
+      if (!shouldAutoFocusTaskSearchField()) {
+        return;
+      }
+      if (aiInput instanceof HTMLTextAreaElement) {
+        aiInput.focus({ preventScroll: true });
+      }
+    }, 80);
+
+    return wrap;
+  });
+}
+
+function bindAssigneePickerKeyboardViewport(sheet, searchInput) {
+  if (!(sheet instanceof HTMLElement)) {
+    return () => {};
+  }
+
+  const visualViewport = window.visualViewport || null;
+  let rafId = 0;
+
+  const resetLayout = () => {
+    if (rafId) {
+      window.cancelAnimationFrame(rafId);
+      rafId = 0;
+    }
+    sheet.classList.remove('is-keyboard-aware');
+    sheet.style.removeProperty('--appdosc-assignee-picker-panel-height');
+    sheet.style.removeProperty('--appdosc-assignee-picker-panel-bottom');
+  };
+
+  const applyLayout = () => {
+    rafId = 0;
+    if (sheet.hidden) {
+      resetLayout();
+      return;
+    }
+
+    const layoutHeight = Math.max(window.innerHeight || 0, document.documentElement.clientHeight || 0);
+    const viewportHeight = visualViewport && Number.isFinite(visualViewport.height)
+      ? visualViewport.height
+      : layoutHeight;
+    const viewportBottom = visualViewport
+      ? (Number(visualViewport.offsetTop || 0) + viewportHeight)
+      : layoutHeight;
+    const keyboardInset = Math.max(0, Math.round(layoutHeight - viewportBottom));
+    const availableHeight = Math.max(320, Math.floor(viewportHeight - 8));
+
+    sheet.classList.add('is-keyboard-aware');
+    sheet.style.setProperty('--appdosc-assignee-picker-panel-height', `${availableHeight}px`);
+    sheet.style.setProperty('--appdosc-assignee-picker-panel-bottom', `${keyboardInset}px`);
+  };
+
+  const scheduleLayout = () => {
+    if (rafId) {
+      return;
+    }
+    rafId = window.requestAnimationFrame(applyLayout);
+  };
+
+  const focusSearch = () => {
+    scheduleLayout();
+    window.setTimeout(() => {
+      if (sheet.hidden || !(searchInput instanceof HTMLElement)) {
+        return;
+      }
+      if (typeof searchInput.scrollIntoView === 'function') {
+        searchInput.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      }
+    }, 90);
+  };
+
+  if (visualViewport) {
+    visualViewport.addEventListener('resize', scheduleLayout);
+    visualViewport.addEventListener('scroll', scheduleLayout);
+  } else {
+    window.addEventListener('resize', scheduleLayout);
+  }
+  if (searchInput instanceof HTMLElement) {
+    searchInput.addEventListener('focus', focusSearch);
+  }
+
+  scheduleLayout();
+
+  return () => {
+    if (visualViewport) {
+      visualViewport.removeEventListener('resize', scheduleLayout);
+      visualViewport.removeEventListener('scroll', scheduleLayout);
+    } else {
+      window.removeEventListener('resize', scheduleLayout);
+    }
+    if (searchInput instanceof HTMLElement) {
+      searchInput.removeEventListener('focus', focusSearch);
+    }
+    resetLayout();
+  };
 }
 
 function openFolderPicker(onSelect, options = {}) {
@@ -8081,11 +10115,14 @@ function renderFolders() {
       : 0;
     elements.foldersCount.textContent = String(userTaskCount);
   }
+  syncTaskSearchControls();
 }
 
 function updateVisibleTasks() {
   state.activeFilters.folderId = ensureActiveFolderId(state.activeFilters.folderId || activeFolderId);
   activeFolderId = state.activeFilters.folderId;
+  state.activeFilters.searchQuery = normalizeValue(state.activeFilters.searchQuery);
+  state.activeFilters.searchScope = normalizeTaskSearchScope(state.activeFilters.searchScope);
   state.activeFilters.statusFilters = normalizeTaskFilters(state.activeFilters.statusFilters);
   state.taskFilter = state.activeFilters.statusFilters;
   const normalizedFilters = state.activeFilters.statusFilters;
@@ -8116,7 +10153,9 @@ function updateVisibleTasks() {
     return;
   }
 
-  const folderScopedTasks = resolveFolderScope(state.tasks, state.activeFilters.folderId);
+  const searchQuery = state.activeFilters.searchQuery;
+  const folderScopeId = searchQuery ? resolveTaskSearchFolderId() : state.activeFilters.folderId;
+  const folderScopedTasks = resolveFolderScope(state.tasks, folderScopeId);
 
   const filtered = applyTaskFilter(normalizedFilters, folderScopedTasks);
   let visible = filtered.filter(({ task }) => currentUserParticipatesInTask(task));
@@ -8125,6 +10164,10 @@ function updateVisibleTasks() {
     visible = visible.filter(({ task }) => taskHasNoVisibleStatus(task));
   } else if (shouldApplyEntryStatusExclusion(normalizedFilters)) {
     visible = visible.filter(({ task }) => !isTaskExcludedByEntryStatus(task));
+  }
+
+  if (searchQuery) {
+    visible = visible.filter(({ task }) => taskMatchesUniversalSearch(task, searchQuery));
   }
 
   state.visibleTasks = applyCompactFilters(visible);
@@ -10514,10 +12557,6 @@ function createDownloadFileAccessUrl(rawUrl, fileName = '', disposition = 'attac
       endpointUrl.searchParams.set('name', fileName);
     }
     endpointUrl.searchParams.set('disposition', disposition === 'inline' ? 'inline' : 'attachment');
-    if (disposition !== 'inline') {
-      endpointUrl.searchParams.set('_', String(Date.now()));
-    }
-
     return endpointUrl.toString();
   } catch (error) {
     return normalizedUrl;
@@ -10531,7 +12570,7 @@ async function downloadFileFromUrl(url, filename) {
   try {
     const response = await fetch(url, {
       credentials: 'include',
-      cache: 'no-store',
+      cache: 'default',
     });
     if (!response.ok) {
       return false;
@@ -10579,8 +12618,7 @@ async function fetchFileAsBlob(url) {
   try {
     const response = await fetch(url, {
       credentials: 'include',
-      cache: 'no-store',
-      headers: { 'Cache-Control': 'no-cache, no-store' },
+      cache: 'default',
     });
     if (!response.ok) {
       return null;
@@ -13296,6 +15334,8 @@ async function generateViewerFileAiBrief(file, fileName) {
 
     try {
       await persistViewerFileAiBrief(task, file, nextBrief);
+      markFileBriefSnapshotDirty();
+      void refreshFileBriefSnapshotForSearch();
     } catch (error) {
       setStatus('warning', `Кратко ИИ сохранено локально: ${error instanceof Error ? error.message : 'ошибка сохранения'}`);
     }
@@ -21133,6 +23173,23 @@ function buildAssigneeOptionSubtitle(entry) {
   return normalizeValue(entry.position) || 'не указана';
 }
 
+function buildAssignmentTemplatePreviewSubtitle(entry) {
+  const position = buildAssigneeOptionSubtitle(entry);
+  return position && position !== 'не указана' ? position : 'Должность не указана';
+}
+
+function resolveAssignmentTemplatePreviewAvatarUrl(entry) {
+  if (!entry || typeof entry !== 'object') {
+    return '';
+  }
+  const directAvatarUrl = resolveAvatarUrlFromEntry(entry);
+  if (directAvatarUrl) {
+    return directAvatarUrl;
+  }
+  const telegramId = resolveTelegramUserIdFromEntry(entry);
+  return telegramId ? `${TELEGRAM_AVATAR_ENDPOINT}&user_id=${encodeURIComponent(telegramId)}` : '';
+}
+
 function formatDocumentCell(task) {
   const parts = [];
   const title = normalizeValue(task?.document);
@@ -21864,9 +23921,32 @@ function handleSummaryBadgeClick(filter) {
   safeRender(reason);
 }
 
+function clearEntryTaskFocusForInteractiveSearch(source) {
+  if (!state.entryTaskId) {
+    return;
+  }
+  const previousEntryTaskId = state.entryTaskId;
+  state.entryTaskId = '';
+  if (!state.entryTaskLog || typeof state.entryTaskLog !== 'object') {
+    state.entryTaskLog = { resolved: false, matched: false, expanded: false };
+  }
+  state.entryTaskLog.resolved = false;
+  state.entryTaskLog.expanded = false;
+  logEntryTaskEvent('entry_task_focus_cleared', {
+    source: normalizeValue(source) || 'task_search',
+    entryTaskId: previousEntryTaskId,
+  });
+}
+
 function attachEvents() {
   if (elements.refreshButton) {
-    elements.refreshButton.addEventListener('click', () => loadTasks(true));
+    elements.refreshButton.addEventListener('click', () => {
+      if (isTaskSearchBackgroundLocked()) {
+        logClientEvent('manual_refresh_skipped', { reason: 'task_search_open' });
+        return;
+      }
+      loadTasks(true);
+    });
   }
   if (elements.taskSelector) {
     elements.taskSelector.addEventListener('change', handleTaskSelectorChange);
@@ -21895,6 +23975,9 @@ function attachEvents() {
     elements.taskFilterToggle.addEventListener('click', () => {
       setTaskFilterPanelExpanded(!state.compactFilters.expanded);
     });
+  }
+  if (elements.taskSearchOpen instanceof HTMLElement) {
+    elements.taskSearchOpen.addEventListener('click', openTaskSearchModal);
   }
   if (Array.isArray(elements.filterQuickButtons)) {
     elements.filterQuickButtons.forEach((button) => {
@@ -22037,13 +24120,13 @@ function attachEvents() {
   }
 
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') {
+    if (document.visibilityState === 'visible' && !isTaskSearchBackgroundLocked()) {
       loadTasks(false);
     }
   });
 
   window.addEventListener('pageshow', (event) => {
-    if (event.persisted) {
+    if (event.persisted && !isTaskSearchBackgroundLocked()) {
       loadTasks(false);
     }
   });
@@ -22272,6 +24355,7 @@ function bootstrap() {
   attachPdfDiagnostics();
   readAssetVersionInfo();
   initTelegram();
+  attachPublicTaskHooks();
   attachEvents();
   prewarmMiniAppPdfResources();
   if (!safeRender('bootstrap_initial')) {
@@ -23997,6 +26081,34 @@ function getAssignmentTemplateCardController(card) {
   if (!controller) {
     controller = {
       roles: {},
+      preview(template) {
+        const result = {
+          added: 0,
+          skipped: 0,
+          missing: 0,
+          roles: {
+            responsible: { willAdd: [], skipped: [], missing: [] },
+            subordinate: { willAdd: [], skipped: [], missing: [] },
+          },
+        };
+        ['responsible', 'subordinate'].forEach((roleName) => {
+          const roleController = this.roles[roleName];
+          if (!roleController || typeof roleController.previewTemplate !== 'function') {
+            return;
+          }
+          const roleResult = roleController.previewTemplate(template) || {};
+          const summary = {
+            willAdd: Array.isArray(roleResult.willAdd) ? roleResult.willAdd : [],
+            skipped: Array.isArray(roleResult.skipped) ? roleResult.skipped : [],
+            missing: Array.isArray(roleResult.missing) ? roleResult.missing : [],
+          };
+          result.roles[roleName] = summary;
+          result.added += summary.willAdd.length;
+          result.skipped += summary.skipped.length;
+          result.missing += summary.missing.length;
+        });
+        return result;
+      },
       apply(template) {
         const result = { added: 0, skipped: 0, missing: 0 };
         ['responsible', 'subordinate'].forEach((roleName) => {
@@ -24051,6 +26163,7 @@ function setupAssignmentTemplateControls({
   responsibleCandidates = [],
   subordinateCandidates = [],
   applyTemplate,
+  previewTemplate,
   setStatus,
 }) {
   if (!sheet || !optionsList || typeof applyTemplate !== 'function') {
@@ -24065,7 +26178,10 @@ function setupAssignmentTemplateControls({
   let templates = readAssignmentTemplates(organization, role);
   const controller = getAssignmentTemplateCardController(card);
   if (controller && (role === 'responsible' || role === 'subordinate')) {
-    controller.roles[role] = { applyTemplate };
+    controller.roles[role] = {
+      applyTemplate,
+      previewTemplate: typeof previewTemplate === 'function' ? previewTemplate : null,
+    };
   }
   const wizardOptions = {
     responsible: buildAssignmentTemplateOptionEntries(responsibleCandidates, 'responsible'),
@@ -24079,6 +26195,8 @@ function setupAssignmentTemplateControls({
   let editingTemplateIndex = -1;
   let templatesSaving = false;
   let templatesLoadedFromServer = false;
+  let pendingTemplateApplyIndex = -1;
+  let nameStepAutofocusDone = false;
 
   const wrapper = document.createElement('div');
   wrapper.className = 'appdosc-assignee-template';
@@ -24106,15 +26224,28 @@ function setupAssignmentTemplateControls({
   head.append(headText, manageButton);
 
   const nameRow = document.createElement('div');
-  nameRow.className = 'appdosc-assignee-template__row';
+  nameRow.className = 'appdosc-assignee-template__row appdosc-assignee-template__row--name';
+
+  const nameLabel = document.createElement('label');
+  nameLabel.className = 'appdosc-assignee-template__field-label';
+  nameLabel.textContent = 'Название шаблона';
 
   const nameInput = document.createElement('input');
   nameInput.type = 'text';
-  nameInput.className = 'appdosc-assignee-template__input';
-  nameInput.placeholder = 'Название шаблона';
+  nameInput.className = 'appdosc-assignee-template__input appdosc-assignee-template__input--name';
+  nameInput.placeholder = 'Введите название';
   nameInput.maxLength = 80;
+  nameInput.autocomplete = 'off';
+  nameInput.inputMode = 'text';
+  nameInput.enterKeyHint = 'done';
+  nameInput.setAttribute('aria-label', 'Название шаблона назначения');
 
-  nameRow.append(nameInput);
+  const nameHint = document.createElement('div');
+  nameHint.className = 'appdosc-assignee-template__field-hint';
+  nameHint.textContent = 'Например: Юристы или Ответственные по складу.';
+
+  nameLabel.append(nameInput);
+  nameRow.append(nameLabel, nameHint);
   nameRow.hidden = true;
 
   const select = document.createElement('select');
@@ -24174,6 +26305,38 @@ function setupAssignmentTemplateControls({
   wizard.className = 'appdosc-assignee-template__wizard';
   wizard.hidden = true;
 
+  const confirmPanel = document.createElement('div');
+  confirmPanel.className = 'appdosc-assignee-template__confirm';
+  confirmPanel.hidden = true;
+
+  const confirmTitle = document.createElement('div');
+  confirmTitle.className = 'appdosc-assignee-template__confirm-title';
+
+  const confirmHint = document.createElement('div');
+  confirmHint.className = 'appdosc-assignee-template__confirm-hint';
+
+  const confirmSummary = document.createElement('div');
+  confirmSummary.className = 'appdosc-assignee-template__confirm-summary';
+
+  const confirmDetails = document.createElement('div');
+  confirmDetails.className = 'appdosc-assignee-template__confirm-details';
+
+  const confirmActions = document.createElement('div');
+  confirmActions.className = 'appdosc-assignee-template__confirm-actions';
+
+  const confirmCancel = document.createElement('button');
+  confirmCancel.type = 'button';
+  confirmCancel.className = 'appdosc-assignee-template__button appdosc-assignee-template__button--danger';
+  confirmCancel.textContent = 'Отмена';
+
+  const confirmApply = document.createElement('button');
+  confirmApply.type = 'button';
+  confirmApply.className = 'appdosc-assignee-template__button appdosc-assignee-template__button--primary';
+  confirmApply.textContent = 'Применить';
+
+  confirmActions.append(confirmCancel, confirmApply);
+  confirmPanel.append(confirmTitle, confirmHint, confirmSummary, confirmDetails, confirmActions);
+
   const wizardSteps = document.createElement('div');
   wizardSteps.className = 'appdosc-assignee-template__steps';
   const stepLabels = ['1. Ответственные', '2. Подчинённые', '3. Название'];
@@ -24221,7 +26384,7 @@ function setupAssignmentTemplateControls({
 
   wizardNav.append(prevButton, nextButton, cancelButton);
   wizard.append(wizardSteps, wizardTitle, wizardHint, wizardSearch, wizardList, nameRow, wizardSummary, wizardNav);
-  managerBody.append(managerList, wizard);
+  managerBody.append(managerList, wizard, confirmPanel);
   managerFooter.append(createButton);
   managerPanel.append(managerHeader, managerBody, managerFooter);
   manager.append(managerBackdrop, managerPanel);
@@ -24390,7 +26553,23 @@ function setupAssignmentTemplateControls({
       : 'Далее';
     updateWizardSummary();
     if (!isNameStep) {
+      nameStepAutofocusDone = false;
       renderWizardList();
+    } else if (!nameStepAutofocusDone) {
+      nameStepAutofocusDone = true;
+      window.setTimeout(() => {
+        if (wizard.hidden || manager.hidden || nameRow.hidden) {
+          return;
+        }
+        try {
+          nameInput.focus({ preventScroll: true });
+        } catch (_) {
+          nameInput.focus();
+        }
+        if (typeof nameInput.scrollIntoView === 'function') {
+          nameInput.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        }
+      }, 80);
     }
   };
 
@@ -24399,7 +26578,21 @@ function setupAssignmentTemplateControls({
     managerList.hidden = Boolean(isWizardOpen);
     createButton.hidden = Boolean(isWizardOpen);
     managerFooter.hidden = Boolean(isWizardOpen);
+    confirmPanel.hidden = true;
     if (!isWizardOpen) {
+      managerTitle.textContent = 'Шаблоны назначения';
+    }
+  };
+
+  const setManagerConfirmMode = (isConfirmOpen) => {
+    manager.dataset.mode = isConfirmOpen ? 'confirm' : 'list';
+    managerList.hidden = Boolean(isConfirmOpen);
+    createButton.hidden = Boolean(isConfirmOpen);
+    managerFooter.hidden = Boolean(isConfirmOpen);
+    wizard.hidden = true;
+    confirmPanel.hidden = !isConfirmOpen;
+    if (!isConfirmOpen) {
+      pendingTemplateApplyIndex = -1;
       managerTitle.textContent = 'Шаблоны назначения';
     }
   };
@@ -24428,6 +26621,7 @@ function setupAssignmentTemplateControls({
 
   const closeManager = () => {
     closeWizard();
+    setManagerConfirmMode(false);
     manager.hidden = true;
   };
 
@@ -24440,6 +26634,7 @@ function setupAssignmentTemplateControls({
     wizardSelections.responsible.clear();
     wizardSelections.subordinate.clear();
     nameInput.value = '';
+    nameStepAutofocusDone = false;
     wizardSearch.value = '';
     renderWizard();
   };
@@ -24448,7 +26643,197 @@ function setupAssignmentTemplateControls({
     wizard.hidden = true;
     setManagerWizardMode(false);
     editingTemplateIndex = -1;
+    nameStepAutofocusDone = false;
     nameRow.hidden = true;
+  };
+
+  const getTemplatePreview = (template) => {
+    if (controller && typeof controller.preview === 'function') {
+      return controller.preview(template);
+    }
+    return {
+      added: 0,
+      skipped: 0,
+      missing: 0,
+      roles: {
+        responsible: { willAdd: [], skipped: [], missing: [] },
+        subordinate: { willAdd: [], skipped: [], missing: [] },
+      },
+    };
+  };
+
+  const createConfirmIcon = (iconClass) => {
+    const iconWrap = document.createElement('span');
+    iconWrap.className = 'appdosc-assignee-template__confirm-icon';
+    iconWrap.setAttribute('aria-hidden', 'true');
+
+    const icon = document.createElement('i');
+    icon.className = `fa-solid ${iconClass || 'fa-user'}`;
+    iconWrap.appendChild(icon);
+    return iconWrap;
+  };
+
+  const createConfirmAvatar = (item, label) => {
+    const avatar = document.createElement('div');
+    avatar.className = 'appdosc-avatar appdosc-assignee-template__confirm-avatar';
+    avatar.setAttribute('aria-hidden', 'true');
+
+    const image = document.createElement('img');
+    image.className = 'appdosc-avatar__img';
+    image.alt = label ? `Аватар: ${label}` : 'Аватар пользователя';
+    image.hidden = true;
+
+    const placeholder = document.createElement('span');
+    placeholder.className = 'appdosc-avatar__placeholder';
+    placeholder.setAttribute('aria-hidden', 'true');
+
+    const avatarUrl = normalizeValue(item && item.avatarUrl);
+    if (avatarUrl) {
+      image.src = avatarUrl;
+      image.hidden = false;
+      placeholder.hidden = true;
+      image.onerror = () => {
+        image.hidden = true;
+        image.removeAttribute('src');
+        placeholder.hidden = false;
+      };
+    }
+
+    avatar.append(image, placeholder);
+    return avatar;
+  };
+
+  const createConfirmPerson = (item, iconClass = 'fa-user', className = '') => {
+    const row = document.createElement('div');
+    row.className = `appdosc-assignee-template__confirm-person${className ? ` ${className}` : ''}`;
+
+    const content = document.createElement('div');
+    content.className = 'appdosc-assignee-template__confirm-person-content';
+
+    const name = document.createElement('span');
+    name.className = 'appdosc-assignee-template__confirm-person-name';
+    name.textContent = normalizeValue(item && item.label) || normalizeValue(item && item.id) || 'Без имени';
+
+    const meta = document.createElement('span');
+    meta.className = 'appdosc-assignee-template__confirm-person-meta';
+    const metaParts = [];
+    const subtitle = normalizeValue(item && item.subtitle);
+    const reason = normalizeValue(item && item.reason);
+    if (subtitle) {
+      metaParts.push(subtitle);
+    }
+    if (reason) {
+      metaParts.push(reason);
+    }
+    meta.textContent = metaParts.join(' · ');
+    meta.hidden = meta.textContent === '';
+
+    content.append(name, meta);
+    row.append(createConfirmAvatar(item, name.textContent), content);
+    return row;
+  };
+
+  const appendConfirmRoleSection = (titleText, items, iconClass) => {
+    const section = document.createElement('section');
+    section.className = 'appdosc-assignee-template__confirm-section';
+
+    const titleEl = document.createElement('div');
+    titleEl.className = 'appdosc-assignee-template__confirm-section-title';
+    titleEl.append(createConfirmIcon(iconClass), document.createTextNode(`${titleText}: ${items.length}`));
+    section.appendChild(titleEl);
+
+    const list = document.createElement('div');
+    list.className = 'appdosc-assignee-template__confirm-list';
+    items.slice(0, 12).forEach((item) => {
+      list.appendChild(createConfirmPerson(item, iconClass));
+    });
+    if (items.length > 12) {
+      const more = document.createElement('div');
+      more.className = 'appdosc-assignee-template__confirm-more';
+      more.textContent = `Ещё ${items.length - 12}`;
+      list.appendChild(more);
+    }
+    section.appendChild(list);
+    confirmDetails.appendChild(section);
+  };
+
+  const appendConfirmSkippedSection = (preview) => {
+    const skippedItems = [
+      ...preview.roles.responsible.skipped,
+      ...preview.roles.subordinate.skipped,
+    ];
+    const missingItems = [
+      ...preview.roles.responsible.missing,
+      ...preview.roles.subordinate.missing,
+    ];
+    if (!skippedItems.length && !missingItems.length) {
+      return;
+    }
+
+    const formatSkippedNames = (items) => items
+      .map((item) => normalizeValue(item && item.label) || 'Без имени')
+      .slice(0, 6)
+      .join(', ');
+
+    const section = document.createElement('section');
+    section.className = 'appdosc-assignee-template__confirm-section appdosc-assignee-template__confirm-section--muted';
+
+    const titleEl = document.createElement('div');
+    titleEl.className = 'appdosc-assignee-template__confirm-section-title';
+    titleEl.append(createConfirmIcon('fa-circle-info'), document.createTextNode('Не добавятся'));
+    section.appendChild(titleEl);
+
+    const lines = document.createElement('div');
+    lines.className = 'appdosc-assignee-template__confirm-skip-lines';
+    if (skippedItems.length) {
+      const line = document.createElement('div');
+      line.textContent = `Уже выбраны: ${formatSkippedNames(skippedItems)}${skippedItems.length > 6 ? ` и ещё ${skippedItems.length - 6}` : ''}.`;
+      lines.appendChild(line);
+    }
+    if (missingItems.length) {
+      const line = document.createElement('div');
+      line.textContent = `Без Telegram ID: ${formatSkippedNames(missingItems)}${missingItems.length > 6 ? ` и ещё ${missingItems.length - 6}` : ''}.`;
+      lines.appendChild(line);
+    }
+    section.appendChild(lines);
+    confirmDetails.appendChild(section);
+  };
+
+  const openTemplateApplyConfirm = (index) => {
+    const template = templates[index];
+    if (!template) {
+      return;
+    }
+    const preview = getTemplatePreview(template);
+    pendingTemplateApplyIndex = index;
+    manager.hidden = false;
+    setManagerConfirmMode(true);
+    managerTitle.textContent = 'Подтверждение';
+    confirmDetails.innerHTML = '';
+    confirmTitle.textContent = `Применить шаблон «${template.name}»?`;
+    confirmHint.textContent = 'Назначение изменится только после подтверждения.';
+    confirmSummary.textContent = preview.added
+      ? `Будет добавлено: ${preview.added}. Уже выбраны: ${preview.skipped}. Без Telegram ID: ${preview.missing}.`
+      : `Новых назначений нет. Уже выбраны: ${preview.skipped}. Без Telegram ID: ${preview.missing}.`;
+
+    if (preview.roles.responsible.willAdd.length) {
+      appendConfirmRoleSection('Добавятся ответственные', preview.roles.responsible.willAdd, 'fa-user-tie');
+    }
+    if (preview.roles.subordinate.willAdd.length) {
+      appendConfirmRoleSection('Добавятся подчинённые', preview.roles.subordinate.willAdd, 'fa-user-group');
+    }
+    appendConfirmSkippedSection(preview);
+
+    if (!preview.added && !preview.skipped && !preview.missing) {
+      const empty = document.createElement('div');
+      empty.className = 'appdosc-assignee-template-manager__empty';
+      empty.textContent = 'В шаблоне нет доступных строк для применения.';
+      confirmDetails.appendChild(empty);
+    }
+
+    confirmApply.hidden = preview.added <= 0;
+    confirmApply.disabled = preview.added <= 0;
+    confirmCancel.textContent = preview.added > 0 ? 'Отмена' : 'Закрыть';
   };
 
   const renderTemplates = () => {
@@ -24668,6 +27053,15 @@ function setupAssignmentTemplateControls({
     }
   };
 
+  const confirmTemplateApply = () => {
+    if (pendingTemplateApplyIndex < 0 || !templates[pendingTemplateApplyIndex]) {
+      closeManager();
+      return;
+    }
+    applyTemplateByIndex(pendingTemplateApplyIndex);
+    closeManager();
+  };
+
   const editTemplateByIndex = (index) => {
     const template = templates[index];
     if (!template) {
@@ -24682,6 +27076,7 @@ function setupAssignmentTemplateControls({
     setManagerWizardMode(true);
     wizard.hidden = false;
     wizardStep = 1;
+    nameStepAutofocusDone = false;
     wizardSearch.value = '';
     renderWizard();
   };
@@ -24716,7 +27111,7 @@ function setupAssignmentTemplateControls({
       return;
     }
     select.value = String(index);
-    applyTemplateByIndex(index);
+    openTemplateApplyConfirm(index);
   });
 
   managerList.addEventListener('click', (event) => {
@@ -24736,8 +27131,7 @@ function setupAssignmentTemplateControls({
     select.value = String(index);
     const actionName = action.dataset.templateAction || '';
     if (actionName === 'apply') {
-      applyTemplateByIndex(index);
-      closeManager();
+      openTemplateApplyConfirm(index);
       return;
     }
     if (actionName === 'edit') {
@@ -24754,7 +27148,16 @@ function setupAssignmentTemplateControls({
   managerClose.addEventListener('click', closeManager);
   createButton.addEventListener('click', openWizard);
   cancelButton.addEventListener('click', closeManager);
+  confirmCancel.addEventListener('click', closeManager);
+  confirmApply.addEventListener('click', confirmTemplateApply);
   wizardSearch.addEventListener('input', renderWizardList);
+  nameInput.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') {
+      return;
+    }
+    event.preventDefault();
+    saveCurrentTemplate();
+  });
   prevButton.addEventListener('click', () => {
     wizardStep = Math.max(1, wizardStep - 1);
     wizardSearch.value = '';
@@ -24779,9 +27182,9 @@ function setupAssignmentTemplateControls({
 }
 
 
-const RESPONSE_IMAGE_COMPRESS_THRESHOLD_BYTES = 1800 * 1024;
-const RESPONSE_IMAGE_MAX_EDGE = 1920;
-const RESPONSE_IMAGE_QUALITY = 0.82;
+const RESPONSE_IMAGE_COMPRESS_THRESHOLD_BYTES = 900 * 1024;
+const RESPONSE_IMAGE_MAX_EDGE = 1600;
+const RESPONSE_IMAGE_QUALITY = 0.78;
 
 function dataUrlToFile(dataUrl, fallbackName) {
   const parts = String(dataUrl || '').split(',');
@@ -24804,6 +27207,24 @@ function dataUrlToFile(dataUrl, fallbackName) {
   return new File([bytes], `${safeNameBase}-mobile.${ext}`, { type: mimeType });
 }
 
+function canvasToUploadFile(canvas, fallbackName) {
+  if (!canvas || typeof canvas.toBlob !== 'function') {
+    return Promise.resolve(null);
+  }
+
+  return new Promise((resolve) => {
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        resolve(null);
+        return;
+      }
+
+      const safeNameBase = normalizeValue(fallbackName).replace(/\.[a-z0-9]+$/i, '') || 'response-image';
+      resolve(new File([blob], `${safeNameBase}-mobile.jpg`, { type: blob.type || 'image/jpeg' }));
+    }, 'image/jpeg', RESPONSE_IMAGE_QUALITY);
+  });
+}
+
 function compressImageFileForUpload(file) {
   if (!file || typeof window === 'undefined' || typeof FileReader !== 'function') {
     return Promise.resolve(file);
@@ -24822,7 +27243,7 @@ function compressImageFileForUpload(file) {
     const reader = new FileReader();
     reader.onload = () => {
       const image = new Image();
-      image.onload = () => {
+      image.onload = async () => {
         const canvas = document.createElement('canvas');
         const width = image.naturalWidth || image.width || 0;
         const height = image.naturalHeight || image.height || 0;
@@ -24842,8 +27263,11 @@ function compressImageFileForUpload(file) {
         }
 
         ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-        const compressedData = canvas.toDataURL('image/jpeg', RESPONSE_IMAGE_QUALITY);
-        const compressedFile = dataUrlToFile(compressedData, file.name || 'response-image');
+        let compressedFile = await canvasToUploadFile(canvas, file.name || 'response-image');
+        if (!compressedFile && typeof canvas.toDataURL === 'function') {
+          const compressedData = canvas.toDataURL('image/jpeg', RESPONSE_IMAGE_QUALITY);
+          compressedFile = dataUrlToFile(compressedData, file.name || 'response-image');
+        }
         if (!compressedFile || compressedFile.size >= file.size) {
           resolve(file);
           return;
@@ -24869,6 +27293,69 @@ async function prepareResponseFilesForUpload(files) {
     result.push(prepared || file);
   }
   return result;
+}
+
+function uploadResponseFormDataWithProgress(url, formData, headers = {}, onProgress = null) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url, true);
+    xhr.withCredentials = true;
+    xhr.timeout = 600000;
+
+    Object.keys(headers || {}).forEach((name) => {
+      const value = normalizeValue(headers[name]);
+      if (name && value) {
+        xhr.setRequestHeader(name, value);
+      }
+    });
+
+    let lastProgressAt = 0;
+    if (xhr.upload && typeof onProgress === 'function') {
+      xhr.upload.onprogress = (event) => {
+        const now = Date.now();
+        const loaded = event && typeof event.loaded === 'number' ? event.loaded : 0;
+        const total = event && typeof event.total === 'number' ? event.total : 0;
+        const isFinalProgress = total > 0 && loaded >= total;
+        if (!isFinalProgress && lastProgressAt && now - lastProgressAt < 350) {
+          return;
+        }
+        lastProgressAt = now;
+        onProgress({
+          loaded,
+          total,
+          lengthComputable: Boolean(event && event.lengthComputable),
+        });
+      };
+    }
+
+    xhr.onerror = () => reject(new Error('Не удалось связаться с сервером. Проверьте интернет и повторите загрузку.'));
+    xhr.ontimeout = () => reject(new Error('Сервер слишком долго не отвечает. Повторите загрузку чуть позже.'));
+    xhr.onabort = () => reject(new Error('Загрузка была прервана. Повторите сохранение.'));
+    xhr.onload = () => {
+      let data = null;
+      try {
+        data = xhr.responseText ? JSON.parse(xhr.responseText) : null;
+      } catch (error) {
+        reject(new Error('Сервер вернул некорректный JSON.'));
+        return;
+      }
+
+      if (xhr.status < 200 || xhr.status >= 300 || !data || data.success !== true) {
+        const message = data && (data.error || data.message)
+          ? (data.error || data.message)
+          : `Ошибка ${xhr.status}`;
+        const requestError = new Error(message);
+        requestError.status = xhr.status;
+        requestError.responseData = data;
+        reject(requestError);
+        return;
+      }
+
+      resolve(data);
+    };
+
+    xhr.send(formData);
+  });
 }
 
 function taskUserCanUploadResponse(task, entry) {
@@ -24963,30 +27450,59 @@ async function uploadTaskResponseFiles(task, files, setStatus, responseMessageRa
     setStatus('info', message);
   }
 
-  const response = await fetch(`/docs.php?action=response_upload&organization=${encodeURIComponent(organization)}`, {
-    method: 'POST',
-    credentials: 'include',
-    headers,
-    body: formData,
-  });
-
-  let data = null;
   try {
-    data = await response.json();
-  } catch (error) {
-    data = null;
-  }
+    const data = await uploadResponseFormDataWithProgress(
+      `/docs.php?action=response_upload&organization=${encodeURIComponent(organization)}`,
+      formData,
+      headers,
+      (progress) => {
+        if (typeof setStatus !== 'function') {
+          return;
+        }
+        const loaded = progress && typeof progress.loaded === 'number' ? progress.loaded : 0;
+        const total = progress && typeof progress.total === 'number' ? progress.total : 0;
+        if (total > 0) {
+          setStatus('info', `Загружаем ответ: ${formatViewerLoaderBytes(loaded)} из ${formatViewerLoaderBytes(total)}`);
+        } else if (loaded > 0) {
+          setStatus('info', `Загружаем ответ: отправлено ${formatViewerLoaderBytes(loaded)}`);
+        }
+      },
+    );
 
-  if (!response.ok || !data || data.success !== true) {
+    await loadTasks(true);
+    if (typeof setStatus === 'function') {
+      const baseMessage = data.message || 'Ответ загружен.';
+      setStatus('success', baseMessage);
+    }
+
+    sendResponseViewerLog('response_upload_success', {
+      documentId,
+      organization,
+      telegramId: effectiveTelegramId,
+      files: fileList.map((file) => ({
+        name: normalizeValue(file && file.name),
+        size: Number(file && file.size) || 0,
+        type: normalizeValue(file && file.type),
+      })),
+      hasResponseMessage: Boolean(responseMessage),
+      responseMessageLength: responseMessage.length,
+      uploadedBy: '',
+    });
+
+    return data;
+  } catch (error) {
+    const responseData = error && error.responseData && typeof error.responseData === 'object'
+      ? error.responseData
+      : null;
     sendResponseViewerLog('response_upload_failed', {
       reason: 'server_rejected',
       documentId,
       organization,
       telegramId: effectiveTelegramId,
-      status: response.status,
-      statusText: response.statusText || '',
-      responseError: data && (data.error || data.message) ? (data.error || data.message) : '',
-      uploadErrors: data && Array.isArray(data.uploadErrors) ? data.uploadErrors : [],
+      status: Number(error && error.status) || 0,
+      statusText: '',
+      responseError: responseData && (responseData.error || responseData.message) ? (responseData.error || responseData.message) : '',
+      uploadErrors: responseData && Array.isArray(responseData.uploadErrors) ? responseData.uploadErrors : [],
       files: fileList.map((file) => ({
         name: normalizeValue(file && file.name),
         size: Number(file && file.size) || 0,
@@ -24995,30 +27511,8 @@ async function uploadTaskResponseFiles(task, files, setStatus, responseMessageRa
       hasResponseMessage: Boolean(responseMessage),
       responseMessageLength: responseMessage.length,
     });
-    throw new Error((data && (data.error || data.message)) || `Ошибка ${response.status}`);
+    throw error;
   }
-
-  await loadTasks(true);
-  if (typeof setStatus === 'function') {
-    const baseMessage = data.message || 'Ответ загружен.';
-    setStatus('success', baseMessage);
-  }
-
-  sendResponseViewerLog('response_upload_success', {
-    documentId,
-    organization,
-    telegramId: effectiveTelegramId,
-    files: fileList.map((file) => ({
-      name: normalizeValue(file && file.name),
-      size: Number(file && file.size) || 0,
-      type: normalizeValue(file && file.type),
-    })),
-    hasResponseMessage: Boolean(responseMessage),
-    responseMessageLength: responseMessage.length,
-    uploadedBy: '',
-  });
-
-  return data;
 }
 
 async function updateTaskResponseText(task, storedName, textValue, setStatus) {
@@ -26609,6 +29103,74 @@ function setupAssignmentControls(card, task) {
     return { added, skipped, missing };
   };
 
+  const previewResponsibleTemplate = (template) => {
+    const result = { willAdd: [], skipped: [], missing: [] };
+    if (!canManageResponsibles || !template) {
+      return result;
+    }
+
+    const templateEntries = Array.isArray(template.responsibles)
+      ? template.responsibles
+      : template.entries;
+    (Array.isArray(templateEntries) ? templateEntries : []).forEach((templateEntry) => {
+      const normalizedEntry = normalizeAssignmentTemplateEntry(templateEntry);
+      if (!normalizedEntry) {
+        return;
+      }
+
+      const selectedValue = normalizedEntry.id;
+      const normalizedValue = normalizeIdentifier(selectedValue);
+      const rowKey = buildAssignmentRowKey(selectedValue, normalizedValue);
+      const directoryKey = buildAssignmentDirectoryKey(selectedValue);
+      const knownKeys = [rowKey, normalizedValue, directoryKey].filter(Boolean);
+      const existingRow = knownKeys.reduce((foundRow, candidate) => {
+        if (foundRow || !candidate) {
+          return foundRow;
+        }
+        return findAssignmentRow(entriesContainer, candidate);
+      }, null);
+      const alreadyAssigned = knownKeys.some((candidate) => existingKeys.has(candidate) || assignedKeyRegistry.has(candidate));
+
+      let label = normalizedEntry.label;
+      let referenceEntry = null;
+      if (normalizedValue && directory.has(normalizedValue)) {
+        const directorySnapshot = directory.get(normalizedValue);
+        label = label || directorySnapshot.label;
+        referenceEntry = directorySnapshot.entry || null;
+      }
+      if (!referenceEntry) {
+        referenceEntry = findAssignmentEntryByIdentifier(
+          assignmentCandidates,
+          normalizedValue || selectedValue.toLowerCase(),
+        );
+      }
+      if (!label && referenceEntry && typeof referenceEntry === 'object') {
+        label = buildResponsibleOptionLabel(referenceEntry);
+      }
+      if (!label) {
+        label = selectedValue;
+      }
+
+      const item = {
+        id: selectedValue,
+        label,
+        subtitle: buildAssignmentTemplatePreviewSubtitle(referenceEntry),
+        avatarUrl: resolveAssignmentTemplatePreviewAvatarUrl(referenceEntry),
+      };
+      if (existingRow || alreadyAssigned) {
+        result.skipped.push({ ...item, reason: 'уже выбран' });
+        return;
+      }
+      if (!resolveEntryTelegramId(referenceEntry)) {
+        result.missing.push({ ...item, reason: 'нет Telegram ID' });
+        return;
+      }
+      result.willAdd.push(item);
+    });
+
+    return result;
+  };
+
   setupAssignmentTemplateControls({
     card,
     sheet: comboSheet,
@@ -26618,8 +29180,11 @@ function setupAssignmentControls(card, task) {
     responsibleCandidates: assignmentCandidates,
     subordinateCandidates: buildAssignmentCandidateList([], subordinates),
     applyTemplate: applyResponsibleTemplate,
+    previewTemplate: previewResponsibleTemplate,
     setStatus,
   });
+
+  let assigneeKeyboardViewportCleanup = null;
 
   const openSheet = () => {
     if (!canManageResponsibles) {
@@ -26632,11 +29197,19 @@ function setupAssignmentControls(card, task) {
     comboSheet.hidden = false;
     comboInput.value = '';
     populateComboOptions();
+    if (typeof assigneeKeyboardViewportCleanup === 'function') {
+      assigneeKeyboardViewportCleanup();
+    }
+    assigneeKeyboardViewportCleanup = bindAssigneePickerKeyboardViewport(comboSheet, comboInput);
     setComboExpanded(true);
   };
 
   const closeSheet = () => {
     comboInput.blur();
+    if (typeof assigneeKeyboardViewportCleanup === 'function') {
+      assigneeKeyboardViewportCleanup();
+      assigneeKeyboardViewportCleanup = null;
+    }
     comboSheet.hidden = true;
     hideOptionsList();
   };
@@ -27896,6 +30469,66 @@ function setupSubordinateControls(card, task) {
     return { added, skipped, missing };
   };
 
+  const previewSubordinateTemplate = (template) => {
+    const result = { willAdd: [], skipped: [], missing: [] };
+    if (!canManageSubordinates || !template) {
+      return result;
+    }
+
+    const templateEntries = Array.isArray(template.subordinates)
+      ? template.subordinates
+      : template.entries;
+    (Array.isArray(templateEntries) ? templateEntries : []).forEach((templateEntry) => {
+      const normalizedEntry = normalizeAssignmentTemplateEntry(templateEntry);
+      if (!normalizedEntry) {
+        return;
+      }
+
+      const selectedValue = normalizedEntry.id;
+      const normalizedValue = normalizeIdentifier(selectedValue);
+      const rowKey = buildAssignmentRowKey(selectedValue, normalizedValue);
+      const existingRow = findAssignmentRow(entriesContainer, rowKey);
+
+      let label = normalizedEntry.label;
+      let referenceEntry = null;
+      if (normalizedValue && directory.has(normalizedValue)) {
+        const directorySnapshot = directory.get(normalizedValue);
+        label = label || directorySnapshot.label;
+        referenceEntry = directorySnapshot.entry || null;
+      }
+      if (!referenceEntry) {
+        referenceEntry = findAssignmentEntryByIdentifier(
+          assignmentCandidates,
+          normalizedValue || selectedValue.toLowerCase(),
+        );
+      }
+      if (!label && referenceEntry && typeof referenceEntry === 'object') {
+        label = buildSubordinateOptionLabel(referenceEntry);
+      }
+      if (!label) {
+        label = selectedValue;
+      }
+
+      const item = {
+        id: selectedValue,
+        label,
+        subtitle: buildAssignmentTemplatePreviewSubtitle(referenceEntry),
+        avatarUrl: resolveAssignmentTemplatePreviewAvatarUrl(referenceEntry),
+      };
+      if (existingRow || hasRenderedEntry(referenceEntry, selectedValue, normalizedValue)) {
+        result.skipped.push({ ...item, reason: 'уже выбран' });
+        return;
+      }
+      if (!resolveEntryTelegramId(referenceEntry)) {
+        result.missing.push({ ...item, reason: 'нет Telegram ID' });
+        return;
+      }
+      result.willAdd.push(item);
+    });
+
+    return result;
+  };
+
   setupAssignmentTemplateControls({
     card,
     sheet: pickerSheet,
@@ -27908,8 +30541,11 @@ function setupSubordinateControls(card, task) {
     ),
     subordinateCandidates: assignmentCandidates,
     applyTemplate: applySubordinateTemplate,
+    previewTemplate: previewSubordinateTemplate,
     setStatus,
   });
+
+  let subordinateKeyboardViewportCleanup = null;
 
   const openSheet = () => {
     if (!canManageSubordinates) {
@@ -27922,10 +30558,18 @@ function setupSubordinateControls(card, task) {
     pickerSheet.hidden = false;
     searchInput.value = '';
     populateComboOptions();
+    if (typeof subordinateKeyboardViewportCleanup === 'function') {
+      subordinateKeyboardViewportCleanup();
+    }
+    subordinateKeyboardViewportCleanup = bindAssigneePickerKeyboardViewport(pickerSheet, searchInput);
     setComboExpanded(true);
   };
   const closeSheet = () => {
     searchInput.blur();
+    if (typeof subordinateKeyboardViewportCleanup === 'function') {
+      subordinateKeyboardViewportCleanup();
+      subordinateKeyboardViewportCleanup = null;
+    }
     pickerSheet.hidden = true;
     hideOptionsList();
   };

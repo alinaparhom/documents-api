@@ -71,7 +71,7 @@ if ($method === 'GET') {
     ];
     if ($isDebug) {
         $debugEnv = loadEnv(getEnvPaths());
-        $debugKey = trim((string)($debugEnv['AI_API_KEY'] ?? $debugEnv['OPENAI_API_KEY'] ?? ''));
+        $debugKey = resolveAiApiKey($debugEnv);
         $debugModel = trim((string)($debugEnv['AI_MODEL'] ?? $debugEnv['OPENAI_MODEL'] ?? ''));
         $debugBase = trim((string)($debugEnv['AI_BASE_URL'] ?? $debugEnv['OPENAI_BASE_URL'] ?? 'https://api.openai.com/v1'));
         $payload['debug'] = [
@@ -125,10 +125,27 @@ function loadEnv(array $paths): array
 function getEnvPaths(): array
 {
     return [
-        __DIR__ . '/app/.env',
+        __DIR__ . '/app/env.txt',
         __DIR__ . '/.env',
-        __DIR__ . '/app/env.txt'
+        __DIR__ . '/app/.env',
+        __DIR__ . '/js/documents/app/.env'
     ];
+}
+
+function resolveAiApiKey(array $env): string
+{
+    foreach (['AI_API_KEY_PAID', 'AI_API_KEY', 'OPENAI_API_KEY'] as $key) {
+        $envValue = getenv($key);
+        if (is_string($envValue) && trim($envValue) !== '') {
+            return trim($envValue);
+        }
+
+        if (isset($env[$key]) && trim((string)$env[$key]) !== '') {
+            return trim((string)$env[$key]);
+        }
+    }
+
+    return '';
 }
 
 function buildPublicBaseDirFromScript(): string
@@ -2023,7 +2040,7 @@ if ($action === 'ocr_extract') {
     ]);
 }
 
-$apiKey = trim((string)($env['AI_API_KEY'] ?? $env['OPENAI_API_KEY'] ?? ''));
+$apiKey = resolveAiApiKey($env);
 $model = trim((string)($env['AI_MODEL'] ?? $env['OPENAI_MODEL'] ?? 'gpt-4o-mini'));
 $baseUrl = trim((string)($env['AI_BASE_URL'] ?? $env['OPENAI_BASE_URL'] ?? 'https://api.openai.com/v1'));
 $isGroqKey = str_starts_with($apiKey, 'gsk_');

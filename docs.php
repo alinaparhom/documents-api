@@ -133,11 +133,18 @@ const DOCS_ATTACHMENT_BLOCKED_EXTENSIONS = [
     'html' => true,
     'htm' => true,
 ];
+const DOCS_COLD_STORAGE_PROVIDER = 'rclone_s3';
+const DOCS_RCLONE_DEFAULT_BINARY = 'rclone';
+const DOCS_RCLONE_DEFAULT_CONFIG_PATH = '/etc/rclone/rclone.conf';
+const DOCS_RCLONE_DEFAULT_REMOTE = 'bimmaxs3';
+const DOCS_RCLONE_DEFAULT_PREFIX = 'documents-api';
 const TELEGRAM_BOT_TOKEN_SECURE_DIRECTORY = '/var/www/www-root/data/www/1/.ev';
 const TELEGRAM_INIT_DATA_MAX_AGE = 86400; // 24 часа
 const MINI_APP_PDF_CACHE_DIRECTORY = __DIR__ . '/cache/miniapp_pdf';
 const MINI_APP_PDF_CACHE_TTL = 900; // 15 минут
 const MINI_APP_PDF_MAX_FILE_SIZE = 15728640; // 15 МБ
+const MINI_APP_USER_TASKS_SNAPSHOT_STORAGE_FOLDER = 'js';
+const MINI_APP_USER_TASKS_SNAPSHOT_STORAGE_DIRECTORY = 'documents/telegram-user-tasks/users';
 const DOCS_MAINADMIN_STORAGE_DIR = __DIR__ . '/lg';
 const DOCS_MAINADMIN_FILE_SUFFIX = '.mainadmin.json';
 const DOCS_ORGANIZATION_ADMIN_FILE_SUFFIX = '.admin.json';
@@ -153,6 +160,16 @@ const DOCS_TELEGRAM_FILE_TIMEOUT_SECONDS = 4;
 const DOCS_TELEGRAM_SEND_TIMEOUT_SECONDS = 4;
 const DOCS_TELEGRAM_AVATAR_MISS_TTL = 300;
 const DOCS_OUTGOING_EDIT_LOCK_TTL = 300;
+const DOCS_AI_TASK_SEARCH_AI_MAX_TASKS = 240;
+const DOCS_AI_TASK_SEARCH_AI_MAX_CHARS = 90000;
+const DOCS_AI_TASK_SEARCH_AI_MAX_TASK_CHARS = 1800;
+const DOCS_AI_TASK_SEARCH_AI_TIMEOUT_SECONDS = 120;
+const DOCS_AI_TASK_SEARCH_AI_JSON_ATTEMPTS = 2;
+const DOCS_AI_TASK_SEARCH_AI_TOTAL_TIMEOUT_SECONDS = 420;
+const DOCS_AI_TASK_SEARCH_RERANK_MAX_CANDIDATES = 120;
+const DOCS_AI_TASK_SEARCH_RERANK_MAX_CHARS = 220000;
+const DOCS_AI_TASK_SEARCH_LOCAL_PREFILTER_MIN_TASKS = 80;
+const DOCS_AI_TASK_SEARCH_CLIENT_SNAPSHOT_MAX_TASKS = 1000;
 
 function sanitize_instruction(?string $value): string
 {
@@ -4183,6 +4200,26 @@ function respond_success_with_background_task(array $payload, callable $backgrou
     exit;
 }
 
+function docs_flush_success_response_before_background(array $payload): void
+{
+    log_docs_event('Success response', [
+        'status' => 200,
+        'action' => docs_current_action(),
+        'payload' => summarize_response_payload($payload),
+        'backgroundMode' => 'connection_close',
+    ]);
+
+    ignore_user_abort(true);
+    http_response_code(200);
+    header('Connection: close');
+    docs_send_json_payload(array_merge(['success' => true], $payload));
+
+    while (ob_get_level() > 0) {
+        @ob_end_flush();
+    }
+    @flush();
+}
+
 function docs_collect_login_response_diagnostics(array $sessionSummary, string $stage): array
 {
     $setCookieHeader = null;
@@ -4300,6 +4337,739 @@ function docs_format_file_size(int $size): string
     return $size . ' Б';
 }
 
+function docs_rclone_binary(): string
+{
+    $binary = getenv('BIMMAX_DOCS_RCLONE_BINARY');
+    $binary = is_string($binary) ? trim($binary) : '';
+
+    return $binary !== '' ? $binary : DOCS_RCLONE_DEFAULT_BINARY;
+}
+
+function docs_rclone_config_path(): string
+{
+    $path = getenv('BIMMAX_DOCS_RCLONE_CONFIG');
+    $path = is_string($path) ? trim($path) : '';
+
+    return $path !== '' ? $path : DOCS_RCLONE_DEFAULT_CONFIG_PATH;
+}
+
+function docs_rclone_remote(): string
+{
+    $remote = getenv('BIMMAX_DOCS_RCLONE_REMOTE');
+    $remote = is_string($remote) ? trim($remote) : '';
+
+    return $remote !== '' ? $remote : DOCS_RCLONE_DEFAULT_REMOTE;
+}
+
+function docs_cold_storage_prefix(): string
+{
+    $prefix = getenv('BIMMAX_DOCS_RCLONE_PREFIX');
+    $prefix = is_string($prefix) ? trim($prefix) : '';
+    if ($prefix === '') {
+        $prefix = DOCS_RCLONE_DEFAULT_PREFIX;
+    }
+    $prefix = str_replace('\\', '/', $prefix);
+    $prefix = preg_replace('#/+#', '/', $prefix) ?? '';
+
+    return trim($prefix, '/');
+}
+
+function docs_cold_storage_remote_path(string $key): string
+{
+    return docs_rclone_remote() . ':' . ltrim($key, '/');
+}
+
+function docs_normalize_cold_storage_relative_path(string $relativePath): string
+{
+    $relativePath = str_replace('\\', '/', $relativePath);
+    $segments = preg_split('#/+#', $relativePath, -1, PREG_SPLIT_NO_EMPTY);
+    $safeSegments = [];
+    if (is_array($segments)) {
+        foreach ($segments as $segment) {
+            $segment = trim((string) $segment);
+            if ($segment === '' || $segment === '.' || $segment === '..') {
+                continue;
+            }
+            $segment = str_replace(["\0", '/', '\\'], '', $segment);
+            if ($segment !== '') {
+                $safeSegments[] = $segment;
+            }
+        }
+    }
+
+    return implode('/', $safeSegments);
+}
+
+function docs_build_cold_storage_key(string $folder, string $relativePath): string
+{
+    $folder = trim($folder) !== '' ? sanitize_folder_name($folder) : '';
+    $relativePath = docs_normalize_cold_storage_relative_path($relativePath);
+    $parts = [];
+    $prefix = docs_cold_storage_prefix();
+    if ($prefix !== '') {
+        $parts[] = $prefix;
+    }
+    if ($folder !== '') {
+        $parts[] = $folder;
+    }
+    if ($relativePath !== '') {
+        $parts[] = $relativePath;
+    }
+
+    return implode('/', $parts);
+}
+
+function docs_extract_cold_storage_key(array $file): string
+{
+    if (isset($file['coldStorage']) && is_array($file['coldStorage'])) {
+        $key = sanitize_text_field((string) ($file['coldStorage']['key'] ?? ''), 1000);
+        if ($key !== '') {
+            return docs_normalize_cold_storage_relative_path($key);
+        }
+    }
+
+    return sanitize_text_field((string) ($file['storageKey'] ?? ''), 1000);
+}
+
+function docs_run_rclone_command(array $args, int $timeoutSeconds = 45): array
+{
+    if (!function_exists('exec')) {
+        return [
+            'ok' => false,
+            'exitCode' => 127,
+            'output' => '',
+            'error' => 'Функция exec недоступна в PHP.',
+        ];
+    }
+
+    $binary = docs_rclone_binary();
+    $commandParts = [escapeshellarg($binary)];
+    $configPath = docs_rclone_config_path();
+    if ($configPath !== '') {
+        $commandParts[] = '--config';
+        $commandParts[] = escapeshellarg($configPath);
+    }
+    $commandParts[] = '--contimeout';
+    $commandParts[] = escapeshellarg(max(5, $timeoutSeconds) . 's');
+    $commandParts[] = '--timeout';
+    $commandParts[] = escapeshellarg(max(10, $timeoutSeconds * 2) . 's');
+
+    foreach ($args as $arg) {
+        $commandParts[] = escapeshellarg((string) $arg);
+    }
+
+    $output = [];
+    $exitCode = 0;
+    @exec(implode(' ', $commandParts) . ' 2>&1', $output, $exitCode);
+    $outputText = trim(implode("\n", array_map('strval', $output)));
+
+    return [
+        'ok' => $exitCode === 0,
+        'exitCode' => $exitCode,
+        'output' => $outputText,
+        'error' => $exitCode === 0 ? '' : ($outputText !== '' ? $outputText : 'rclone завершился с ошибкой.'),
+    ];
+}
+
+function docs_cold_storage_base_status(): array
+{
+    $binary = docs_rclone_binary();
+    $configPath = docs_rclone_config_path();
+    $remote = docs_rclone_remote();
+    $status = [
+        'provider' => DOCS_COLD_STORAGE_PROVIDER,
+        'binary' => $binary,
+        'configPath' => $configPath,
+        'configExists' => $configPath !== '' && is_file($configPath),
+        'remote' => $remote,
+        'prefix' => docs_cold_storage_prefix(),
+        'available' => false,
+        'message' => '',
+    ];
+
+    if ($remote === '') {
+        $status['message'] = 'Не указан remote rclone.';
+        return $status;
+    }
+
+    $about = docs_run_rclone_command(['about', $remote . ':'], 12);
+    if (!empty($about['ok'])) {
+        $status['available'] = true;
+        $status['message'] = 'rclone доступен, remote отвечает.';
+        return $status;
+    }
+
+    $lsd = docs_run_rclone_command(['lsd', $remote . ':'], 12);
+    $status['available'] = !empty($lsd['ok']);
+    $status['message'] = $status['available']
+        ? 'rclone доступен, remote отвечает.'
+        : (string) ($about['error'] ?: ($lsd['error'] ?? 'rclone remote недоступен.'));
+
+    return $status;
+}
+
+function docs_upload_file_to_cold_storage(string $localPath, string $folder, string $relativePath): array
+{
+    if (!is_file($localPath) || !is_readable($localPath)) {
+        return [
+            'ok' => false,
+            'key' => '',
+            'error' => 'Локальный файл недоступен для S3-копии.',
+        ];
+    }
+
+    $key = docs_build_cold_storage_key($folder, $relativePath);
+    if ($key === '') {
+        return [
+            'ok' => false,
+            'key' => '',
+            'error' => 'Не удалось построить ключ S3.',
+        ];
+    }
+
+    $result = docs_run_rclone_command(['copyto', $localPath, docs_cold_storage_remote_path($key)], 60);
+    if (empty($result['ok'])) {
+        return [
+            'ok' => false,
+            'key' => $key,
+            'error' => (string) ($result['error'] ?? 'Не удалось отправить файл в S3.'),
+        ];
+    }
+
+    return [
+        'ok' => true,
+        'key' => $key,
+        'error' => '',
+    ];
+}
+
+function docs_apply_cold_storage_metadata(array $file, string $folder, string $relativePath, string $localPath): array
+{
+    $upload = docs_upload_file_to_cold_storage($localPath, $folder, $relativePath);
+
+    return docs_apply_cold_storage_state(
+        $file,
+        $folder,
+        $relativePath,
+        !empty($upload['ok']) ? 'synced' : 'local_fallback',
+        $upload
+    );
+}
+
+function docs_apply_cold_storage_state(
+    array $file,
+    string $folder,
+    string $relativePath,
+    string $status,
+    array $upload = []
+): array
+{
+    if (!in_array($status, ['pending', 'synced', 'local_fallback'], true)) {
+        $status = 'local_fallback';
+    }
+
+    $key = sanitize_text_field((string) ($upload['key'] ?? ''), 1000);
+    if ($key === '') {
+        $key = docs_build_cold_storage_key($folder, $relativePath);
+    }
+
+    $file['storageProvider'] = $status === 'synced' ? DOCS_COLD_STORAGE_PROVIDER : 'local';
+    $file['coldStorage'] = [
+        'provider' => DOCS_COLD_STORAGE_PROVIDER,
+        'remote' => docs_rclone_remote(),
+        'key' => $key,
+        'status' => $status,
+        'localFallback' => true,
+        'updatedAt' => date('c'),
+    ];
+
+    if ($status === 'synced') {
+        unset($file['storageWarning']);
+        return $file;
+    }
+
+    if ($status === 'pending') {
+        $file['storageWarning'] = 'S3-копия создаётся в фоне.';
+        return $file;
+    }
+
+    $error = sanitize_text_field((string) ($upload['error'] ?? 'S3-копия не создана.'), 500);
+    if ($error !== '') {
+        $file['coldStorage']['error'] = $error;
+    }
+    $file['storageWarning'] = 'S3 недоступен, файл сохранён локально.';
+
+    return $file;
+}
+
+function docs_prepare_cold_storage_file_payload(array $file): array
+{
+    $payload = [];
+
+    $storageProvider = sanitize_text_field((string) ($file['storageProvider'] ?? ''), 80);
+    if ($storageProvider !== '') {
+        $payload['storageProvider'] = $storageProvider;
+    }
+
+    if (isset($file['coldStorage']) && is_array($file['coldStorage'])) {
+        $coldStorage = array_filter([
+            'provider' => sanitize_text_field((string) ($file['coldStorage']['provider'] ?? DOCS_COLD_STORAGE_PROVIDER), 80),
+            'remote' => sanitize_text_field((string) ($file['coldStorage']['remote'] ?? docs_rclone_remote()), 160),
+            'key' => sanitize_text_field((string) ($file['coldStorage']['key'] ?? ''), 1000),
+            'status' => sanitize_text_field((string) ($file['coldStorage']['status'] ?? ''), 80),
+            'updatedAt' => docs_normalize_datetime_iso(isset($file['coldStorage']['updatedAt']) ? (string) $file['coldStorage']['updatedAt'] : null) ?? '',
+            'error' => sanitize_text_field((string) ($file['coldStorage']['error'] ?? ''), 500),
+        ], static function ($item) {
+            return $item !== '' && $item !== 0;
+        });
+
+        if (array_key_exists('localFallback', $file['coldStorage'])) {
+            $coldStorage['localFallback'] = !empty($file['coldStorage']['localFallback']);
+        }
+
+        if (!empty($coldStorage['key'])) {
+            $payload['coldStorage'] = $coldStorage;
+        }
+    }
+
+    $storageWarning = sanitize_text_field((string) ($file['storageWarning'] ?? ''), 500);
+    if ($storageWarning !== '') {
+        $payload['storageWarning'] = $storageWarning;
+    }
+
+    return $payload;
+}
+
+function docs_download_cold_storage_to_temp(array $file): string
+{
+    $key = docs_extract_cold_storage_key($file);
+    if ($key === '') {
+        return '';
+    }
+
+    $tempPath = tempnam(sys_get_temp_dir(), 'docs_s3_');
+    if (!is_string($tempPath) || $tempPath === '') {
+        return '';
+    }
+
+    $result = docs_run_rclone_command(['copyto', docs_cold_storage_remote_path($key), $tempPath], 60);
+    if (empty($result['ok']) || !is_file($tempPath)) {
+        @unlink($tempPath);
+        return '';
+    }
+
+    register_shutdown_function(static function () use ($tempPath): void {
+        if (is_file($tempPath)) {
+            @unlink($tempPath);
+        }
+    });
+
+    return $tempPath;
+}
+
+function docs_delete_cold_storage_file(array $file): void
+{
+    $key = docs_extract_cold_storage_key($file);
+    if ($key === '') {
+        return;
+    }
+
+    docs_run_rclone_command(['deletefile', docs_cold_storage_remote_path($key)], 25);
+}
+
+function docs_resolve_file_path_with_cold_storage(string $folder, array $file, array $pathCandidates): string
+{
+    foreach ($pathCandidates as $pathCandidate) {
+        if (is_string($pathCandidate) && is_file($pathCandidate) && is_readable($pathCandidate)) {
+            return $pathCandidate;
+        }
+    }
+
+    return docs_download_cold_storage_to_temp($file);
+}
+
+function docs_extract_public_relative_path(string $rawPath, string $folder): string
+{
+    $path = parse_url($rawPath, PHP_URL_PATH);
+    if (!is_string($path) || $path === '') {
+        $path = $rawPath;
+    }
+    $path = rawurldecode(str_replace('\\', '/', ltrim($path, '/')));
+    $marker = 'documents/' . $folder . '/';
+    if (strpos($path, $marker) === 0) {
+        return docs_normalize_cold_storage_relative_path(substr($path, strlen($marker)));
+    }
+
+    return '';
+}
+
+function docs_file_public_relative_candidates(string $folder, array $file, string $fallbackRelative = ''): array
+{
+    $candidates = [];
+    $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
+    if ($storedName !== '') {
+        $candidates[] = $storedName;
+    }
+    $url = sanitize_text_field((string) ($file['url'] ?? ''), 500);
+    if ($url !== '') {
+        $relative = docs_extract_public_relative_path($url, $folder);
+        if ($relative !== '') {
+            $candidates[] = $relative;
+        }
+    }
+    if ($fallbackRelative !== '') {
+        $candidates[] = docs_normalize_cold_storage_relative_path($fallbackRelative);
+    }
+
+    return array_values(array_unique(array_filter($candidates, static function ($candidate): bool {
+        return is_string($candidate) && $candidate !== '';
+    })));
+}
+
+function docs_file_matches_public_relative(string $folder, array $file, string $relativePath, string $fallbackRelative = ''): bool
+{
+    $relativePath = docs_normalize_cold_storage_relative_path($relativePath);
+    if ($relativePath === '') {
+        return false;
+    }
+
+    foreach (docs_file_public_relative_candidates($folder, $file, $fallbackRelative) as $candidate) {
+        if ($candidate === $relativePath) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function docs_find_cold_storage_file_by_public_path(string $rawPath): ?array
+{
+    $path = parse_url($rawPath, PHP_URL_PATH);
+    if (!is_string($path) || $path === '') {
+        $path = $rawPath;
+    }
+    $path = rawurldecode(str_replace('\\', '/', ltrim($path, '/')));
+    if (stripos($path, 'documents/') !== 0) {
+        return null;
+    }
+
+    $segments = preg_split('#/+#', substr($path, strlen('documents/')), -1, PREG_SPLIT_NO_EMPTY);
+    if (!is_array($segments) || count($segments) < 2) {
+        return null;
+    }
+
+    $folder = sanitize_folder_name((string) $segments[0]);
+    $relativePath = docs_normalize_cold_storage_relative_path(implode('/', array_slice($segments, 1)));
+    if ($folder === '' || $relativePath === '') {
+        return null;
+    }
+
+    foreach (load_registry($folder) as $record) {
+        if (!is_array($record)) {
+            continue;
+        }
+        foreach (($record['files'] ?? []) as $file) {
+            if (is_array($file) && docs_file_matches_public_relative($folder, $file, $relativePath)) {
+                return [
+                    'folder' => $folder,
+                    'file' => $file,
+                    'paths' => docs_get_document_file_path_candidates($folder, $file),
+                ];
+            }
+        }
+        $documentId = sanitize_text_field((string) ($record['id'] ?? ''), 200);
+        foreach (($record['responses'] ?? []) as $file) {
+            if (!is_array($file)) {
+                continue;
+            }
+            $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
+            $fallback = $documentId !== '' && $storedName !== ''
+                ? 'Ответы/' . $documentId . '/' . $storedName
+                : '';
+            if (docs_file_matches_public_relative($folder, $file, $relativePath, $fallback)) {
+                $paths = [];
+                if ($fallback !== '') {
+                    $paths[] = ensure_organization_directory($folder) . '/' . $fallback;
+                }
+                return [
+                    'folder' => $folder,
+                    'file' => $file,
+                    'paths' => $paths,
+                ];
+            }
+        }
+    }
+
+    foreach (docs_load_outgoing_registry($folder) as $record) {
+        if (!is_array($record)) {
+            continue;
+        }
+        foreach (($record['files'] ?? []) as $file) {
+            if (is_array($file) && docs_file_matches_public_relative($folder, $file, $relativePath)) {
+                return [
+                    'folder' => $folder,
+                    'file' => $file,
+                    'paths' => docs_get_outgoing_file_path_candidates($folder, $file),
+                ];
+            }
+        }
+    }
+
+    foreach (['orders', 'directives', 'disciplinary'] as $journalType) {
+        $meta = docs_get_orders_journal_meta($journalType);
+        foreach (docs_load_orders_registry($folder, $journalType) as $record) {
+            if (!is_array($record)) {
+                continue;
+            }
+            foreach (($record['files'] ?? []) as $file) {
+                if (!is_array($file)) {
+                    continue;
+                }
+                $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
+                $fallback = $storedName !== '' ? $meta['directory'] . '/' . $storedName : '';
+                if (docs_file_matches_public_relative($folder, $file, $relativePath, $fallback)) {
+                    return [
+                        'folder' => $folder,
+                        'file' => $file,
+                        'paths' => docs_get_order_file_path_candidates($folder, $file, $journalType),
+                    ];
+                }
+            }
+        }
+    }
+
+    return null;
+}
+
+function docs_collect_storage_file_state(string $folder, array $file, array $pathCandidates): array
+{
+    $localExists = false;
+    $localBytes = 0;
+    foreach ($pathCandidates as $pathCandidate) {
+        if (is_string($pathCandidate) && is_file($pathCandidate)) {
+            $localExists = true;
+            $localBytes = max($localBytes, (int) (@filesize($pathCandidate) ?: 0));
+        }
+    }
+    $cold = isset($file['coldStorage']) && is_array($file['coldStorage']) ? $file['coldStorage'] : [];
+    $coldKey = docs_extract_cold_storage_key($file);
+    $coldStatus = sanitize_text_field((string) ($cold['status'] ?? ''), 60);
+    $coldSynced = $coldKey !== '' && $coldStatus === 'synced';
+    $coldPending = $coldKey !== '' && $coldStatus === 'pending';
+    $size = (int) ($file['size'] ?? 0);
+
+    return [
+        'localExists' => $localExists,
+        'localBytes' => $localBytes,
+        'bytes' => $size > 0 ? $size : $localBytes,
+        'coldKey' => $coldKey,
+        'coldSynced' => $coldSynced,
+        'coldPending' => $coldPending,
+        'storageProvider' => sanitize_text_field((string) ($file['storageProvider'] ?? ''), 80),
+    ];
+}
+
+function docs_run_cold_storage_self_test(string $folder): array
+{
+    $folder = sanitize_folder_name($folder);
+    $tempPath = tempnam(sys_get_temp_dir(), 'docs_s3_test_');
+    if (!is_string($tempPath) || $tempPath === '') {
+        return [
+            'ok' => false,
+            'message' => 'Не удалось создать временный файл для теста.',
+        ];
+    }
+
+    $body = 'documents-api rclone test ' . date('c') . "\n";
+    @file_put_contents($tempPath, $body);
+    try {
+        $suffix = bin2hex(random_bytes(4));
+    } catch (Throwable $error) {
+        $suffix = str_replace('.', '', uniqid('', true));
+    }
+    $relativePath = '.s3-test/test-' . date('Ymd-His') . '-' . $suffix . '.txt';
+    $upload = docs_upload_file_to_cold_storage($tempPath, $folder, $relativePath);
+    @unlink($tempPath);
+    if (empty($upload['ok'])) {
+        return [
+            'ok' => false,
+            'message' => (string) ($upload['error'] ?? 'Тестовая загрузка в S3 не выполнена.'),
+            'key' => (string) ($upload['key'] ?? ''),
+        ];
+    }
+
+    docs_run_rclone_command(['deletefile', docs_cold_storage_remote_path((string) $upload['key'])], 25);
+
+    return [
+        'ok' => true,
+        'message' => 'Тестовая загрузка в S3 прошла успешно, тестовый файл удалён.',
+        'key' => (string) $upload['key'],
+    ];
+}
+
+function docs_sanitize_cold_storage_browser_path($value): string
+{
+    $path = is_string($value) ? trim($value) : '';
+    if ($path === '') {
+        return '';
+    }
+
+    return docs_normalize_cold_storage_relative_path($path);
+}
+
+function docs_cold_storage_parent_browser_path(string $path): string
+{
+    $path = docs_normalize_cold_storage_relative_path($path);
+    if ($path === '') {
+        return '';
+    }
+
+    $parts = explode('/', $path);
+    array_pop($parts);
+
+    return implode('/', $parts);
+}
+
+function docs_list_cold_storage_objects(string $folder, string $browserPath = ''): array
+{
+    $folder = trim($folder) !== '' ? sanitize_folder_name($folder) : '';
+    $browserPath = docs_sanitize_cold_storage_browser_path($browserPath);
+    $key = docs_build_cold_storage_key($folder, $browserPath);
+    $remotePath = docs_cold_storage_remote_path($key);
+    $result = docs_run_rclone_command(['lsjson', '--max-depth', '1', $remotePath], 25);
+    $items = [];
+    $totalBytes = 0;
+    $directoriesCount = 0;
+    $filesCount = 0;
+
+    if (empty($result['ok'])) {
+        return [
+            'ok' => false,
+            'path' => $browserPath,
+            'parentPath' => docs_cold_storage_parent_browser_path($browserPath),
+            'key' => $key,
+            'remotePath' => $remotePath,
+            'items' => [],
+            'filesCount' => 0,
+            'directoriesCount' => 0,
+            'bytes' => 0,
+            'label' => docs_format_file_size(0),
+            'message' => (string) ($result['error'] ?? 'Не удалось получить список S3.'),
+        ];
+    }
+
+    $decoded = json_decode((string) ($result['output'] ?? ''), true);
+    if (!is_array($decoded)) {
+        $decoded = [];
+    }
+
+    foreach ($decoded as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+
+        $name = sanitize_text_field((string) ($entry['Name'] ?? ''), 255);
+        if ($name === '') {
+            continue;
+        }
+
+        $isDir = !empty($entry['IsDir']);
+        $size = $isDir ? 0 : max(0, (int) ($entry['Size'] ?? 0));
+        $childPath = $browserPath !== '' ? $browserPath . '/' . $name : $name;
+        $childPath = docs_normalize_cold_storage_relative_path($childPath);
+        $childKey = docs_build_cold_storage_key($folder, $childPath);
+        $items[] = [
+            'name' => $name,
+            'path' => $childPath,
+            'type' => $isDir ? 'directory' : 'file',
+            'size' => $size,
+            'sizeLabel' => $isDir ? '' : docs_format_file_size($size),
+            'modifiedAt' => sanitize_text_field((string) ($entry['ModTime'] ?? ''), 80),
+            'remoteKey' => $childKey,
+            'remotePath' => docs_cold_storage_remote_path($childKey),
+        ];
+
+        if ($isDir) {
+            $directoriesCount++;
+        } else {
+            $filesCount++;
+            $totalBytes += $size;
+        }
+    }
+
+    usort($items, static function (array $left, array $right): int {
+        if (($left['type'] ?? '') !== ($right['type'] ?? '')) {
+            return ($left['type'] ?? '') === 'directory' ? -1 : 1;
+        }
+
+        return strnatcasecmp((string) ($left['name'] ?? ''), (string) ($right['name'] ?? ''));
+    });
+
+    return [
+        'ok' => true,
+        'path' => $browserPath,
+        'parentPath' => docs_cold_storage_parent_browser_path($browserPath),
+        'key' => $key,
+        'remotePath' => $remotePath,
+        'items' => $items,
+        'filesCount' => $filesCount,
+        'directoriesCount' => $directoriesCount,
+        'bytes' => $totalBytes,
+        'label' => docs_format_file_size($totalBytes),
+        'message' => '',
+    ];
+}
+
+function docs_normalize_cold_storage_browser_object_type($value): string
+{
+    $type = is_string($value) ? mb_strtolower(trim($value), 'UTF-8') : '';
+
+    return $type === 'directory' ? 'directory' : 'file';
+}
+
+function docs_delete_cold_storage_browser_object(string $folder, string $browserPath, string $type): array
+{
+    $folder = trim($folder) !== '' ? sanitize_folder_name($folder) : '';
+    $browserPath = docs_sanitize_cold_storage_browser_path($browserPath);
+    $type = docs_normalize_cold_storage_browser_object_type($type);
+
+    if ($browserPath === '') {
+        return [
+            'ok' => false,
+            'path' => '',
+            'type' => $type,
+            'key' => '',
+            'remotePath' => '',
+            'message' => 'Корень S3 удалить нельзя.',
+        ];
+    }
+
+    $key = docs_build_cold_storage_key($folder, $browserPath);
+    $remotePath = docs_cold_storage_remote_path($key);
+    $result = $type === 'directory'
+        ? docs_run_rclone_command(['purge', $remotePath], 60)
+        : docs_run_rclone_command(['deletefile', $remotePath], 30);
+
+    return [
+        'ok' => !empty($result['ok']),
+        'path' => $browserPath,
+        'type' => $type,
+        'key' => $key,
+        'remotePath' => $remotePath,
+        'message' => !empty($result['ok'])
+            ? ($type === 'directory' ? 'Папка удалена из S3.' : 'Файл удалён из S3.')
+            : (string) ($result['error'] ?? 'Не удалось удалить объект из S3.'),
+        'exitCode' => $result['exitCode'] ?? null,
+    ];
+}
+
+function docs_normalize_cold_storage_listing_scope($value): string
+{
+    $scope = is_string($value) ? mb_strtolower(trim($value), 'UTF-8') : '';
+
+    return in_array($scope, ['all', 'root', 'project'], true) ? 'all' : 'organization';
+}
+
 function docs_collect_storage_size_summary(?string $requestedOrganization = null): array
 {
     $folder = '';
@@ -4331,7 +5101,15 @@ function docs_collect_storage_size_summary(?string $requestedOrganization = null
     $registryBytes = 0;
     $attachmentsCount = 0;
     $responsesCount = 0;
+    $ordersAttachmentsCount = 0;
     $recordsCount = 0;
+    $localFilesCount = 0;
+    $localBytes = 0;
+    $coldSyncedCount = 0;
+    $coldPendingCount = 0;
+    $coldFallbackCount = 0;
+    $missingFilesCount = 0;
+    $coldBytes = 0;
 
     foreach ($folders as $currentFolder) {
         $directory = DOCUMENTS_ROOT . '/' . $currentFolder;
@@ -4349,9 +5127,61 @@ function docs_collect_storage_size_summary(?string $requestedOrganization = null
             $recordsCount++;
             if (isset($record['files']) && is_array($record['files'])) {
                 $attachmentsCount += count($record['files']);
+                foreach ($record['files'] as $file) {
+                    if (!is_array($file)) {
+                        continue;
+                    }
+                    $fileState = docs_collect_storage_file_state(
+                        $currentFolder,
+                        $file,
+                        docs_get_document_file_path_candidates($currentFolder, $file)
+                    );
+                    if (!empty($fileState['localExists'])) {
+                        $localFilesCount++;
+                        $localBytes += (int) $fileState['localBytes'];
+                    }
+                    if (!empty($fileState['coldSynced'])) {
+                        $coldSyncedCount++;
+                        $coldBytes += (int) $fileState['bytes'];
+                    } elseif (!empty($fileState['coldPending'])) {
+                        $coldPendingCount++;
+                    } elseif (!empty($fileState['coldKey']) || ($fileState['storageProvider'] ?? '') === 'local') {
+                        $coldFallbackCount++;
+                    }
+                    if (empty($fileState['localExists']) && empty($fileState['coldSynced'])) {
+                        $missingFilesCount++;
+                    }
+                }
             }
             if (isset($record['responses']) && is_array($record['responses'])) {
                 $responsesCount += count($record['responses']);
+                $documentId = sanitize_text_field((string) ($record['id'] ?? ''), 200);
+                foreach ($record['responses'] as $file) {
+                    if (!is_array($file)) {
+                        continue;
+                    }
+                    $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
+                    $paths = [];
+                    if ($documentId !== '' && $storedName !== '') {
+                        $paths[] = ensure_organization_directory($currentFolder) . '/Ответы/' . $documentId . '/' . $storedName;
+                    }
+                    $fileState = docs_collect_storage_file_state($currentFolder, $file, $paths);
+                    if (!empty($fileState['localExists'])) {
+                        $localFilesCount++;
+                        $localBytes += (int) $fileState['localBytes'];
+                    }
+                    if (!empty($fileState['coldSynced'])) {
+                        $coldSyncedCount++;
+                        $coldBytes += (int) $fileState['bytes'];
+                    } elseif (!empty($fileState['coldPending'])) {
+                        $coldPendingCount++;
+                    } elseif (!empty($fileState['coldKey']) || ($fileState['storageProvider'] ?? '') === 'local') {
+                        $coldFallbackCount++;
+                    }
+                    if (empty($fileState['localExists']) && empty($fileState['coldSynced'])) {
+                        $missingFilesCount++;
+                    }
+                }
             }
         }
 
@@ -4362,31 +5192,102 @@ function docs_collect_storage_size_summary(?string $requestedOrganization = null
             $recordsCount++;
             if (isset($record['files']) && is_array($record['files'])) {
                 $attachmentsCount += count($record['files']);
+                foreach ($record['files'] as $file) {
+                    if (!is_array($file)) {
+                        continue;
+                    }
+                    $fileState = docs_collect_storage_file_state(
+                        $currentFolder,
+                        $file,
+                        docs_get_outgoing_file_path_candidates($currentFolder, $file)
+                    );
+                    if (!empty($fileState['localExists'])) {
+                        $localFilesCount++;
+                        $localBytes += (int) $fileState['localBytes'];
+                    }
+                    if (!empty($fileState['coldSynced'])) {
+                        $coldSyncedCount++;
+                        $coldBytes += (int) $fileState['bytes'];
+                    } elseif (!empty($fileState['coldPending'])) {
+                        $coldPendingCount++;
+                    } elseif (!empty($fileState['coldKey']) || ($fileState['storageProvider'] ?? '') === 'local') {
+                        $coldFallbackCount++;
+                    }
+                    if (empty($fileState['localExists']) && empty($fileState['coldSynced'])) {
+                        $missingFilesCount++;
+                    }
+                }
+            }
+        }
+
+        foreach (['orders', 'directives', 'disciplinary'] as $journalType) {
+            foreach (docs_load_orders_registry($currentFolder, $journalType) as $record) {
+                if (!is_array($record)) {
+                    continue;
+                }
+                $recordsCount++;
+                if (isset($record['files']) && is_array($record['files'])) {
+                    $ordersAttachmentsCount += count($record['files']);
+                    foreach ($record['files'] as $file) {
+                        if (!is_array($file)) {
+                            continue;
+                        }
+                        $fileState = docs_collect_storage_file_state(
+                            $currentFolder,
+                            $file,
+                            docs_get_order_file_path_candidates($currentFolder, $file, $journalType)
+                        );
+                        if (!empty($fileState['localExists'])) {
+                            $localFilesCount++;
+                            $localBytes += (int) $fileState['localBytes'];
+                        }
+                        if (!empty($fileState['coldSynced'])) {
+                            $coldSyncedCount++;
+                            $coldBytes += (int) $fileState['bytes'];
+                        } elseif (!empty($fileState['coldPending'])) {
+                            $coldPendingCount++;
+                        } elseif (!empty($fileState['coldKey']) || ($fileState['storageProvider'] ?? '') === 'local') {
+                            $coldFallbackCount++;
+                        }
+                        if (empty($fileState['localExists']) && empty($fileState['coldSynced'])) {
+                            $missingFilesCount++;
+                        }
+                    }
+                }
             }
         }
     }
 
+    $trackedFiles = $attachmentsCount + $responsesCount + $ordersAttachmentsCount;
+
     return [
-        'bytes' => $registryBytes,
-        'files' => $attachmentsCount + $responsesCount,
+        'bytes' => $registryBytes + $localBytes,
+        'files' => $trackedFiles,
         'directories' => count($folders),
         'extensions' => [],
         'topDirectories' => [],
         'largestFiles' => [],
-        'archiveBytes' => 0,
-        'testArchiveBytes' => 0,
         'registryBytes' => $registryBytes,
-        'label' => docs_format_file_size($registryBytes),
-        'archiveLabel' => '0 Б',
-        'testArchiveLabel' => '0 Б',
+        'localBytes' => $localBytes,
+        'coldBytes' => $coldBytes,
+        'label' => docs_format_file_size($registryBytes + $localBytes),
         'registryLabel' => docs_format_file_size($registryBytes),
+        'localLabel' => docs_format_file_size($localBytes),
+        'coldLabel' => docs_format_file_size($coldBytes),
         'path' => $folder !== '' ? 'documents/' . $folder : 'documents',
         'organization' => $folder !== '' ? $requestedOrganization : null,
         'checkedAt' => date('c'),
-        'mode' => 'lightweight_registry_only',
+        'mode' => 'registry_and_s3_metadata',
         'recordsCount' => $recordsCount,
         'attachmentsCount' => $attachmentsCount,
         'responsesCount' => $responsesCount,
+        'ordersAttachmentsCount' => $ordersAttachmentsCount,
+        'localFilesCount' => $localFilesCount,
+        'coldSyncedCount' => $coldSyncedCount,
+        'coldPendingCount' => $coldPendingCount,
+        'coldFallbackCount' => $coldFallbackCount,
+        'missingFilesCount' => $missingFilesCount,
+        'coldStorage' => docs_cold_storage_base_status(),
     ];
 }
 
@@ -4426,44 +5327,6 @@ function docs_optimize_uploaded_attachment_file(string $path, string $originalNa
         $result['originalSize'] = $actualSize;
     }
     return $result;
-}
-
-function docs_deduplicate_attachment_storage(?string $requestedOrganization = null): array
-{
-    return [
-        'success' => false,
-        'disabled' => true,
-        'reason' => 'attachment_dedupe_disabled',
-        'filesScanned' => 0,
-        'duplicatesLinked' => 0,
-        'savedBytes' => 0,
-    ];
-}
-
-function docs_archive_attachment_storage(?string $requestedOrganization = null): array
-{
-    return [
-        'success' => false,
-        'disabled' => true,
-        'reason' => 'zip_archive_disabled',
-        'filesArchived' => 0,
-        'bytesArchived' => 0,
-        'recordsChanged' => 0,
-    ];
-}
-
-function docs_optimize_attachment_storage(?string $requestedOrganization = null): array
-{
-    return [
-        'success' => false,
-        'disabled' => true,
-        'reason' => 'attachment_optimization_disabled',
-        'organization' => is_string($requestedOrganization) && trim($requestedOrganization) !== '' ? $requestedOrganization : null,
-        'archive' => docs_archive_attachment_storage($requestedOrganization),
-        'dedupe' => docs_deduplicate_attachment_storage($requestedOrganization),
-        'savedBytes' => 0,
-        'savedLabel' => '0 Б',
-    ];
 }
 
 function sanitize_status(?string $value, bool $useDefault = false): string
@@ -5450,6 +6313,7 @@ function docs_delete_outgoing_file_from_storage(string $folder, array $file): vo
             @unlink($path);
         }
     }
+    docs_delete_cold_storage_file($file);
 }
 
 function docs_get_document_file_path_candidates(string $folder, array $file): array
@@ -5489,6 +6353,7 @@ function docs_delete_document_file_from_storage(string $folder, array $file): vo
             @unlink($path);
         }
     }
+    docs_delete_cold_storage_file($file);
 }
 
 function docs_resolve_unique_storage_target(string $directory, string $storedName): array
@@ -6225,7 +7090,7 @@ function docs_attach_uploaded_outgoing_files_to_record(array &$record, string $f
         $visibility = $privateFiles ? 'private' : 'public';
         $recordId = sanitize_text_field((string) ($record['id'] ?? ''), 160);
         $accessKey = $privateFiles ? docs_create_outgoing_private_file_access_key() : '';
-        $record['files'][] = [
+        $fileEntry = [
             'originalName' => $originalName,
             'storedName' => $storedName,
             'size' => (int) ($fileOptimization['size'] ?? ($size > 0 ? $size : (filesize($target) ?: 0))),
@@ -6238,6 +7103,8 @@ function docs_attach_uploaded_outgoing_files_to_record(array &$record, string $f
             'uploadedBy' => $authorLabel !== '' ? $authorLabel : sanitize_text_field((string) ($record['updatedBy'] ?? ($record['createdBy'] ?? '')), 220),
             'uploadedByKey' => $privateFiles ? $authorKey : ($authorKey !== '' ? $authorKey : sanitize_text_field((string) ($record['updatedByKey'] ?? ($record['createdByKey'] ?? '')), 200)),
         ];
+        $relativePath = ($privateFiles ? '.outgoing-private/' : '') . $storedName;
+        $record['files'][] = docs_apply_cold_storage_metadata($fileEntry, $folder, $relativePath, $target);
     };
 
     if (is_array($names)) {
@@ -6340,7 +7207,7 @@ function docs_prepare_order_files_payload($value): array
         if ($storedName === '' && $url === '') {
             continue;
         }
-        $files[] = array_filter([
+        $preparedFile = array_filter([
             'originalName' => sanitize_text_field((string) ($file['originalName'] ?? ($file['name'] ?? $storedName)), 255),
             'storedName' => $storedName,
             'size' => isset($file['size']) ? max(0, (int) $file['size']) : 0,
@@ -6351,6 +7218,12 @@ function docs_prepare_order_files_payload($value): array
         ], static function ($item) {
             return $item !== '' && $item !== 0;
         });
+
+        foreach (docs_prepare_cold_storage_file_payload($file) as $key => $item) {
+            $preparedFile[$key] = $item;
+        }
+
+        $files[] = $preparedFile;
     }
 
     return $files;
@@ -6649,6 +7522,22 @@ function docs_build_order_number_sort_key(string $value): array
     ];
 }
 
+function docs_generate_next_order_number(array $records): string
+{
+    $maxNumber = 0;
+    foreach ($records as $record) {
+        if (!is_array($record)) {
+            continue;
+        }
+        $key = docs_build_order_number_sort_key((string) ($record['orderNumber'] ?? ''));
+        if (!empty($key['hasNumber']) && (int) ($key['base'] ?? 0) > $maxNumber) {
+            $maxNumber = (int) $key['base'];
+        }
+    }
+
+    return (string) ($maxNumber + 1);
+}
+
 function docs_compare_order_numbers_desc(string $left, string $right): int
 {
     $leftKey = docs_build_order_number_sort_key($left);
@@ -6807,16 +7696,44 @@ function docs_get_order_file_path_candidates(string $folder, array $file, string
 {
     $paths = [];
     $meta = docs_get_orders_journal_meta($journalType);
-    $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
-    if ($storedName !== '') {
-        $paths[] = docs_get_order_files_root($folder, false, $journalType) . '/' . $storedName;
-        $paths[] = ensure_organization_directory($folder) . '/' . $meta['directory'] . '/' . $storedName;
-        if ($meta['type'] !== 'orders') {
-            $paths[] = ensure_organization_directory($folder) . '/Приказы/' . $storedName;
+    $organizationDir = ensure_organization_directory($folder);
+    $fileNames = [];
+    $fileNameCandidates = [
+        $file['storedName'] ?? '',
+        $file['originalName'] ?? '',
+        $file['name'] ?? '',
+    ];
+    $url = sanitize_text_field((string) ($file['url'] ?? ''), 500);
+    if ($url !== '') {
+        $path = parse_url($url, PHP_URL_PATH);
+        if (is_string($path) && $path !== '') {
+            $basename = rawurldecode((string) basename($path));
+            if ($basename !== '') {
+                $fileNameCandidates[] = $basename;
+            }
+        }
+    }
+    foreach ($fileNameCandidates as $candidate) {
+        $name = sanitize_text_field((string) $candidate, 255);
+        if ($name !== '') {
+            $fileNames[$name] = true;
         }
     }
 
-    $url = sanitize_text_field((string) ($file['url'] ?? ''), 500);
+    $directories = [
+        docs_get_order_files_root($folder, false, $journalType),
+        $organizationDir . '/' . $meta['directory'],
+        $organizationDir,
+        $organizationDir . '/Приказы',
+        $organizationDir . '/Распоряжения',
+        $organizationDir . '/Дисциплинарные взыскания',
+    ];
+    foreach (array_keys($fileNames) as $fileName) {
+        foreach ($directories as $directory) {
+            $paths[] = rtrim($directory, '/\\') . '/' . $fileName;
+        }
+    }
+
     if ($url !== '') {
         $path = parse_url($url, PHP_URL_PATH);
         if (is_string($path) && $path !== '') {
@@ -6827,7 +7744,7 @@ function docs_get_order_file_path_candidates(string $folder, array $file, string
                 $relative = substr($decodedPath, $position + strlen($marker));
                 $relative = str_replace(['../', '..\\'], '', ltrim($relative, '/\\'));
                 if ($relative !== '') {
-                    $paths[] = ensure_organization_directory($folder) . '/' . $relative;
+                    $paths[] = $organizationDir . '/' . $relative;
                 }
             }
         }
@@ -6839,6 +7756,16 @@ function docs_get_order_file_path_candidates(string $folder, array $file, string
 }
 
 function docs_delete_order_file_from_storage(string $folder, array $file, string $journalType = 'orders'): void
+{
+    foreach (docs_get_order_file_path_candidates($folder, $file, $journalType) as $path) {
+        if (is_file($path)) {
+            @unlink($path);
+        }
+    }
+    docs_delete_cold_storage_file($file);
+}
+
+function docs_delete_order_file_local_copies(string $folder, array $file, string $journalType = 'orders'): void
 {
     foreach (docs_get_order_file_path_candidates($folder, $file, $journalType) as $path) {
         if (is_file($path)) {
@@ -6902,7 +7829,16 @@ function docs_apply_order_file_mutation(array &$record, string $folder, array $p
     $record['files'] = $nextFiles;
 }
 
-function docs_attach_uploaded_order_files_to_record(array &$record, string $folder, string $errorPrefix, string $authorLabel = '', string $authorKey = '', string $journalType = 'orders', ?array &$createdFiles = null): void
+function docs_attach_uploaded_order_files_to_record(
+    array &$record,
+    string $folder,
+    string $errorPrefix,
+    string $authorLabel = '',
+    string $authorKey = '',
+    string $journalType = 'orders',
+    ?array &$createdFiles = null,
+    ?array &$coldStorageUploads = null
+): void
 {
     if (empty($_FILES['attachments']) || !isset($_FILES['attachments']['name'])) {
         return;
@@ -6928,7 +7864,7 @@ function docs_attach_uploaded_order_files_to_record(array &$record, string $fold
         respond_error($message, $status, $details);
     };
 
-    $storeFile = static function (string $originalName, string $tmpPath, int $size) use (&$record, $folder, $dir, &$createdUploadTargets, &$createdFiles, $failUpload, $errorPrefix, $authorLabel, $authorKey, $journalType): void {
+    $storeFile = static function (string $originalName, string $tmpPath, int $size) use (&$record, $folder, $dir, &$createdUploadTargets, &$createdFiles, &$coldStorageUploads, $failUpload, $errorPrefix, $authorLabel, $authorKey, $journalType): void {
         $validationError = docs_validate_uploaded_attachment($originalName, $size);
         if ($validationError !== null) {
             $failUpload($errorPrefix . ': ' . $validationError, 422, ['reason' => 'invalid_attachment']);
@@ -6969,8 +7905,18 @@ function docs_attach_uploaded_order_files_to_record(array &$record, string $fold
             'uploadedBy' => $authorLabel !== '' ? $authorLabel : sanitize_text_field((string) ($record['updatedBy'] ?? ($record['createdBy'] ?? '')), 220),
             'uploadedByKey' => $authorKey !== '' ? $authorKey : sanitize_text_field((string) ($record['updatedByKey'] ?? ($record['createdByKey'] ?? '')), 200),
         ];
+        $relativePath = docs_get_orders_journal_meta($journalType)['directory'] . '/' . $storedName;
+        $fileEntry = docs_apply_cold_storage_state($fileEntry, $folder, $relativePath, 'pending');
         if (is_array($createdFiles)) {
             $createdFiles[] = $fileEntry;
+        }
+        if (is_array($coldStorageUploads)) {
+            $coldStorageUploads[] = [
+                'recordId' => $recordId,
+                'storedName' => $storedName,
+                'localPath' => $target,
+                'relativePath' => $relativePath,
+            ];
         }
         $record['files'][] = $fileEntry;
     };
@@ -7012,6 +7958,130 @@ function docs_attach_uploaded_order_files_to_record(array &$record, string $fold
     }
 
     $storeFile($uploadName, (string) $tmpNames, (int) $sizes);
+}
+
+function docs_sync_order_files_to_cold_storage(string $folder, string $journalType, array $uploads): void
+{
+    if (empty($uploads)) {
+        return;
+    }
+
+    $resultsByFile = [];
+    foreach ($uploads as $upload) {
+        if (!is_array($upload)) {
+            continue;
+        }
+
+        $recordId = sanitize_text_field((string) ($upload['recordId'] ?? ''), 160);
+        $storedName = sanitize_text_field((string) ($upload['storedName'] ?? ''), 255);
+        $localPath = (string) ($upload['localPath'] ?? '');
+        $relativePath = docs_normalize_cold_storage_relative_path((string) ($upload['relativePath'] ?? ''));
+        if ($recordId === '' || $storedName === '' || $localPath === '' || $relativePath === '') {
+            continue;
+        }
+
+        $result = docs_upload_file_to_cold_storage($localPath, $folder, $relativePath);
+        $resultsByFile[$recordId . "\n" . $storedName] = [
+            'recordId' => $recordId,
+            'storedName' => $storedName,
+            'relativePath' => $relativePath,
+            'result' => $result,
+        ];
+    }
+
+    if (empty($resultsByFile)) {
+        return;
+    }
+
+    [$handle, $records] = docs_lock_orders_registry($folder, $journalType);
+    if ($handle === null) {
+        docs_write_response_log('Не удалось обновить S3-статус файлов журнала: реестр заблокирован', [
+            'folder' => $folder,
+            'journalType' => $journalType,
+            'filesCount' => count($resultsByFile),
+        ]);
+        return;
+    }
+
+    $changed = false;
+    try {
+        foreach ($records as &$record) {
+            if (!is_array($record)) {
+                continue;
+            }
+
+            $recordId = sanitize_text_field((string) ($record['id'] ?? ''), 160);
+            if ($recordId === '' || empty($record['files']) || !is_array($record['files'])) {
+                continue;
+            }
+
+            foreach ($record['files'] as &$file) {
+                if (!is_array($file)) {
+                    continue;
+                }
+
+                $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
+                if ($storedName === '') {
+                    continue;
+                }
+
+                $resultKey = $recordId . "\n" . $storedName;
+                if (!isset($resultsByFile[$resultKey])) {
+                    continue;
+                }
+
+                $resultEntry = $resultsByFile[$resultKey];
+                $result = is_array($resultEntry['result'] ?? null) ? $resultEntry['result'] : [];
+                $file = docs_apply_cold_storage_state(
+                    $file,
+                    $folder,
+                    (string) ($resultEntry['relativePath'] ?? ''),
+                    !empty($result['ok']) ? 'synced' : 'local_fallback',
+                    $result
+                );
+                if (!empty($result['ok'])) {
+                    docs_delete_order_file_local_copies($folder, $file, $journalType);
+                }
+                $changed = true;
+            }
+            unset($file);
+        }
+        unset($record);
+
+        if ($changed && !docs_save_orders_registry_locked($handle, $records, $journalType)) {
+            docs_write_response_log('Не удалось сохранить S3-статус файлов журнала', [
+                'folder' => $folder,
+                'journalType' => $journalType,
+                'filesCount' => count($resultsByFile),
+            ]);
+        }
+    } finally {
+        docs_unlock_orders_registry($handle);
+    }
+}
+
+function docs_respond_orders_success_with_cold_storage(
+    array $payload,
+    string $folder,
+    string $journalType,
+    array $uploads
+): void
+{
+    if (empty($uploads)) {
+        respond_success($payload);
+    }
+
+    $backgroundTask = static function () use ($folder, $journalType, $uploads): void {
+        docs_sync_order_files_to_cold_storage($folder, $journalType, $uploads);
+    };
+
+    if (function_exists('fastcgi_finish_request')) {
+        respond_success_with_background_task($payload, $backgroundTask);
+    }
+
+    docs_flush_success_response_before_background($payload);
+    $backgroundTask();
+    exit;
 }
 
 function docs_get_organization_template_filename(string $folder): string
@@ -7698,6 +8768,1569 @@ function docs_register_mini_app_user_visit(string $organizationName, string $fol
         'username' => $username,
         'entriesCount' => count($sorted),
     ]);
+}
+
+function docs_sanitize_mini_app_user_tasks_snapshot_id(string $telegramUserId): string
+{
+    $normalized = normalize_identifier_value($telegramUserId);
+    if ($normalized === '') {
+        $normalized = trim($telegramUserId);
+    }
+
+    $safe = preg_replace('/[^A-Za-z0-9._@-]+/', '_', $normalized);
+    if (!is_string($safe) || trim($safe, '._-') === '') {
+        $safe = 'user_' . substr(sha1($telegramUserId), 0, 16);
+    }
+
+    if (strlen($safe) > 120) {
+        $safe = substr($safe, 0, 120);
+    }
+
+    return $safe;
+}
+
+function docs_build_mini_app_user_tasks_snapshot_relative_path(string $safeTelegramUserId): string
+{
+    return MINI_APP_USER_TASKS_SNAPSHOT_STORAGE_DIRECTORY . '/' . $safeTelegramUserId . '.json';
+}
+
+function docs_upload_mini_app_user_tasks_snapshot_to_cold_storage(string $localPath, string $relativePath): array
+{
+    $key = docs_build_cold_storage_key(MINI_APP_USER_TASKS_SNAPSHOT_STORAGE_FOLDER, $relativePath);
+    if ($key === '') {
+        return [
+            'ok' => false,
+            'key' => '',
+            'error' => 'Не удалось построить путь JSON-снимка в S3.',
+        ];
+    }
+
+    if (!is_file($localPath) || !is_readable($localPath)) {
+        return [
+            'ok' => false,
+            'key' => $key,
+            'error' => 'Временный JSON-снимок задач недоступен для отправки в S3.',
+        ];
+    }
+
+    $result = docs_run_rclone_command(['copyto', $localPath, docs_cold_storage_remote_path($key)], 15);
+    if (empty($result['ok'])) {
+        return [
+            'ok' => false,
+            'key' => $key,
+            'error' => (string) ($result['error'] ?? 'Не удалось отправить JSON-снимок задач в S3.'),
+        ];
+    }
+
+    return [
+        'ok' => true,
+        'key' => $key,
+        'error' => '',
+    ];
+}
+
+function docs_prepare_mini_app_user_tasks_snapshot_organizations(array $organizationSummaries): array
+{
+    $prepared = [];
+    foreach ($organizationSummaries as $summary) {
+        if (!is_array($summary)) {
+            continue;
+        }
+
+        $name = sanitize_text_field((string) ($summary['name'] ?? ''), 200);
+        if ($name === '') {
+            continue;
+        }
+
+        $prepared[] = [
+            'name' => $name,
+            'count' => max(0, (int) ($summary['count'] ?? 0)),
+            'canManageInstructions' => !empty($summary['canManageInstructions']),
+            'responsiblesCount' => isset($summary['responsibles']) && is_array($summary['responsibles']) ? count($summary['responsibles']) : 0,
+            'subordinatesCount' => isset($summary['subordinates']) && is_array($summary['subordinates']) ? count($summary['subordinates']) : 0,
+            'directorsCount' => isset($summary['directors']) && is_array($summary['directors']) ? count($summary['directors']) : 0,
+        ];
+    }
+
+    return $prepared;
+}
+
+function docs_save_mini_app_user_tasks_snapshot(
+    string $telegramUserId,
+    array $tasks,
+    array $organizationSummaries,
+    array $stats,
+    ?array $userInfo,
+    ?array $filter,
+    array $directorModeSummary
+): array {
+    $telegramUserId = normalize_identifier_value($telegramUserId);
+    if ($telegramUserId === '') {
+        return [
+            'saved' => false,
+            'status' => 'skipped',
+            'reason' => 'telegram_user_id_missing',
+        ];
+    }
+
+    $safeTelegramUserId = docs_sanitize_mini_app_user_tasks_snapshot_id($telegramUserId);
+    $relativePath = docs_build_mini_app_user_tasks_snapshot_relative_path($safeTelegramUserId);
+    $generatedAt = date('c');
+    $payload = [
+        'version' => 1,
+        'source' => 'mini_app_tasks',
+        'telegramUserId' => $telegramUserId,
+        'user' => $userInfo,
+        'generatedAt' => $generatedAt,
+        'tasksCount' => count($tasks),
+        'organizations' => docs_prepare_mini_app_user_tasks_snapshot_organizations($organizationSummaries),
+        'stats' => $stats,
+        'filter' => summarize_assignee_filter_for_log($filter),
+        'directorMode' => $directorModeSummary,
+        'tasks' => array_values($tasks),
+    ];
+
+    $encoded = json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if ($encoded === false) {
+        return [
+            'saved' => false,
+            'status' => 'encode_failed',
+            'reason' => 'json_encode_failed',
+        ];
+    }
+
+    $tempPath = tempnam(sys_get_temp_dir(), 'docs_tasks_snapshot_');
+    if (!is_string($tempPath) || $tempPath === '') {
+        return [
+            'saved' => false,
+            'status' => 'temp_file_failed',
+            'reason' => 'temp_file_failed',
+        ];
+    }
+
+    $written = @file_put_contents($tempPath, $encoded . PHP_EOL, LOCK_EX);
+    if ($written === false) {
+        @unlink($tempPath);
+
+        return [
+            'saved' => false,
+            'status' => 'temp_write_failed',
+            'reason' => 'temp_write_failed',
+        ];
+    }
+
+    try {
+        $upload = docs_upload_mini_app_user_tasks_snapshot_to_cold_storage($tempPath, $relativePath);
+    } finally {
+        @unlink($tempPath);
+    }
+
+    $synced = !empty($upload['ok']);
+    $result = [
+        'saved' => $synced,
+        'status' => $synced ? 'synced' : 's3_failed',
+        'storageProvider' => DOCS_COLD_STORAGE_PROVIDER,
+        'key' => (string) ($upload['key'] ?? docs_build_cold_storage_key(MINI_APP_USER_TASKS_SNAPSHOT_STORAGE_FOLDER, $relativePath)),
+        'relativePath' => $relativePath,
+        'generatedAt' => $generatedAt,
+        'tasksCount' => count($tasks),
+    ];
+
+    if (!$synced) {
+        $result['error'] = sanitize_text_field((string) ($upload['error'] ?? 'S3-копия JSON-снимка задач не создана.'), 500);
+    }
+
+    return $result;
+}
+
+function docs_build_mini_app_user_tasks_snapshot_pending_result(string $telegramUserId, int $tasksCount): array
+{
+    $telegramUserId = normalize_identifier_value($telegramUserId);
+    if ($telegramUserId === '') {
+        return [
+            'saved' => false,
+            'status' => 'skipped',
+            'reason' => 'telegram_user_id_missing',
+        ];
+    }
+
+    $safeTelegramUserId = docs_sanitize_mini_app_user_tasks_snapshot_id($telegramUserId);
+    $relativePath = docs_build_mini_app_user_tasks_snapshot_relative_path($safeTelegramUserId);
+
+    return [
+        'saved' => false,
+        'status' => 'queued',
+        'storageProvider' => DOCS_COLD_STORAGE_PROVIDER,
+        'key' => docs_build_cold_storage_key(MINI_APP_USER_TASKS_SNAPSHOT_STORAGE_FOLDER, $relativePath),
+        'relativePath' => $relativePath,
+        'generatedAt' => date('c'),
+        'tasksCount' => max(0, $tasksCount),
+    ];
+}
+
+function docs_read_mini_app_user_tasks_snapshot_json(string $path): ?array
+{
+    if ($path === '' || !is_file($path) || !is_readable($path)) {
+        return null;
+    }
+
+    $raw = @file_get_contents($path);
+    if (!is_string($raw) || trim($raw) === '') {
+        return null;
+    }
+
+    $decoded = json_decode($raw, true);
+
+    return is_array($decoded) ? $decoded : null;
+}
+
+function docs_load_mini_app_user_tasks_snapshot(string $telegramUserId): array
+{
+    $telegramUserId = normalize_identifier_value($telegramUserId);
+    if ($telegramUserId === '') {
+        return [
+            'ok' => false,
+            'error' => 'telegram_user_id_missing',
+            'message' => 'Не удалось определить Telegram ID.',
+        ];
+    }
+
+    $safeTelegramUserId = docs_sanitize_mini_app_user_tasks_snapshot_id($telegramUserId);
+    $relativePath = docs_build_mini_app_user_tasks_snapshot_relative_path($safeTelegramUserId);
+    $key = docs_build_cold_storage_key(MINI_APP_USER_TASKS_SNAPSHOT_STORAGE_FOLDER, $relativePath);
+
+    if ($key === '') {
+        return [
+            'ok' => false,
+            'error' => 'snapshot_path_missing',
+            'message' => 'Не удалось построить путь JSON-снимка задач.',
+        ];
+    }
+
+    $tempPath = tempnam(sys_get_temp_dir(), 'docs_tasks_');
+    if (!is_string($tempPath) || $tempPath === '') {
+        return [
+            'ok' => false,
+            'error' => 'temp_file_failed',
+            'message' => 'Не удалось создать временный файл для JSON-снимка.',
+        ];
+    }
+
+    $download = docs_run_rclone_command(['copyto', docs_cold_storage_remote_path($key), $tempPath], 20);
+    if (empty($download['ok'])) {
+        @unlink($tempPath);
+
+        return [
+            'ok' => false,
+            'error' => 's3_snapshot_unavailable',
+            'message' => (string) ($download['error'] ?? 'JSON-снимок задач в S3 недоступен.'),
+            'relativePath' => $relativePath,
+            'key' => $key,
+        ];
+    }
+
+    $snapshot = docs_read_mini_app_user_tasks_snapshot_json($tempPath);
+    if (!is_array($snapshot)) {
+        @unlink($tempPath);
+
+        return [
+            'ok' => false,
+            'error' => 'snapshot_decode_failed',
+            'message' => 'JSON-снимок задач повреждён или пуст.',
+            'relativePath' => $relativePath,
+            'key' => $key,
+        ];
+    }
+
+    @unlink($tempPath);
+
+    return [
+        'ok' => true,
+        'source' => 's3',
+        'remotePath' => docs_cold_storage_remote_path($key),
+        'relativePath' => $relativePath,
+        'key' => $key,
+        'snapshot' => $snapshot,
+    ];
+}
+
+function docs_prepare_ai_task_search_client_snapshot($snapshot): array
+{
+    if (!is_array($snapshot)) {
+        return [
+            'ok' => false,
+            'error' => 'client_snapshot_missing',
+        ];
+    }
+
+    $rawTasks = isset($snapshot['tasks']) && is_array($snapshot['tasks']) ? $snapshot['tasks'] : [];
+    if (empty($rawTasks)) {
+        return [
+            'ok' => false,
+            'error' => 'client_snapshot_empty',
+        ];
+    }
+
+    $tasks = [];
+    foreach ($rawTasks as $task) {
+        if (count($tasks) >= DOCS_AI_TASK_SEARCH_CLIENT_SNAPSHOT_MAX_TASKS) {
+            break;
+        }
+        if (!is_array($task)) {
+            continue;
+        }
+
+        $hasVisibleIdentifier = false;
+        foreach (['id', 'entryNumber', 'registryNumber', 'documentNumber', 'summary', 'content', 'correspondent', 'organization'] as $field) {
+            if (isset($task[$field]) && is_scalar($task[$field]) && trim((string) $task[$field]) !== '') {
+                $hasVisibleIdentifier = true;
+                break;
+            }
+        }
+        if (!$hasVisibleIdentifier) {
+            continue;
+        }
+
+        $tasks[] = $task;
+    }
+
+    if (empty($tasks)) {
+        return [
+            'ok' => false,
+            'error' => 'client_snapshot_no_valid_tasks',
+        ];
+    }
+
+    $generatedAt = sanitize_text_field((string) ($snapshot['generatedAt'] ?? ''), 80);
+    if ($generatedAt === '') {
+        $generatedAt = date('c');
+    }
+
+    return [
+        'ok' => true,
+        'source' => 'client_current_state',
+        'key' => '',
+        'snapshot' => [
+            'version' => 1,
+            'source' => 'client_current_state',
+            'generatedAt' => $generatedAt,
+            'tasksCount' => count($tasks),
+            'tasks' => array_values($tasks),
+        ],
+    ];
+}
+
+function docs_ai_task_search_result_title(array $task): string
+{
+    $registryNumber = sanitize_text_field((string) ($task['registryNumber'] ?? ''), 120);
+    $entryNumber = sanitize_text_field((string) ($task['entryNumber'] ?? ''), 80);
+    $summary = sanitize_text_field((string) ($task['summary'] ?? ($task['correspondent'] ?? '')), 220);
+    $prefix = $registryNumber !== '' ? 'Рег. № ' . $registryNumber : ($entryNumber !== '' ? 'Запись № ' . $entryNumber : 'Задача');
+
+    return trim($prefix . ($summary !== '' ? ' — ' . $summary : ''));
+}
+
+function docs_prepare_ai_task_search_result(array $task, string $chatId, string $folderId = ''): array
+{
+    $startParam = docs_build_task_start_param($task);
+    $baseUrl = docs_resolve_application_base_url();
+    $appUrl = docs_build_mini_app_link($baseUrl, '/js/documents/app/telegram-appdosc.html', $chatId, $startParam);
+    $resolvedFolderId = docs_ai_task_search_normalize_folder_filter_id($folderId);
+
+    $result = [
+        'id' => sanitize_text_field((string) ($task['id'] ?? ''), 200),
+        'entryNumber' => sanitize_text_field((string) ($task['entryNumber'] ?? ''), 80),
+        'registryNumber' => sanitize_text_field((string) ($task['registryNumber'] ?? ''), 120),
+        'documentNumber' => sanitize_text_field((string) ($task['documentNumber'] ?? ''), 120),
+        'organization' => sanitize_text_field((string) ($task['organization'] ?? ''), 200),
+        'status' => sanitize_text_field((string) ($task['status'] ?? ''), 120),
+        'dueDate' => sanitize_date_field(isset($task['dueDate']) ? (string) $task['dueDate'] : ''),
+        'title' => docs_ai_task_search_result_title($task),
+        'summary' => sanitize_text_field((string) ($task['correspondent'] ?? ($task['summary'] ?? '')), 350),
+        'folderId' => $resolvedFolderId,
+        'startParam' => $startParam,
+        'openUrl' => $appUrl,
+    ];
+
+    return array_filter($result, static function ($item) {
+        return $item !== '';
+    });
+}
+
+function docs_build_ai_task_search_answer(array $results, string $query): string
+{
+    if (empty($results)) {
+        return 'По запросу «' . sanitize_text_field($query, 120) . '» задач не нашёл.';
+    }
+
+    $count = count($results);
+    $label = docs_ru_plural($count, 'задачу', 'задачи', 'задач');
+
+    return 'Нашёл ' . $count . ' ' . $label . ' по вашему запросу. Ссылка ниже.';
+}
+
+function docs_build_ai_task_search_explained_answer(array $results, string $query): string
+{
+    if (empty($results)) {
+        return docs_build_ai_task_search_answer($results, $query);
+    }
+
+    $count = count($results);
+    $label = docs_ru_plural($count, 'задачу', 'задачи', 'задач');
+    $lines = [
+        'Нашёл ' . $count . ' ' . $label . ' по запросу «' . sanitize_text_field($query, 120) . '». Почему они подходят:',
+    ];
+
+    foreach (array_slice($results, 0, 8) as $index => $result) {
+        if (!is_array($result)) {
+            continue;
+        }
+        $number = sanitize_text_field((string) ($result['registryNumber'] ?? ($result['entryNumber'] ?? ($result['documentNumber'] ?? ($result['id'] ?? '')))), 120);
+        $title = sanitize_text_field((string) ($result['title'] ?? 'Задача'), 180);
+        $reason = sanitize_text_field((string) ($result['matchPreview'] ?? ''), 300);
+        if ($reason === '' && isset($result['matchReasons']) && is_array($result['matchReasons'])) {
+            foreach ($result['matchReasons'] as $entry) {
+                if (!is_array($entry)) {
+                    continue;
+                }
+                $reason = sanitize_text_field((string) ($entry['preview'] ?? ($entry['value'] ?? '')), 300);
+                if ($reason !== '') {
+                    break;
+                }
+            }
+        }
+        if ($reason === '') {
+            $reason = 'по актуальным полям задачи есть смысловое совпадение с запросом.';
+        }
+        $labelPrefix = ($index + 1) . '. ';
+        if ($number !== '') {
+            $labelPrefix .= '№ ' . $number . ' — ';
+        }
+        $lines[] = $labelPrefix . $title . ': ' . $reason;
+    }
+
+    return implode("\n", $lines);
+}
+
+function docs_ai_task_search_env_paths(): array
+{
+    return [
+        __DIR__ . '/app/env.txt',
+        __DIR__ . '/.env',
+        __DIR__ . '/app/.env',
+        __DIR__ . '/js/documents/app/.env',
+    ];
+}
+
+function docs_ai_task_search_load_env(): array
+{
+    $env = [];
+    foreach (docs_ai_task_search_env_paths() as $path) {
+        if (!is_string($path) || $path === '' || !is_file($path)) {
+            continue;
+        }
+
+        $lines = @file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        if (!is_array($lines)) {
+            continue;
+        }
+
+        foreach ($lines as $line) {
+            $line = trim((string) $line);
+            if ($line === '' || strpos($line, '#') === 0) {
+                continue;
+            }
+
+            $position = strpos($line, '=');
+            if ($position === false) {
+                continue;
+            }
+
+            $key = trim(substr($line, 0, $position));
+            $value = trim(substr($line, $position + 1));
+            if ($key === '') {
+                continue;
+            }
+
+            $env[$key] = docs_trim_wrapping_quotes($value);
+        }
+    }
+
+    foreach ([
+        'AI_API_KEY_PAID',
+        'AI_API_KEY',
+        'OPENAI_API_KEY',
+        'AI_MODEL',
+        'OPENAI_MODEL',
+        'AI_BASE_URL',
+        'OPENAI_BASE_URL',
+        'AI_TASK_SEARCH_MAX_TASKS',
+        'AI_TASK_SEARCH_MAX_CHARS',
+        'AI_TASK_SEARCH_RERANK_MAX_CANDIDATES',
+        'AI_TASK_SEARCH_RERANK_MAX_CHARS',
+    ] as $key) {
+        $value = getenv($key);
+        if (is_string($value) && trim($value) !== '') {
+            $env[$key] = trim($value);
+        }
+    }
+
+    return $env;
+}
+
+function docs_ai_task_search_resolve_ai_config(): array
+{
+    $env = docs_ai_task_search_load_env();
+    $apiKey = trim((string) ($env['AI_API_KEY_PAID'] ?? ($env['AI_API_KEY'] ?? ($env['OPENAI_API_KEY'] ?? ''))));
+    $model = trim((string) ($env['AI_MODEL'] ?? ($env['OPENAI_MODEL'] ?? 'gpt-4o-mini')));
+    $baseUrl = trim((string) ($env['AI_BASE_URL'] ?? ($env['OPENAI_BASE_URL'] ?? 'https://api.openai.com/v1')));
+
+    if ($baseUrl === 'https://api.openai.com/v1' && strpos($apiKey, 'gsk_') === 0) {
+        $baseUrl = 'https://api.groq.com/openai/v1';
+    }
+    $isGroq = stripos($baseUrl, 'groq.com') !== false;
+    if ($isGroq && ($model === '' || $model === 'gpt-4o-mini')) {
+        $model = 'openai/gpt-oss-20b';
+    }
+
+    return [
+        'apiKey' => $apiKey,
+        'model' => $model !== '' ? $model : 'gpt-4o-mini',
+        'baseUrl' => $baseUrl !== '' ? $baseUrl : 'https://api.openai.com/v1',
+        'isGroq' => $isGroq,
+        'isGoogleOpenAiCompat' => stripos($baseUrl, 'generativelanguage.googleapis.com') !== false,
+        'maxTasks' => max(1, min(1000, (int) ($env['AI_TASK_SEARCH_MAX_TASKS'] ?? DOCS_AI_TASK_SEARCH_AI_MAX_TASKS))),
+        'maxChars' => max(5000, min(300000, (int) ($env['AI_TASK_SEARCH_MAX_CHARS'] ?? DOCS_AI_TASK_SEARCH_AI_MAX_CHARS))),
+        'rerankMaxCandidates' => max(1, min(150, (int) ($env['AI_TASK_SEARCH_RERANK_MAX_CANDIDATES'] ?? DOCS_AI_TASK_SEARCH_RERANK_MAX_CANDIDATES))),
+        'rerankMaxChars' => max(5000, min(300000, (int) ($env['AI_TASK_SEARCH_RERANK_MAX_CHARS'] ?? DOCS_AI_TASK_SEARCH_RERANK_MAX_CHARS))),
+    ];
+}
+
+function docs_ai_task_search_short_text($value, int $maxLength = 420): string
+{
+    $text = sanitize_text_field(is_scalar($value) || $value === null ? (string) $value : '', $maxLength);
+    if ($text === '') {
+        return '';
+    }
+
+    return mb_strlen($text, 'UTF-8') > $maxLength
+        ? rtrim(mb_substr($text, 0, max(1, $maxLength - 1), 'UTF-8')) . '…'
+        : $text;
+}
+
+function docs_ai_task_search_compact_entries($entries, array $fields, int $limit, int $fieldMaxLength = 280): array
+{
+    if (!is_array($entries)) {
+        return [];
+    }
+
+    $result = [];
+    foreach ($entries as $entry) {
+        if (count($result) >= $limit) {
+            break;
+        }
+        if (!is_array($entry)) {
+            continue;
+        }
+
+        $prepared = [];
+        foreach ($fields as $field) {
+            if (!is_string($field) || $field === '' || !array_key_exists($field, $entry)) {
+                continue;
+            }
+
+            $text = docs_ai_task_search_short_text($entry[$field], $fieldMaxLength);
+            if ($text !== '') {
+                $prepared[$field] = $text;
+            }
+        }
+
+        if (!empty($prepared)) {
+            $result[] = $prepared;
+        }
+    }
+
+    return $result;
+}
+
+function docs_ai_task_search_compact_task(array $task, int $index): array
+{
+    $compact = [
+        'key' => 't' . $index,
+        'id' => docs_ai_task_search_short_text($task['id'] ?? '', 120),
+        'entryNumber' => docs_ai_task_search_short_text($task['entryNumber'] ?? '', 80),
+        'registryNumber' => docs_ai_task_search_short_text($task['registryNumber'] ?? '', 120),
+        'documentNumber' => docs_ai_task_search_short_text($task['documentNumber'] ?? '', 120),
+        'organization' => docs_ai_task_search_short_text($task['organization'] ?? '', 180),
+        'status' => docs_ai_task_search_short_text($task['status'] ?? '', 120),
+        'dueDate' => sanitize_date_field(isset($task['dueDate']) ? (string) $task['dueDate'] : ''),
+        'registrationDate' => sanitize_date_field(isset($task['registrationDate']) ? (string) $task['registrationDate'] : ''),
+        'documentDate' => sanitize_date_field(isset($task['documentDate']) ? (string) $task['documentDate'] : ''),
+        'correspondent' => docs_ai_task_search_short_text($task['correspondent'] ?? '', 420),
+        'summary' => docs_ai_task_search_short_text($task['summary'] ?? ($task['content'] ?? ''), 520),
+        'instruction' => docs_ai_task_search_short_text($task['instruction'] ?? ($task['resolution'] ?? ''), 520),
+        'executor' => docs_ai_task_search_short_text($task['executor'] ?? ($task['assignee'] ?? ($task['responsible'] ?? '')), 240),
+    ];
+
+    $peopleFields = ['name', 'responsible', 'fio', 'fullName', 'role', 'assignmentInstruction', 'assignmentComment', 'assignmentDueDate', 'status'];
+    foreach (['directors', 'responsibles', 'assignees', 'executors', 'subordinates'] as $field) {
+        $entries = docs_ai_task_search_compact_entries($task[$field] ?? [], $peopleFields, 12, 220);
+        if (!empty($entries)) {
+            $compact[$field] = $entries;
+        }
+    }
+
+    $fileEntries = [];
+    foreach (['files', 'attachments', 'fileList', 'taskFiles'] as $field) {
+        foreach (docs_ai_task_search_compact_entries(
+            $task[$field] ?? [],
+            ['originalName', 'name', 'storedName', 'url'],
+            16,
+            520
+        ) as $entry) {
+            $fileEntries[] = $entry;
+            if (count($fileEntries) >= 16) {
+                break 2;
+            }
+        }
+    }
+    if (!empty($fileEntries)) {
+        $compact['files'] = $fileEntries;
+    }
+
+    $responseEntries = [];
+    foreach (['responses', 'answers', 'executorResponses'] as $field) {
+        foreach (docs_ai_task_search_compact_entries(
+            $task[$field] ?? [],
+            ['originalName', 'name', 'storedName', 'textContent', 'comment', 'note', 'uploadedBy'],
+            12,
+            520
+        ) as $entry) {
+            $responseEntries[] = $entry;
+            if (count($responseEntries) >= 12) {
+                break 2;
+            }
+        }
+    }
+    if (!empty($responseEntries)) {
+        $compact['responses'] = $responseEntries;
+    }
+
+    return array_filter($compact, static function ($value): bool {
+        if (is_array($value)) {
+            return !empty($value);
+        }
+
+        return $value !== '' && $value !== null;
+    });
+}
+
+function docs_ai_task_search_trim_compact_task_for_ai(array $compact): array
+{
+    $encoded = json_encode($compact, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if (is_string($encoded) && strlen($encoded) <= DOCS_AI_TASK_SEARCH_AI_MAX_TASK_CHARS) {
+        return $compact;
+    }
+
+    $compact['summary'] = docs_ai_task_search_short_text($compact['summary'] ?? '', 260);
+    $compact['instruction'] = docs_ai_task_search_short_text($compact['instruction'] ?? '', 260);
+    if (isset($compact['files']) && is_array($compact['files'])) {
+        $compact['files'] = array_slice($compact['files'], 0, 8);
+    }
+    if (isset($compact['responses']) && is_array($compact['responses'])) {
+        $compact['responses'] = array_slice($compact['responses'], 0, 6);
+    }
+
+    return $compact;
+}
+
+function docs_ai_task_search_build_ai_batches(array $tasks, int $maxTasks, int $maxChars): array
+{
+    $batches = [];
+    $currentTasks = [];
+    $currentMap = [];
+    $currentChars = 0;
+    $index = 1;
+
+    $flushBatch = static function () use (&$batches, &$currentTasks, &$currentMap, &$currentChars): void {
+        if (empty($currentTasks)) {
+            return;
+        }
+
+        $batches[] = [
+            'tasks' => $currentTasks,
+            'map' => $currentMap,
+            'chars' => $currentChars,
+        ];
+        $currentTasks = [];
+        $currentMap = [];
+        $currentChars = 0;
+    };
+
+    foreach ($tasks as $task) {
+        if (!is_array($task)) {
+            continue;
+        }
+
+        $compact = docs_ai_task_search_compact_task($task, $index);
+        $compact = docs_ai_task_search_trim_compact_task_for_ai($compact);
+        $encoded = json_encode($compact, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if (!is_string($encoded) || $encoded === '') {
+            continue;
+        }
+
+        $key = (string) ($compact['key'] ?? '');
+        if ($key === '') {
+            continue;
+        }
+
+        $encodedLength = strlen($encoded);
+        if (!empty($currentTasks) && (count($currentTasks) >= $maxTasks || ($currentChars + $encodedLength) > $maxChars)) {
+            $flushBatch();
+        }
+
+        $currentTasks[] = $compact;
+        $currentMap[$key] = $task;
+        $currentChars += $encodedLength;
+        $index++;
+    }
+
+    $flushBatch();
+
+    return $batches;
+}
+
+function docs_ai_task_search_normalize_folder_filter_id($value): string
+{
+    return sanitize_text_field((string) (is_scalar($value) || $value === null ? $value : ''), 120);
+}
+
+function docs_ai_task_search_task_folder_id(array $task, string $telegramUserId): string
+{
+    $folderByUser = isset($task['folderByUser']) && is_array($task['folderByUser']) ? $task['folderByUser'] : [];
+    if ($telegramUserId !== '' && array_key_exists($telegramUserId, $folderByUser)) {
+        return docs_ai_task_search_normalize_folder_filter_id($folderByUser[$telegramUserId] ?? '');
+    }
+
+    return docs_ai_task_search_normalize_folder_filter_id($task['folderId'] ?? '');
+}
+
+function docs_ai_task_search_apply_folder_filter(array $tasks, string $folderId, string $telegramUserId): array
+{
+    $normalizedFolderId = docs_ai_task_search_normalize_folder_filter_id($folderId);
+    if ($normalizedFolderId === '' || $normalizedFolderId === 'all') {
+        return $tasks;
+    }
+
+    $filtered = [];
+    foreach ($tasks as $task) {
+        if (!is_array($task)) {
+            continue;
+        }
+        $taskFolderId = docs_ai_task_search_task_folder_id($task, $telegramUserId);
+        if ($normalizedFolderId === 'no-folder') {
+            if ($taskFolderId === '') {
+                $filtered[] = $task;
+            }
+            continue;
+        }
+        if ($taskFolderId === $normalizedFolderId) {
+            $filtered[] = $task;
+        }
+    }
+
+    return $filtered;
+}
+
+function docs_ai_task_search_normalize_local_text($value): string
+{
+    $text = is_scalar($value) || $value === null ? (string) $value : '';
+    $text = mb_strtolower($text, 'UTF-8');
+    $text = str_replace('ё', 'е', $text);
+    $text = preg_replace('/[^\p{L}\p{N}]+/u', ' ', $text) ?? $text;
+    $text = preg_replace('/\s+/u', ' ', $text) ?? $text;
+
+    return trim($text);
+}
+
+function docs_ai_task_search_local_tokens(string $query): array
+{
+    $normalized = docs_ai_task_search_normalize_local_text($query);
+    if ($normalized === '') {
+        return [];
+    }
+
+    $parts = preg_split('/\s+/u', $normalized) ?: [];
+    $tokens = [];
+    foreach ($parts as $part) {
+        $token = trim((string) $part);
+        if (mb_strlen($token, 'UTF-8') < 2) {
+            continue;
+        }
+        $tokens[$token] = true;
+    }
+
+    return array_keys($tokens);
+}
+
+function docs_ai_task_search_collect_local_text($value, array &$parts, int $depth = 0): void
+{
+    if ($depth > 5 || count($parts) >= 700 || $value === null) {
+        return;
+    }
+
+    if (is_scalar($value)) {
+        $text = trim((string) $value);
+        if ($text !== '') {
+            $parts[] = $text;
+        }
+        return;
+    }
+
+    if (!is_array($value)) {
+        return;
+    }
+
+    $count = 0;
+    foreach ($value as $item) {
+        if ($count >= 140) {
+            break;
+        }
+        docs_ai_task_search_collect_local_text($item, $parts, $depth + 1);
+        $count++;
+    }
+}
+
+function docs_ai_task_search_local_score(array $compactTask, string $query, array $tokens): int
+{
+    if (empty($tokens)) {
+        return 0;
+    }
+
+    $parts = [];
+    docs_ai_task_search_collect_local_text($compactTask, $parts);
+    $haystack = docs_ai_task_search_normalize_local_text(implode(' ', $parts));
+    if ($haystack === '') {
+        return 0;
+    }
+
+    $normalizedQuery = docs_ai_task_search_normalize_local_text($query);
+    $score = 0;
+    if ($normalizedQuery !== '' && mb_strlen($normalizedQuery, 'UTF-8') >= 3 && mb_strpos($haystack, $normalizedQuery, 0, 'UTF-8') !== false) {
+        $score += 30;
+    }
+
+    foreach ($tokens as $token) {
+        if (mb_strpos($haystack, $token, 0, 'UTF-8') !== false) {
+            $score += mb_strlen($token, 'UTF-8') >= 5 ? 8 : 4;
+        }
+    }
+
+    return $score;
+}
+
+function docs_ai_task_search_local_matches(array $compactTasks, string $query, int $limit): array
+{
+    $tokens = docs_ai_task_search_local_tokens($query);
+    if (empty($tokens)) {
+        return [];
+    }
+
+    $ranked = [];
+    foreach ($compactTasks as $compactTask) {
+        if (!is_array($compactTask)) {
+            continue;
+        }
+        $key = sanitize_text_field((string) ($compactTask['key'] ?? ''), 40);
+        if ($key === '') {
+            continue;
+        }
+        $score = docs_ai_task_search_local_score($compactTask, $query, $tokens);
+        if ($score <= 0) {
+            continue;
+        }
+        $ranked[] = [
+            'key' => $key,
+            'score' => $score,
+            'reason' => 'Найдено совпадение по словам запроса в задаче, файлах или ответах.',
+        ];
+    }
+
+    usort($ranked, static function (array $a, array $b): int {
+        return ((int) ($b['score'] ?? 0)) <=> ((int) ($a['score'] ?? 0));
+    });
+
+    $matches = [];
+    foreach ($ranked as $item) {
+        if (count($matches) >= $limit) {
+            break;
+        }
+        $matches[] = [
+            'key' => (string) $item['key'],
+            'reason' => (string) $item['reason'],
+        ];
+    }
+
+    return $matches;
+}
+
+function docs_ai_task_search_prefilter_tasks_for_ai(array $tasks, string $query, int $limit, int $maxCandidates): array
+{
+    $sourceCount = count($tasks);
+    if ($sourceCount < DOCS_AI_TASK_SEARCH_LOCAL_PREFILTER_MIN_TASKS || $maxCandidates <= 0) {
+        return [
+            'tasks' => $tasks,
+            'prefiltered' => false,
+            'candidateCount' => 0,
+            'sourceCount' => $sourceCount,
+        ];
+    }
+
+    $compactTasks = [];
+    $taskMap = [];
+    $index = 1;
+    foreach ($tasks as $task) {
+        if (!is_array($task)) {
+            continue;
+        }
+        $compact = docs_ai_task_search_compact_task($task, $index);
+        $key = sanitize_text_field((string) ($compact['key'] ?? ''), 40);
+        if ($key === '') {
+            $index++;
+            continue;
+        }
+        $compactTasks[] = $compact;
+        $taskMap[$key] = $task;
+        $index++;
+    }
+
+    $matches = docs_ai_task_search_local_matches($compactTasks, $query, $maxCandidates);
+    if (count($matches) < max(1, min($limit, 3))) {
+        return [
+            'tasks' => $tasks,
+            'prefiltered' => false,
+            'candidateCount' => count($matches),
+            'sourceCount' => $sourceCount,
+        ];
+    }
+
+    $candidateTasks = [];
+    $seen = [];
+    foreach ($matches as $match) {
+        if (!is_array($match)) {
+            continue;
+        }
+        $key = sanitize_text_field((string) ($match['key'] ?? ''), 40);
+        if ($key === '' || isset($seen[$key]) || !isset($taskMap[$key]) || !is_array($taskMap[$key])) {
+            continue;
+        }
+        $seen[$key] = true;
+        $candidateTasks[] = $taskMap[$key];
+    }
+
+    if (empty($candidateTasks)) {
+        return [
+            'tasks' => $tasks,
+            'prefiltered' => false,
+            'candidateCount' => 0,
+            'sourceCount' => $sourceCount,
+        ];
+    }
+
+    return [
+        'tasks' => $candidateTasks,
+        'prefiltered' => true,
+        'candidateCount' => count($candidateTasks),
+        'sourceCount' => $sourceCount,
+    ];
+}
+
+function docs_ai_task_search_clean_json_content(string $content): string
+{
+    $content = trim($content, "\xEF\xBB\xBF \t\n\r\0\x0B");
+    if ($content === '') {
+        return '';
+    }
+
+    $content = preg_replace('/<think\b[^>]*>.*?<\/think>/isu', '', $content) ?? $content;
+    $content = preg_replace('/<\/?think\b[^>]*>/iu', '', $content) ?? $content;
+    $content = trim($content);
+    $content = preg_replace('/^```(?:json)?\s*/iu', '', $content) ?? $content;
+    $content = preg_replace('/\s*```\s*$/u', '', $content) ?? $content;
+
+    return trim($content);
+}
+
+function docs_ai_task_search_extract_json_object(string $content): array
+{
+    $content = docs_ai_task_search_clean_json_content($content);
+    if ($content === '') {
+        return [];
+    }
+
+    $decoded = json_decode($content, true);
+    if (is_array($decoded)) {
+        return $decoded;
+    }
+
+    $start = strpos($content, '{');
+    $end = strrpos($content, '}');
+    if ($start === false || $end === false || $end <= $start) {
+        return [];
+    }
+
+    $slice = substr($content, $start, $end - $start + 1);
+    $decoded = json_decode($slice, true);
+
+    return is_array($decoded) ? $decoded : [];
+}
+
+function docs_ai_task_search_response_content(array $response): string
+{
+    $message = $response['choices'][0]['message'] ?? null;
+    if (!is_array($message)) {
+        return '';
+    }
+
+    $content = $message['content'] ?? '';
+    if (is_string($content)) {
+        return $content;
+    }
+
+    if (!is_array($content)) {
+        return '';
+    }
+
+    $parts = [];
+    foreach ($content as $item) {
+        if (is_string($item)) {
+            $parts[] = $item;
+            continue;
+        }
+        if (!is_array($item)) {
+            continue;
+        }
+        foreach (['text', 'content'] as $field) {
+            if (isset($item[$field]) && is_string($item[$field])) {
+                $parts[] = $item[$field];
+                break;
+            }
+        }
+    }
+
+    return trim(implode("\n", $parts));
+}
+
+function docs_ai_task_search_perform_ai_request(array $config, array $body): array
+{
+    if (!function_exists('curl_init')) {
+        return ['ok' => false, 'error' => 'cURL недоступен для запроса к ИИ.', 'status' => 500];
+    }
+
+    $endpoint = rtrim((string) $config['baseUrl'], '/') . '/chat/completions';
+    $ch = curl_init($endpoint);
+    if ($ch === false) {
+        return ['ok' => false, 'error' => 'Не удалось инициализировать запрос к ИИ.', 'status' => 500];
+    }
+
+    curl_setopt_array($ch, [
+        CURLOPT_POST => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER => [
+            'Authorization: Bearer ' . (string) $config['apiKey'],
+            'Content-Type: application/json',
+        ],
+        CURLOPT_POSTFIELDS => json_encode($body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        CURLOPT_TIMEOUT => DOCS_AI_TASK_SEARCH_AI_TIMEOUT_SECONDS,
+    ]);
+
+    $responseBody = curl_exec($ch);
+    $curlError = curl_error($ch);
+    $statusCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($responseBody === false) {
+        return ['ok' => false, 'error' => 'Ошибка запроса к ИИ: ' . $curlError, 'status' => 502];
+    }
+
+    $decoded = json_decode((string) $responseBody, true);
+    if (!is_array($decoded)) {
+        return ['ok' => false, 'error' => 'ИИ вернул некорректный ответ.', 'status' => 502];
+    }
+
+    if ($statusCode >= 400) {
+        $message = sanitize_text_field((string) ($decoded['error']['message'] ?? 'AI API error'), 500);
+        return ['ok' => false, 'error' => $message !== '' ? $message : 'AI API error', 'status' => 502];
+    }
+
+    return ['ok' => true, 'response' => $decoded, 'status' => $statusCode];
+}
+
+function docs_ai_task_search_request_json(array $config, string $systemMessage, array $payload, string $errorMessage, float $temperature = 0.1): array
+{
+    for ($attempt = 1; $attempt <= DOCS_AI_TASK_SEARCH_AI_JSON_ATTEMPTS; $attempt++) {
+        $attemptPayload = $payload;
+        $attemptSystemMessage = $systemMessage;
+        if ($attempt > 1) {
+            $attemptPayload['strictJsonRetry'] = true;
+            $attemptPayload['previousResponseProblem'] = 'invalid_json';
+            $attemptSystemMessage .= ' Предыдущий ответ был отклонён сервером, потому что это был невалидный JSON. '
+                . 'Сейчас верни ровно один JSON-объект по указанной схеме, без текста до или после.';
+        }
+
+        $payloadJson = json_encode($attemptPayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if (!is_string($payloadJson) || $payloadJson === '') {
+            return [
+                'ok' => false,
+                'error' => 'Не удалось подготовить JSON для ИИ-поиска.',
+                'status' => 500,
+                'reason' => 'ai_search_payload_encode_failed',
+            ];
+        }
+
+        $body = [
+            'model' => (string) $config['model'],
+            'temperature' => $attempt > 1 ? 0 : $temperature,
+            'messages' => [
+                ['role' => 'system', 'content' => $attemptSystemMessage],
+                ['role' => 'user', 'content' => $payloadJson],
+            ],
+        ];
+        if (empty($config['isGroq']) && empty($config['isGoogleOpenAiCompat'])) {
+            $body['response_format'] = ['type' => 'json_object'];
+        }
+
+        $request = docs_ai_task_search_perform_ai_request($config, $body);
+        if (empty($request['ok'])) {
+            return $request;
+        }
+
+        $response = isset($request['response']) && is_array($request['response']) ? $request['response'] : [];
+        $content = docs_ai_task_search_response_content($response);
+        $parsed = docs_ai_task_search_extract_json_object($content);
+        if (!empty($parsed)) {
+            return [
+                'ok' => true,
+                'parsed' => $parsed,
+                'response' => $response,
+                'attempts' => $attempt,
+            ];
+        }
+    }
+
+    return [
+        'ok' => false,
+        'error' => $errorMessage,
+        'status' => 502,
+        'reason' => 'ai_invalid_search_json',
+    ];
+}
+
+function docs_ai_task_search_build_rerank_candidates(array $matches, array $taskMap, int $maxCandidates, int $maxChars): array
+{
+    $candidates = [];
+    $candidateMap = [];
+    $seen = [];
+    $chars = 0;
+    $candidateIndex = 1;
+
+    foreach ($matches as $match) {
+        if (!is_array($match)) {
+            continue;
+        }
+        $key = sanitize_text_field((string) ($match['key'] ?? ''), 40);
+        if ($key === '' || isset($seen[$key]) || !isset($taskMap[$key]) || !is_array($taskMap[$key])) {
+            continue;
+        }
+
+        $compact = docs_ai_task_search_compact_task($taskMap[$key], $candidateIndex);
+        $compact = docs_ai_task_search_trim_compact_task_for_ai($compact);
+        $compact['key'] = $key;
+        $reason = docs_ai_task_search_short_text($match['reason'] ?? '', 240);
+        if ($reason !== '') {
+            $compact['batchReason'] = $reason;
+        }
+        $encoded = json_encode($compact, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if (!is_string($encoded) || $encoded === '') {
+            continue;
+        }
+        $encodedLength = strlen($encoded);
+        if (!empty($candidates) && ($chars + $encodedLength) > $maxChars) {
+            break;
+        }
+
+        $seen[$key] = true;
+        $candidates[] = $compact;
+        $candidateMap[$key] = $taskMap[$key];
+        $chars += $encodedLength;
+        $candidateIndex++;
+
+        if (count($candidates) >= $maxCandidates) {
+            break;
+        }
+    }
+
+    return [
+        'candidates' => $candidates,
+        'taskMap' => $candidateMap,
+    ];
+}
+
+function docs_ai_task_search_rerank_matches(array $config, array $matches, array $taskMap, string $query, int $limit): array
+{
+    $candidatePayload = docs_ai_task_search_build_rerank_candidates(
+        $matches,
+        $taskMap,
+        (int) ($config['rerankMaxCandidates'] ?? DOCS_AI_TASK_SEARCH_RERANK_MAX_CANDIDATES),
+        (int) ($config['rerankMaxChars'] ?? DOCS_AI_TASK_SEARCH_RERANK_MAX_CHARS)
+    );
+    $candidates = isset($candidatePayload['candidates']) && is_array($candidatePayload['candidates'])
+        ? $candidatePayload['candidates']
+        : [];
+    $candidateMap = isset($candidatePayload['taskMap']) && is_array($candidatePayload['taskMap'])
+        ? $candidatePayload['taskMap']
+        : [];
+
+    if (count($candidates) <= $limit) {
+        return [
+            'ok' => true,
+            'matches' => array_values(array_filter($matches, static function ($match) use ($candidateMap): bool {
+                return is_array($match)
+                    && isset($match['key'])
+                    && is_string($match['key'])
+                    && isset($candidateMap[$match['key']]);
+            })),
+            'taskMap' => $candidateMap,
+            'answer' => '',
+            'reranked' => false,
+        ];
+    }
+
+    $systemMessage = 'Ты финальный ранжировщик ИИ-поиска задач. '
+        . 'Тебе уже дали кандидатов из S3-снимка задач. Используй только query и candidates. '
+        . 'Выбери самые точные задачи по смыслу запроса, сравни всех кандидатов между собой и отсортируй от лучшей к худшей. '
+        . 'Для каждой выбранной задачи в reason объясни по-русски, какие поля задачи, файлы, ответы или исполнители совпали с запросом. '
+        . 'Верни только JSON: {"answer":"краткий ответ на русском","matches":[{"key":"t1","reason":"почему эта задача подходит"}]}. '
+        . 'key обязан быть одним из candidates[].key. Не добавляй markdown, code fence, пояснения или текст вне JSON.';
+    $payload = [
+        'query' => $query,
+        'limit' => $limit,
+        'candidates' => $candidates,
+    ];
+
+    $request = docs_ai_task_search_request_json(
+        $config,
+        $systemMessage,
+        $payload,
+        'ИИ нашёл кандидатов в S3-снимке, но не смог финально ранжировать их в формате поиска. Повторите запрос или сформулируйте его точнее.',
+        0
+    );
+    if (empty($request['ok'])) {
+        if (($request['reason'] ?? '') === 'ai_invalid_search_json') {
+            return [
+                'ok' => true,
+                'matches' => array_slice($matches, 0, $limit),
+                'taskMap' => $candidateMap,
+                'answer' => 'ИИ нашёл кандидатов, но финальное ранжирование вернуло не JSON. Показываю лучшие найденные совпадения.',
+                'reranked' => false,
+                'fallback' => 'invalid_rerank_json',
+            ];
+        }
+        return $request;
+    }
+
+    $parsed = isset($request['parsed']) && is_array($request['parsed']) ? $request['parsed'] : [];
+    $rankedMatches = [];
+    $seen = [];
+    foreach (($parsed['matches'] ?? []) as $match) {
+        if (count($rankedMatches) >= $limit || !is_array($match)) {
+            continue;
+        }
+        $key = sanitize_text_field((string) ($match['key'] ?? ''), 40);
+        if ($key === '' || isset($seen[$key]) || !isset($candidateMap[$key])) {
+            continue;
+        }
+        $seen[$key] = true;
+        $rankedMatches[] = [
+            'key' => $key,
+            'reason' => sanitize_text_field((string) ($match['reason'] ?? ''), 350),
+        ];
+    }
+
+    return [
+        'ok' => true,
+        'matches' => $rankedMatches,
+        'taskMap' => $candidateMap,
+        'answer' => sanitize_text_field((string) ($parsed['answer'] ?? ''), 400),
+        'reranked' => true,
+    ];
+}
+
+function docs_ai_task_search_run_model(array $tasks, string $query, int $limit): array
+{
+    if (function_exists('set_time_limit')) {
+        @set_time_limit(DOCS_AI_TASK_SEARCH_AI_TOTAL_TIMEOUT_SECONDS);
+    }
+
+    $config = docs_ai_task_search_resolve_ai_config();
+    if ((string) $config['apiKey'] === '') {
+        return ['ok' => false, 'error' => 'AI API key не найден в .env.', 'status' => 500];
+    }
+
+    $prefilter = docs_ai_task_search_prefilter_tasks_for_ai(
+        $tasks,
+        $query,
+        $limit,
+        (int) ($config['rerankMaxCandidates'] ?? DOCS_AI_TASK_SEARCH_RERANK_MAX_CANDIDATES)
+    );
+    $tasksForAi = isset($prefilter['tasks']) && is_array($prefilter['tasks']) ? $prefilter['tasks'] : $tasks;
+    $batches = docs_ai_task_search_build_ai_batches($tasksForAi, (int) $config['maxTasks'], (int) $config['maxChars']);
+    if (empty($batches)) {
+        return [
+            'ok' => true,
+            'answer' => docs_build_ai_task_search_answer([], $query),
+            'matches' => [],
+            'taskMap' => [],
+            'sentTasks' => 0,
+            'sourceTasks' => count($tasks),
+            'prefilteredByLocal' => !empty($prefilter['prefiltered']),
+            'prefilteredCandidates' => (int) ($prefilter['candidateCount'] ?? 0),
+        ];
+    }
+
+    $systemMessage = 'Ты ИИ-помощник поиска задач в документообороте. '
+        . 'Используй только user.query и user.tasks из запроса. Не используй внешние знания и не придумывай факты. '
+        . 'Сам пойми смысл запроса на русском языке и выбери одну или несколько реально подходящих задач. '
+        . 'Особенно внимательно учитывай актуальные поля задачи, названия файлов, тексты ответов и исполнителей. '
+        . 'Для каждой выбранной задачи в reason объясни по-русски, почему ты дал именно эту задачу: какие поля, файлы, ответы или исполнители совпали с запросом. '
+        . 'Верни только JSON: {"answer":"краткий ответ на русском","matches":[{"key":"t1","reason":"почему эта задача подходит"}]}. '
+        . 'key обязан быть одним из tasks[].key. Если подходящих задач нет, верни matches: [] и короткий answer. '
+        . 'Не добавляй markdown, code fence, пояснения, <think> или любой текст вне JSON. Ответ должен начинаться с { и заканчиваться }.';
+
+    $matches = [];
+    $taskMap = [];
+    $answers = [];
+    $sentTasks = 0;
+
+    foreach ($batches as $batchIndex => $batch) {
+        $compactTasks = isset($batch['tasks']) && is_array($batch['tasks']) ? $batch['tasks'] : [];
+        if (empty($compactTasks)) {
+            continue;
+        }
+
+        $userPayload = [
+            'query' => $query,
+            'limit' => $limit,
+            'batch' => [
+                'index' => $batchIndex + 1,
+                'total' => count($batches),
+            ],
+            'tasks' => $compactTasks,
+        ];
+
+        $request = docs_ai_task_search_request_json(
+            $config,
+            $systemMessage,
+            $userPayload,
+            'ИИ получил S3-снимок задач, но вернул ответ не в формате поиска. Повторите запрос или сформулируйте его короче.',
+            0.1
+        );
+
+        if (isset($batch['map']) && is_array($batch['map'])) {
+            foreach ($batch['map'] as $key => $task) {
+                if (is_string($key) && is_array($task)) {
+                    $taskMap[$key] = $task;
+                }
+            }
+        }
+
+        if (empty($request['ok'])) {
+            if (($request['reason'] ?? '') !== 'ai_invalid_search_json') {
+                return $request;
+            }
+            $fallbackMatches = docs_ai_task_search_local_matches($compactTasks, $query, $limit);
+            foreach ($fallbackMatches as $fallbackMatch) {
+                $matches[] = $fallbackMatch;
+            }
+            $answers[] = 'Один блок задач ИИ вернул не JSON, поэтому я проверил его локально по тексту задач, файлов и ответов.';
+            $sentTasks += count($compactTasks);
+            continue;
+        }
+
+        $parsed = isset($request['parsed']) && is_array($request['parsed']) ? $request['parsed'] : [];
+
+        $batchMatches = isset($parsed['matches']) && is_array($parsed['matches']) ? $parsed['matches'] : [];
+        foreach ($batchMatches as $match) {
+            if (is_array($match)) {
+                $matches[] = $match;
+            }
+        }
+
+        $batchAnswer = sanitize_text_field((string) ($parsed['answer'] ?? ''), 400);
+        if ($batchAnswer !== '') {
+            $answers[] = $batchAnswer;
+        }
+        $sentTasks += count($compactTasks);
+    }
+
+    if (count($matches) > $limit) {
+        $rerank = docs_ai_task_search_rerank_matches($config, $matches, $taskMap, $query, $limit);
+        if (empty($rerank['ok'])) {
+            return $rerank;
+        }
+        $matches = isset($rerank['matches']) && is_array($rerank['matches']) ? $rerank['matches'] : [];
+        $taskMap = isset($rerank['taskMap']) && is_array($rerank['taskMap']) ? $rerank['taskMap'] : $taskMap;
+        $rerankAnswer = sanitize_text_field((string) ($rerank['answer'] ?? ''), 400);
+        if ($rerankAnswer !== '') {
+            array_unshift($answers, $rerankAnswer);
+        }
+    }
+
+    $answer = '';
+    if (!empty($matches)) {
+        $answer = 'Нашёл подходящие задачи по вашему запросу. Ссылки ниже.';
+    } elseif (!empty($answers)) {
+        $answer = (string) $answers[0];
+    }
+
+    return [
+        'ok' => true,
+        'answer' => $answer,
+        'matches' => $matches,
+        'taskMap' => $taskMap,
+        'sentTasks' => $sentTasks,
+        'sourceTasks' => count($tasks),
+        'prefilteredByLocal' => !empty($prefilter['prefiltered']),
+        'prefilteredCandidates' => (int) ($prefilter['candidateCount'] ?? 0),
+        'model' => (string) $config['model'],
+    ];
+}
+
+function docs_run_ai_task_search(array $snapshot, string $query, string $chatId, int $limit): array
+{
+    $tasks = isset($snapshot['tasks']) && is_array($snapshot['tasks']) ? $snapshot['tasks'] : [];
+    $aiResult = docs_ai_task_search_run_model($tasks, $query, $limit);
+    if (empty($aiResult['ok'])) {
+        return [
+            'ok' => false,
+            'error' => (string) ($aiResult['error'] ?? 'ИИ-поиск недоступен.'),
+            'status' => (int) ($aiResult['status'] ?? 502),
+            'reason' => sanitize_text_field((string) ($aiResult['reason'] ?? ''), 120),
+            'searched' => count($tasks),
+        ];
+    }
+
+    $results = [];
+    $taskMap = isset($aiResult['taskMap']) && is_array($aiResult['taskMap']) ? $aiResult['taskMap'] : [];
+    $seen = [];
+    $matches = isset($aiResult['matches']) && is_array($aiResult['matches']) ? $aiResult['matches'] : [];
+
+    foreach ($matches as $match) {
+        if (count($results) >= $limit || !is_array($match)) {
+            continue;
+        }
+
+        $key = sanitize_text_field((string) ($match['key'] ?? ''), 40);
+        if ($key === '' || isset($seen[$key]) || !isset($taskMap[$key]) || !is_array($taskMap[$key])) {
+            continue;
+        }
+
+        $seen[$key] = true;
+        $reason = sanitize_text_field((string) ($match['reason'] ?? ''), 350);
+        $result = docs_prepare_ai_task_search_result($taskMap[$key], $chatId, docs_ai_task_search_task_folder_id($taskMap[$key], $chatId));
+        if ($reason !== '') {
+            $result['matchPreview'] = $reason;
+            $result['matchReasons'] = [[
+                'label' => 'Причина',
+                'preview' => $reason,
+            ]];
+        }
+        $result['score'] = max(1, $limit - count($results));
+        $results[] = $result;
+    }
+
+    $answer = '';
+    if (!empty($results)) {
+        $answer = docs_build_ai_task_search_explained_answer($results, $query);
+    }
+    if ($answer === '') {
+        $answer = sanitize_text_field((string) ($aiResult['answer'] ?? ''), 400);
+    }
+    if ($answer === '') {
+        $answer = docs_build_ai_task_search_answer($results, $query);
+    }
+
+    return [
+        'ok' => true,
+        'answer' => $answer,
+        'results' => $results,
+        'matched' => count($results),
+        'searched' => count($tasks),
+        'sentToAi' => (int) ($aiResult['sentTasks'] ?? 0),
+        'sourceTasks' => (int) ($aiResult['sourceTasks'] ?? count($tasks)),
+        'prefilteredByLocal' => !empty($aiResult['prefilteredByLocal']),
+        'prefilteredCandidates' => (int) ($aiResult['prefilteredCandidates'] ?? 0),
+        'model' => sanitize_text_field((string) ($aiResult['model'] ?? ''), 120),
+    ];
+}
+
+function docs_run_local_task_search(array $snapshot, string $query, string $chatId, int $limit): array
+{
+    $tasks = isset($snapshot['tasks']) && is_array($snapshot['tasks']) ? $snapshot['tasks'] : [];
+    $compactTasks = [];
+    $taskMap = [];
+    $index = 1;
+
+    foreach ($tasks as $task) {
+        if (!is_array($task)) {
+            continue;
+        }
+        $compact = docs_ai_task_search_compact_task($task, $index);
+        $key = sanitize_text_field((string) ($compact['key'] ?? ''), 40);
+        if ($key === '') {
+            $index++;
+            continue;
+        }
+        $compactTasks[] = $compact;
+        $taskMap[$key] = $task;
+        $index++;
+    }
+
+    $matches = docs_ai_task_search_local_matches($compactTasks, $query, $limit);
+    $results = [];
+    $seen = [];
+    foreach ($matches as $match) {
+        if (count($results) >= $limit || !is_array($match)) {
+            continue;
+        }
+        $key = sanitize_text_field((string) ($match['key'] ?? ''), 40);
+        if ($key === '' || isset($seen[$key]) || !isset($taskMap[$key]) || !is_array($taskMap[$key])) {
+            continue;
+        }
+        $seen[$key] = true;
+        $reason = sanitize_text_field((string) ($match['reason'] ?? 'Найдено локальное совпадение по JSON задач.'), 350);
+        $result = docs_prepare_ai_task_search_result($taskMap[$key], $chatId, docs_ai_task_search_task_folder_id($taskMap[$key], $chatId));
+        $result['matchPreview'] = $reason;
+        $result['matchReasons'] = [[
+            'label' => 'Совпадение',
+            'preview' => $reason,
+        ]];
+        $result['score'] = max(1, $limit - count($results));
+        $results[] = $result;
+    }
+
+    return [
+        'ok' => true,
+        'answer' => docs_build_ai_task_search_answer($results, $query),
+        'results' => $results,
+        'matched' => count($results),
+        'searched' => count($tasks),
+        'sentToAi' => 0,
+        'sourceTasks' => count($tasks),
+        'prefilteredByLocal' => false,
+        'prefilteredCandidates' => 0,
+        'model' => '',
+    ];
 }
 
 function docs_collect_view_candidate_keys(array $requestContext, array $details): array
@@ -13974,6 +16607,47 @@ function generate_entry_number(array $records): int
     return $max + 1;
 }
 
+function generate_document_registry_number(array $records): string
+{
+    $max = 0;
+    foreach ($records as $record) {
+        if (!is_array($record)) {
+            continue;
+        }
+        $raw = trim((string) ($record['registryNumber'] ?? ''));
+        if ($raw === '' || !preg_match('/^(\d+)/', $raw, $matches)) {
+            continue;
+        }
+        $value = (int) $matches[1];
+        if ($value > $max) {
+            $max = $value;
+        }
+    }
+
+    return (string) ($max + 1);
+}
+
+function resolve_requested_entry_number($value, array $records, ?int $fallback = null): int
+{
+    if (is_scalar($value)) {
+        $raw = trim((string) $value);
+        if ($raw !== '') {
+            $entryNumber = filter_var($raw, FILTER_VALIDATE_INT, [
+                'options' => ['min_range' => 1],
+            ]);
+            if ($entryNumber !== false) {
+                return (int) $entryNumber;
+            }
+        }
+    }
+
+    if ($fallback !== null && $fallback > 0) {
+        return $fallback;
+    }
+
+    return generate_entry_number($records);
+}
+
 function docs_sanitize_file_component(?string $value, string $fallback): string
 {
     if ($value === null) {
@@ -14574,7 +17248,37 @@ function docs_handle_mini_app_download_file(string $method): void
 
     $resolved = docs_resolve_public_document_file($rawPath);
     if ($resolved === null) {
-        respond_error('Файл не найден.', 404);
+        $coldMatch = docs_find_cold_storage_file_by_public_path($rawPath);
+        if ($coldMatch === null || !isset($coldMatch['file']) || !is_array($coldMatch['file'])) {
+            respond_error('Файл не найден.', 404);
+        }
+        if (docs_is_outgoing_file_private($coldMatch['file'])) {
+            respond_error('Доступ к приватному файлу запрещён.', 403, [
+                'reason' => 'outgoing_private_file_forbidden',
+            ]);
+        }
+
+        $fileName = isset($_GET['name']) && is_string($_GET['name'])
+            ? sanitize_text_field($_GET['name'], 255)
+            : '';
+        if ($fileName === '') {
+            $fileName = sanitize_text_field(
+                (string) ($coldMatch['file']['originalName'] ?? ($coldMatch['file']['storedName'] ?? 'document')),
+                255
+            );
+        }
+        $disposition = isset($_GET['disposition']) && is_string($_GET['disposition'])
+            ? $_GET['disposition']
+            : 'attachment';
+        $resolvedPath = docs_resolve_file_path_with_cold_storage(
+            sanitize_folder_name((string) ($coldMatch['folder'] ?? '')),
+            $coldMatch['file'],
+            isset($coldMatch['paths']) && is_array($coldMatch['paths']) ? $coldMatch['paths'] : []
+        );
+        if ($resolvedPath === '') {
+            respond_error('Файл не найден.', 404);
+        }
+        docs_stream_file_response($resolvedPath, $fileName !== '' ? $fileName : 'document', $disposition, $method);
     }
 
     $resolvedFolder = sanitize_folder_name((string) ($resolved['folder'] ?? ''));
@@ -18480,6 +21184,125 @@ switch ($action) {
         docs_handle_mini_app_doc_load_log($method);
         break;
 
+    case 'mini_app_ai_task_search':
+        $requestContext = docs_build_request_user_context();
+        $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+        if (strtoupper($method) !== 'POST') {
+            respond_error('Некорректный метод запроса.', 405);
+        }
+
+        $telegramInitDataContext = [];
+        if (isset($requestContext['telegramInitData']) && is_array($requestContext['telegramInitData'])) {
+            $telegramInitDataContext = $requestContext['telegramInitData'];
+        }
+        if (!empty($telegramInitDataContext['present']) && empty($telegramInitDataContext['valid'])) {
+            respond_error('Не удалось подтвердить данные Telegram. Откройте мини-приложение заново из чата с ботом.', 401, [
+                'telegramInitDataError' => isset($telegramInitDataContext['error']) ? (string) $telegramInitDataContext['error'] : 'invalid',
+                'telegramInitDataPresent' => true,
+                'requiresTelegramReauth' => true,
+            ]);
+        }
+
+        $payload = load_json_payload();
+        if (!is_array($payload) || empty($payload)) {
+            $payload = $_POST;
+        }
+        if (!is_array($payload)) {
+            $payload = [];
+        }
+
+        $query = sanitize_text_field((string) ($payload['query'] ?? ''), 500);
+        if ($query === '' || mb_strlen($query, 'UTF-8') < 2) {
+            respond_error('Введите запрос для поиска задач.', 400);
+        }
+
+        $telegramUserId = normalize_identifier_value($requestContext['primaryId'] ?? '');
+        if ($telegramUserId === '' && isset($requestContext['raw']) && is_array($requestContext['raw'])) {
+            $telegramUserId = normalize_identifier_value($requestContext['raw']['telegram_user_id'] ?? '');
+        }
+        if ($telegramUserId === '' && isset($requestContext['user']) && is_array($requestContext['user'])) {
+            $telegramUserId = normalize_identifier_value($requestContext['user']['id'] ?? '');
+        }
+        if ($telegramUserId === '') {
+            respond_error('Не удалось определить Telegram ID. Откройте мини-приложение из Telegram.', 400, [
+                'requiresTelegramId' => true,
+            ]);
+        }
+
+        $limit = isset($payload['limit']) ? (int) $payload['limit'] : 6;
+        $limit = max(1, min($limit, 10));
+        $searchMode = strtolower(sanitize_text_field((string) ($payload['mode'] ?? 'ai'), 20));
+        if ($searchMode !== 'local') {
+            $searchMode = 'ai';
+        }
+        $requestedFolderId = docs_ai_task_search_normalize_folder_filter_id($payload['folderId'] ?? '');
+        if ($requestedFolderId === '' && isset($payload['folderScope'])) {
+            $requestedScope = docs_ai_task_search_normalize_folder_filter_id($payload['folderScope']);
+            if ($requestedScope === 'folder:no-folder') {
+                $requestedFolderId = 'no-folder';
+            } elseif (strpos($requestedScope, 'folder:') === 0) {
+                $requestedFolderId = docs_ai_task_search_normalize_folder_filter_id(substr($requestedScope, 7));
+            } elseif ($requestedScope === 'all') {
+                $requestedFolderId = 'all';
+            }
+        }
+        if ($requestedFolderId === '') {
+            $requestedFolderId = 'all';
+        }
+        $snapshotResult = docs_prepare_ai_task_search_client_snapshot($payload['tasksSnapshot'] ?? null);
+        if (empty($snapshotResult['ok']) || !isset($snapshotResult['snapshot']) || !is_array($snapshotResult['snapshot'])) {
+            $snapshotResult = docs_load_mini_app_user_tasks_snapshot($telegramUserId);
+            if (empty($snapshotResult['ok']) || !isset($snapshotResult['snapshot']) || !is_array($snapshotResult['snapshot'])) {
+                respond_error(
+                    (string) ($snapshotResult['message'] ?? 'JSON-снимок задач пока недоступен. Обновите список задач и повторите поиск.'),
+                    404,
+                    [
+                        'snapshotStatus' => $snapshotResult['error'] ?? 'unavailable',
+                        'snapshotKey' => $snapshotResult['key'] ?? '',
+                    ]
+                );
+            }
+        }
+
+        $snapshotTasks = isset($snapshotResult['snapshot']['tasks']) && is_array($snapshotResult['snapshot']['tasks'])
+            ? $snapshotResult['snapshot']['tasks']
+            : [];
+        $scopedSnapshot = $snapshotResult['snapshot'];
+        $scopedSnapshot['tasks'] = docs_ai_task_search_apply_folder_filter($snapshotTasks, $requestedFolderId, $telegramUserId);
+        $search = $searchMode === 'local'
+            ? docs_run_local_task_search($scopedSnapshot, $query, $telegramUserId, $limit)
+            : docs_run_ai_task_search($scopedSnapshot, $query, $telegramUserId, $limit);
+        if (empty($search['ok'])) {
+            respond_error((string) ($search['error'] ?? 'ИИ-поиск недоступен.'), (int) ($search['status'] ?? 502), [
+                'mode' => $searchMode === 'local' ? 'task_snapshot_local_search' : 'ai_task_snapshot_search',
+                'reason' => sanitize_text_field((string) ($search['reason'] ?? ''), 120),
+                'folderId' => $requestedFolderId,
+            ]);
+        }
+        respond_success([
+            'query' => $query,
+            'answer' => $search['answer'],
+            'results' => $search['results'],
+            'matched' => $search['matched'],
+            'searched' => $search['searched'],
+            'sentToAi' => $search['sentToAi'] ?? 0,
+            'sourceTasks' => $search['sourceTasks'] ?? $search['searched'],
+            'prefilteredByLocal' => !empty($search['prefilteredByLocal']),
+            'prefilteredCandidates' => $search['prefilteredCandidates'] ?? 0,
+            'model' => $search['model'] ?? '',
+            'snapshot' => [
+                'source' => $snapshotResult['source'] ?? '',
+                'generatedAt' => sanitize_text_field((string) ($snapshotResult['snapshot']['generatedAt'] ?? ''), 80),
+                'tasksCount' => count($snapshotTasks),
+                'searchedTasksCount' => count($scopedSnapshot['tasks']),
+                'key' => $snapshotResult['key'] ?? '',
+            ],
+            'searchMode' => $searchMode,
+            'folderId' => $requestedFolderId,
+            'mode' => $searchMode === 'local' ? 'task_snapshot_local' : 'ai_task_snapshot_ai',
+        ]);
+        break;
+
     case 'mini_app_task_snapshot':
         $requestContext = docs_build_request_user_context();
         $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
@@ -19435,15 +22258,22 @@ switch ($action) {
             }
         }
 
-        respond_success([
-            'tasks' => array_values($tasks),
+        $generatedAt = date('c');
+        $tasksForResponse = array_values($tasks);
+        $userTasksSnapshot = docs_build_mini_app_user_tasks_snapshot_pending_result(
+            $telegramUserId,
+            count($tasksForResponse)
+        );
+        $responsePayload = [
+            'tasks' => $tasksForResponse,
             'organizations' => $organizationSummaries,
-            'total' => count($tasks),
+            'total' => count($tasksForResponse),
             'stats' => $stats,
-            'generatedAt' => date('c'),
+            'generatedAt' => $generatedAt,
             'telegramUserId' => $telegramUserId !== '' ? $telegramUserId : null,
             'themeMode' => $savedThemeMode !== '' ? $savedThemeMode : null,
             'user' => $userInfo,
+            'userTasksSnapshot' => $userTasksSnapshot,
             'filterSource' => $requestContext['filterSource'] ?? null,
             'organizationsChecked' => $totalOrganizations,
             'telegramInitData' => $telegramInitDataSummary,
@@ -19456,8 +22286,45 @@ switch ($action) {
                 'canDeleteDocuments' => false,
             ],
             'directorMode' => $directorModeSummary,
-        ]);
-        break;
+        ];
+
+        $saveUserTasksSnapshot = static function () use (
+            $telegramUserId,
+            $tasksForResponse,
+            $organizationSummaries,
+            $stats,
+            $userInfo,
+            $filter,
+            $directorModeSummary
+        ): void {
+            $snapshotResult = docs_save_mini_app_user_tasks_snapshot(
+                $telegramUserId,
+                $tasksForResponse,
+                $organizationSummaries,
+                $stats,
+                is_array($userInfo) ? $userInfo : null,
+                is_array($filter) ? $filter : null,
+                $directorModeSummary
+            );
+
+            if (empty($snapshotResult['saved'])) {
+                log_docs_event('Mini app user tasks snapshot background save failed', [
+                    'telegramUserId' => $telegramUserId !== '' ? $telegramUserId : null,
+                    'status' => $snapshotResult['status'] ?? null,
+                    'reason' => $snapshotResult['reason'] ?? null,
+                    'error' => $snapshotResult['error'] ?? null,
+                    'tasksCount' => count($tasksForResponse),
+                ]);
+            }
+        };
+
+        if (function_exists('fastcgi_finish_request')) {
+            respond_success_with_background_task($responsePayload, $saveUserTasksSnapshot);
+        }
+
+        docs_flush_success_response_before_background($responsePayload);
+        $saveUserTasksSnapshot();
+        exit;
 
     case 'mini_app_assignment_templates':
         if ($method !== 'POST') {
@@ -22312,13 +25179,11 @@ switch ($action) {
             ]);
         }
 
-        $resolvedPath = '';
-        foreach (docs_get_order_file_path_candidates($folder, $targetFile, $journalType) as $pathCandidate) {
-            if (is_file($pathCandidate) && is_readable($pathCandidate)) {
-                $resolvedPath = $pathCandidate;
-                break;
-            }
-        }
+        $resolvedPath = docs_resolve_file_path_with_cold_storage(
+            $folder,
+            $targetFile,
+            docs_get_order_file_path_candidates($folder, $targetFile, $journalType)
+        );
         if ($resolvedPath === '') {
             respond_error('Файл не найден.', 404, [
                 'reason' => 'order_file_storage_missing',
@@ -22424,6 +25289,7 @@ switch ($action) {
         }
         $orderFilesPendingDeletion = [];
         $orderFilesCreated = [];
+        $orderFilesColdStorageUploads = [];
         $failOrdersSave = static function (string $message, int $status = 400, array $details = []) use (&$ordersRegistryHandle, &$orderFilesCreated, $folder, $journalType): void {
             if ($ordersRegistryHandle !== null) {
                 docs_unlock_orders_registry($ordersRegistryHandle);
@@ -22439,6 +25305,10 @@ switch ($action) {
         $savedRecord = null;
 
         if ($recordId === '') {
+            $requestedOrderNumber = docs_payload_first_scalar_text($payload, ['orderNumber', 'order_number', 'registryNumber', 'number'], 160);
+            if ($requestedOrderNumber === '') {
+                $payload['orderNumber'] = docs_generate_next_order_number($records);
+            }
             $savedRecord = docs_sanitize_order_record_payload($payload, null, $authorLabel, $authorKey, $journalType);
             $validationError = docs_validate_order_record($savedRecord, $journalType);
             if ($validationError !== null) {
@@ -22460,7 +25330,8 @@ switch ($action) {
                 $authorLabel,
                 $authorKey,
                 $journalType,
-                $orderFilesCreated
+                $orderFilesCreated,
+                $orderFilesColdStorageUploads
             );
             $records[] = $savedRecord;
         } else {
@@ -22499,7 +25370,8 @@ switch ($action) {
                 $authorLabel,
                 $authorKey,
                 $journalType,
-                $orderFilesCreated
+                $orderFilesCreated,
+                $orderFilesColdStorageUploads
             );
             $records[$recordIndex] = $savedRecord;
         }
@@ -22519,7 +25391,7 @@ switch ($action) {
         $orderRecords = docs_sort_order_records($records);
         $orderRecordsResponse = docs_prepare_order_records_response($orderRecords, $canManageOrders, $folder, $journalType);
 
-        respond_success([
+        $responsePayload = [
             'message' => $recordId === '' ? 'Запись добавлена.' : 'Запись обновлена.',
             'organization' => $organization,
             'journalType' => $journalType,
@@ -22529,7 +25401,9 @@ switch ($action) {
             'manualCount' => count($orderRecords),
             'canAddOrderRecords' => true,
             'canManageOrderRecords' => $canManageOrders,
-        ]);
+        ];
+
+        docs_respond_orders_success_with_cold_storage($responsePayload, $folder, $journalType, $orderFilesColdStorageUploads);
         break;
 
     case 'orders_attach_files':
@@ -22586,6 +25460,7 @@ switch ($action) {
             ]);
         }
         $orderFilesCreated = [];
+        $orderFilesColdStorageUploads = [];
         $failOrdersAttach = static function (string $message, int $status = 400, array $details = []) use (&$ordersRegistryHandle, &$orderFilesCreated, $folder, $journalType): void {
             if ($ordersRegistryHandle !== null) {
                 docs_unlock_orders_registry($ordersRegistryHandle);
@@ -22623,7 +25498,8 @@ switch ($action) {
             $authorLabel,
             $authorKey,
             $journalType,
-            $orderFilesCreated
+            $orderFilesCreated,
+            $orderFilesColdStorageUploads
         );
         $records[$recordIndex] = $savedRecord;
 
@@ -22637,7 +25513,7 @@ switch ($action) {
         $orderRecords = docs_sort_order_records($records);
         $orderRecordsResponse = docs_prepare_order_records_response($orderRecords, $canManageOrders, $folder, $journalType);
 
-        respond_success([
+        $responsePayload = [
             'message' => 'Файлы прикреплены.',
             'organization' => $organization,
             'journalType' => $journalType,
@@ -22647,7 +25523,9 @@ switch ($action) {
             'manualCount' => count($orderRecords),
             'canAddOrderRecords' => true,
             'canManageOrderRecords' => $canManageOrders,
-        ]);
+        ];
+
+        docs_respond_orders_success_with_cold_storage($responsePayload, $folder, $journalType, $orderFilesColdStorageUploads);
         break;
 
     case 'orders_delete':
@@ -22904,13 +25782,11 @@ switch ($action) {
             ]);
         }
 
-        $resolvedPath = '';
-        foreach (docs_get_outgoing_file_path_candidates($folder, $targetFile) as $pathCandidate) {
-            if (is_file($pathCandidate) && is_readable($pathCandidate)) {
-                $resolvedPath = $pathCandidate;
-                break;
-            }
-        }
+        $resolvedPath = docs_resolve_file_path_with_cold_storage(
+            $folder,
+            $targetFile,
+            docs_get_outgoing_file_path_candidates($folder, $targetFile)
+        );
 
         if ($resolvedPath === '') {
             respond_error('Файл не найден.', 404, [
@@ -23518,16 +26394,20 @@ switch ($action) {
         $settings = load_admin_settings($folder);
 
         $documentId = generate_document_id();
-        $entryNumber = generate_entry_number($records);
+        $entryNumber = resolve_requested_entry_number($_POST['entry_number'] ?? null, $records);
 
         $sanitizedStatus = sanitize_status($_POST['status'] ?? '');
         $statusTimestamp = $sanitizedStatus === '' ? null : date('c');
+        $registryNumber = sanitize_text_field($_POST['registry_number'] ?? '', 120);
+        if ($registryNumber === '') {
+            $registryNumber = generate_document_registry_number($records);
+        }
 
         $record = [
             'id' => $documentId,
             'entryNumber' => $entryNumber,
             'organization' => $organization,
-            'registryNumber' => sanitize_text_field($_POST['registry_number'] ?? '', 120),
+            'registryNumber' => $registryNumber,
             'registrationDate' => sanitize_date_field($_POST['registration_date'] ?? ''),
             'direction' => sanitize_text_field($_POST['direction'] ?? '', 60),
             'correspondent' => sanitize_text_field($_POST['correspondent'] ?? '', 200),
@@ -23708,7 +26588,7 @@ switch ($action) {
                         $createdUploadTargets[] = $target;
                         $fileOptimization = docs_optimize_uploaded_attachment_file($target, $originalName, (int) ($sizes[$i] ?? 0));
                         $aiBrief = isset($attachmentsAiBrief[$i]) ? trim((string) $attachmentsAiBrief[$i]) : '';
-                        $record['files'][] = [
+                        $fileEntry = [
                             'originalName' => $originalName,
                             'storedName' => $storedName,
                             'size' => (int) ($fileOptimization['size'] ?? ($sizes[$i] ?? filesize($target) ?: 0)),
@@ -23716,6 +26596,7 @@ switch ($action) {
                             'url' => build_public_path($folder, $storedName),
                             'aiBrief' => $aiBrief,
                         ];
+                        $record['files'][] = docs_apply_cold_storage_metadata($fileEntry, $folder, $storedName, $target);
                         docs_log_file_debug('files:create stored', [
                             'documentId' => $documentId,
                             'index' => $i,
@@ -23760,7 +26641,7 @@ switch ($action) {
                         $createdUploadTargets[] = $targetSingle;
                         $fileOptimizationSingle = docs_optimize_uploaded_attachment_file($targetSingle, $originalNameSingle, (int) ($sizes ?? 0));
                         $aiBriefSingle = isset($attachmentsAiBrief[0]) ? trim((string) $attachmentsAiBrief[0]) : '';
-                        $record['files'][] = [
+                        $fileEntrySingle = [
                             'originalName' => $originalNameSingle,
                             'storedName' => $storedNameSingle,
                             'size' => (int) ($fileOptimizationSingle['size'] ?? ($sizes ?? filesize($targetSingle) ?: 0)),
@@ -23768,6 +26649,7 @@ switch ($action) {
                             'url' => build_public_path($folder, $storedNameSingle),
                             'aiBrief' => $aiBriefSingle,
                         ];
+                        $record['files'][] = docs_apply_cold_storage_metadata($fileEntrySingle, $folder, $storedNameSingle, $targetSingle);
                         docs_log_file_debug('files:create stored single', [
                             'documentId' => $documentId,
                             'originalName' => $originalNameSingle,
@@ -24587,6 +27469,7 @@ switch ($action) {
             }
 
             $map = [
+                'entryNumber' => fn($value) => resolve_requested_entry_number($value, $records, (int) ($record['entryNumber'] ?? 0)),
                 'registryNumber' => fn($value) => sanitize_text_field($value, 120),
                 'registrationDate' => fn($value) => sanitize_date_field($value),
                 'direction' => fn($value) => sanitize_text_field($value, 60),
@@ -25428,7 +28311,7 @@ switch ($action) {
                                 $documentFilesCreatedDuringUpdate[] = $target;
                                 $fileOptimization = docs_optimize_uploaded_attachment_file($target, $originalName, (int) ($sizes[$i] ?? 0));
                                 $aiBrief = isset($attachmentsAiBrief[$i]) ? trim((string) $attachmentsAiBrief[$i]) : '';
-                                $record['files'][] = [
+                                $fileEntry = [
                                     'originalName' => $originalName,
                                     'storedName' => $storedName,
                                     'size' => (int) ($fileOptimization['size'] ?? ($sizes[$i] ?? filesize($target) ?: 0)),
@@ -25436,6 +28319,7 @@ switch ($action) {
                                     'url' => build_public_path($folder, $storedName),
                                     'aiBrief' => $aiBrief,
                                 ];
+                                $record['files'][] = docs_apply_cold_storage_metadata($fileEntry, $folder, $storedName, $target);
                                 $filesUpdated = true;
                                 docs_log_file_debug('files:update stored', [
                                     'documentId' => $documentId,
@@ -25481,7 +28365,7 @@ switch ($action) {
                                 $documentFilesCreatedDuringUpdate[] = $targetSingle;
                                 $fileOptimizationSingle = docs_optimize_uploaded_attachment_file($targetSingle, $originalNameSingle, (int) ($sizes ?? 0));
                                 $aiBriefSingle = isset($attachmentsAiBrief[0]) ? trim((string) $attachmentsAiBrief[0]) : '';
-                                $record['files'][] = [
+                                $fileEntrySingle = [
                                     'originalName' => $originalNameSingle,
                                     'storedName' => $storedNameSingle,
                                     'size' => (int) ($fileOptimizationSingle['size'] ?? ($sizes ?? filesize($targetSingle) ?: 0)),
@@ -25489,6 +28373,7 @@ switch ($action) {
                                     'url' => build_public_path($folder, $storedNameSingle),
                                     'aiBrief' => $aiBriefSingle,
                                 ];
+                                $record['files'][] = docs_apply_cold_storage_metadata($fileEntrySingle, $folder, $storedNameSingle, $targetSingle);
                                 $filesUpdated = true;
                                 docs_log_file_debug('files:update stored single', [
                                     'documentId' => $documentId,
@@ -25941,7 +28826,7 @@ switch ($action) {
             }
             $fileOptimization = docs_optimize_uploaded_attachment_file($target, $originalName, (int) $size);
             $uploadedStoredNames[] = $storedName;
-            $records[$recordIndex]['responses'][] = [
+            $responseEntry = [
                 'originalName' => $originalName,
                 'storedName' => $storedName,
                 'size' => (int) ($fileOptimization['size'] ?? ($size ?: (is_file($target) ? filesize($target) : 0))),
@@ -25954,6 +28839,12 @@ switch ($action) {
                 'uploadedByLogin' => $uploaderLogin,
                 'url' => build_public_path($folder, 'Ответы/' . $documentId . '/' . $storedName),
             ];
+            $records[$recordIndex]['responses'][] = docs_apply_cold_storage_metadata(
+                $responseEntry,
+                $folder,
+                'Ответы/' . $documentId . '/' . $storedName,
+                $target
+            );
         };
 
         if ($hasAttachments && is_array($names)) {
@@ -25991,7 +28882,7 @@ switch ($action) {
                 ]);
             } else {
                 $uploadedStoredNames[] = $storedName;
-                $records[$recordIndex]['responses'][] = [
+                $responseEntry = [
                     'originalName' => $originalName,
                     'storedName' => $storedName,
                     'size' => (int) (is_file($target) ? filesize($target) : $bytesWritten),
@@ -26004,6 +28895,12 @@ switch ($action) {
                     'uploadedByLogin' => $uploaderLogin,
                     'url' => build_public_path($folder, 'Ответы/' . $documentId . '/' . $storedName),
                 ];
+                $records[$recordIndex]['responses'][] = docs_apply_cold_storage_metadata(
+                    $responseEntry,
+                    $folder,
+                    'Ответы/' . $documentId . '/' . $storedName,
+                    $target
+                );
             }
         }
 
@@ -26576,6 +29473,7 @@ switch ($action) {
                 if (is_file($path)) {
                     @unlink($path);
                 }
+                docs_delete_cold_storage_file($response);
                 $deleted = true;
             }
             $record['responses'] = array_values($remaining);
@@ -26675,16 +29573,20 @@ switch ($action) {
 
             if (isset($record['files']) && is_array($record['files'])) {
                 foreach ($record['files'] as $file) {
-                    if (!is_array($file) || !isset($file['storedName'])) {
+                    if (!is_array($file)) {
                         continue;
                     }
-                    $path = $dir . '/' . $file['storedName'];
-                    if (is_file($path)) {
-                        @unlink($path);
-                    }
+                    docs_delete_document_file_from_storage($folder, $file);
                 }
             }
 
+            if (isset($record['responses']) && is_array($record['responses'])) {
+                foreach ($record['responses'] as $responseFile) {
+                    if (is_array($responseFile)) {
+                        docs_delete_cold_storage_file($responseFile);
+                    }
+                }
+            }
             docs_delete_directory_recursive(docs_get_document_responses_dir($folder, $documentId, false));
 
             unset($records[$index]);
@@ -26757,6 +29659,138 @@ switch ($action) {
 
         respond_success([
             'storage' => docs_collect_storage_size_summary($requestedOrganization !== '' ? $requestedOrganization : null),
+        ]);
+        break;
+
+    case 'storage_s3_status':
+        if ($method !== 'GET' && $method !== 'POST') {
+            respond_error('Некорректный метод запроса.', 405);
+        }
+
+        $source = $method === 'POST' ? load_json_payload() : $_GET;
+        if (!is_array($source) || empty($source)) {
+            $source = $_POST;
+        }
+        if (!is_array($source)) {
+            $source = [];
+        }
+
+        $requestedOrganization = docs_normalize_organization_candidate((string) ($source['organization'] ?? ''));
+        $accessContext = docs_resolve_access_context($requestedOrganization !== '' ? $requestedOrganization : null, true);
+        docs_require_admin_session($accessContext);
+        $organization = $accessContext['active'];
+
+        respond_success([
+            'organization' => $organization,
+            'storage' => docs_collect_storage_size_summary($organization),
+            'coldStorage' => docs_cold_storage_base_status(),
+        ]);
+        break;
+
+    case 'storage_s3_list':
+        if ($method !== 'GET' && $method !== 'POST') {
+            respond_error('Некорректный метод запроса.', 405);
+        }
+
+        $source = $method === 'POST' ? load_json_payload() : $_GET;
+        if (!is_array($source) || empty($source)) {
+            $source = $_POST;
+        }
+        if (!is_array($source)) {
+            $source = [];
+        }
+
+        $listingScope = docs_normalize_cold_storage_listing_scope($source['scope'] ?? '');
+        $requestedOrganization = docs_normalize_organization_candidate((string) ($source['organization'] ?? ''));
+        $accessContext = docs_resolve_access_context($requestedOrganization !== '' ? $requestedOrganization : null, true);
+        docs_require_admin_session($accessContext);
+        $organization = is_string($accessContext['active'] ?? null) ? $accessContext['active'] : '';
+        if ($listingScope !== 'all' && $organization === '') {
+            respond_error('Организация не выбрана.', 400);
+        }
+        $folder = $listingScope === 'all' ? '' : sanitize_folder_name($organization);
+        $path = docs_sanitize_cold_storage_browser_path($source['path'] ?? '');
+
+        respond_success([
+            'organization' => $organization !== '' ? $organization : null,
+            'scope' => $listingScope,
+            'coldStorage' => docs_cold_storage_base_status(),
+            'listing' => docs_list_cold_storage_objects($folder, $path),
+        ]);
+        break;
+
+    case 'storage_s3_delete':
+        if ($method !== 'POST') {
+            respond_error('Некорректный метод запроса.', 405);
+        }
+
+        $payload = load_json_payload();
+        if (!is_array($payload) || empty($payload)) {
+            $payload = $_POST;
+        }
+        if (!is_array($payload)) {
+            $payload = [];
+        }
+
+        $confirm = is_string($payload['confirm'] ?? null)
+            ? mb_strtolower(trim((string) $payload['confirm']), 'UTF-8')
+            : '';
+        if ($confirm !== 'delete') {
+            respond_error('Удаление не подтверждено.', 400);
+        }
+
+        $listingScope = docs_normalize_cold_storage_listing_scope($payload['scope'] ?? '');
+        $requestedOrganization = docs_normalize_organization_candidate((string) ($payload['organization'] ?? ''));
+        $accessContext = docs_resolve_access_context($requestedOrganization !== '' ? $requestedOrganization : null, true);
+        docs_require_admin_session($accessContext);
+        $organization = is_string($accessContext['active'] ?? null) ? $accessContext['active'] : '';
+        if ($listingScope !== 'all' && $organization === '') {
+            respond_error('Организация не выбрана.', 400);
+        }
+
+        $folder = $listingScope === 'all' ? '' : sanitize_folder_name($organization);
+        $path = docs_sanitize_cold_storage_browser_path($payload['path'] ?? '');
+        $type = docs_normalize_cold_storage_browser_object_type($payload['type'] ?? '');
+        $delete = docs_delete_cold_storage_browser_object($folder, $path, $type);
+        if (empty($delete['ok'])) {
+            respond_error((string) ($delete['message'] ?? 'Не удалось удалить объект из S3.'), 400, [
+                'delete' => $delete,
+            ]);
+        }
+
+        respond_success([
+            'organization' => $organization !== '' ? $organization : null,
+            'scope' => $listingScope,
+            'delete' => $delete,
+            'coldStorage' => docs_cold_storage_base_status(),
+        ]);
+        break;
+
+    case 'storage_s3_test':
+        if ($method !== 'POST') {
+            respond_error('Некорректный метод запроса.', 405);
+        }
+
+        $payload = load_json_payload();
+        if (!is_array($payload) || empty($payload)) {
+            $payload = $_POST;
+        }
+        if (!is_array($payload)) {
+            $payload = [];
+        }
+
+        $requestedOrganization = docs_normalize_organization_candidate((string) ($payload['organization'] ?? ''));
+        $accessContext = docs_resolve_access_context($requestedOrganization !== '' ? $requestedOrganization : null, true);
+        docs_require_admin_session($accessContext);
+        $organization = $accessContext['active'];
+        $folder = sanitize_folder_name($organization);
+        $test = docs_run_cold_storage_self_test($folder);
+
+        respond_success([
+            'organization' => $organization,
+            'test' => $test,
+            'coldStorage' => docs_cold_storage_base_status(),
+            'storage' => docs_collect_storage_size_summary($organization),
         ]);
         break;
 

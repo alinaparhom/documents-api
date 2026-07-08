@@ -41,7 +41,7 @@
     { value: 'detailed', label: 'Подробно' },
     { value: 'brief', label: 'Кратко (ИИ анализирует только первые 5 страниц PDF)' }
   ];
-    var DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
+    var DOCS_AI_FALLBACK_ENDPOINTS = ['/js/documents/api-docs.php', '/api-docs.php'];
   var GROQ_PAID_ENDPOINTS = ['/js/documents/api-groq-paid.php', '/api-groq-paid.php'];
   var GROQ_PDF_UNSUPPORTED_MODELS = ['llama-3.1-8b-instant'];
   var VISION_BATCH_SIZE = 4;
@@ -327,7 +327,7 @@
     }
 
     async function tryExtractOcrTextForPaid(fileOrBlob, fileName, remoteUrl) {
-      var apiUrl = (config && config.apiUrl) || window.DOCUMENTS_AI_API_URL || '/api-docs.php';
+      var apiUrl = (config && config.apiUrl) || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
       function buildOcrFormData() {
         var formData = new FormData();
         formData.append('action', 'ocr_extract');
@@ -592,7 +592,7 @@
       return '';
     }
     async function requestOcrTextForPaidFile(sourceEntry, fallbackName) {
-      var apiUrl = (config && config.apiUrl) || window.DOCUMENTS_AI_API_URL || '/api-docs.php';
+      var apiUrl = (config && config.apiUrl) || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
       if (!sourceEntry) {
         return '';
       }
@@ -3303,7 +3303,7 @@
           }
         }
         if (!hasUsefulExtractedText(extractedText)) {
-          var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/api-docs.php';
+          var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
           var request = await postDocsAiWithFallback(function () {
             var formData = new FormData();
             formData.append('action', 'ocr_extract');

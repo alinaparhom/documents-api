@@ -679,6 +679,13 @@
     logTextarea: null,
     logCopyButton: null,
     logCloseButton: null,
+    s3Button: null,
+    s3Modal: null,
+    s3Status: null,
+    s3Summary: null,
+    s3RefreshButton: null,
+    s3TestButton: null,
+    s3CloseButton: null,
     templateButton: null,
     templateModal: null,
     templateStatus: null,
@@ -1342,6 +1349,24 @@
         error: '',
         visible: false,
         promise: null
+      },
+      s3: {
+        loading: false,
+        testing: false,
+        deleting: false,
+        error: '',
+        visible: false,
+        storage: null,
+        coldStorage: null,
+        test: null,
+        listing: null,
+        listingPath: '',
+        listingFilter: '',
+        listingLoading: false,
+        listingError: '',
+        listingLoadedAt: 0,
+        listingPromise: null,
+        promise: null
       }
     },
     resizeTimer: null,
@@ -1616,6 +1641,28 @@
       .trim();
   }
 
+  function buildNextDocumentRegistryNumber(records) {
+    var maxNumber = 0;
+    if (Array.isArray(records)) {
+      for (var i = 0; i < records.length; i += 1) {
+        var item = records[i];
+        if (!item || typeof item !== 'object') {
+          continue;
+        }
+        var value = String(item.registryNumber || '').trim();
+        var match = value.match(/^(\d+)/);
+        if (!match || !match[1]) {
+          continue;
+        }
+        var number = parseInt(match[1], 10);
+        if (Number.isFinite(number) && number > maxNumber) {
+          maxNumber = number;
+        }
+      }
+    }
+    return String(maxNumber + 1);
+  }
+
   function buildApiUrl(action, extraParams) {
     var params = new URLSearchParams();
     if (action) {
@@ -1682,10 +1729,8 @@
           return null;
         }
         var totalBytes = storage.bytes || 0;
-        var archiveBytes = storage.archiveBytes || 0;
         var registryBytes = storage.registryBytes || 0;
-        var activeFilesBytes = Math.max(0, totalBytes - archiveBytes - registryBytes);
-        var archivePercent = totalBytes > 0 ? Math.round((archiveBytes / totalBytes) * 1000) / 10 : 0;
+        var activeFilesBytes = Math.max(0, totalBytes - registryBytes);
         var registryPercent = totalBytes > 0 ? Math.round((registryBytes / totalBytes) * 1000) / 10 : 0;
         var activePercent = totalBytes > 0 ? Math.round((activeFilesBytes / totalBytes) * 1000) / 10 : 0;
 
@@ -1698,9 +1743,6 @@
           directories: storage.directories || 0,
           activeFilesApprox: activeFilesBytes,
           activeFilesPercent: activePercent + '%',
-          archives: storage.archiveLabel || '0 Б',
-          archiveBytes: archiveBytes,
-          archivePercent: archivePercent + '%',
           registries: storage.registryLabel || '0 Б',
           registryBytes: registryBytes,
           registryPercent: registryPercent + '%',
@@ -1717,10 +1759,6 @@
         }
         return null;
       });
-  }
-
-  function optimizeServerStorage(organization) {
-    return Promise.reject(new Error('ZIP-архивация и дедупликация вложений отключены.'));
   }
 
   function cloneDiagnosticsObject(source) {
@@ -4892,6 +4930,20 @@
       '.documents-outgoing-file-upload__button-icon{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;flex:0 0 auto;font-size:15px;line-height:1;}' +
       '.documents-outgoing-file-upload__summary{min-width:0;color:#475569;font-size:13px;font-weight:800;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
       '.documents-outgoing-file-upload__summary.is-filled{color:#172554;}' +
+      '.documents-outgoing-upload-progress{display:none;grid-column:1 / -1;border:1px solid #dbeafe;border-radius:12px;background:#f8fbff;padding:10px;gap:9px;box-sizing:border-box;}' +
+      '.documents-outgoing-upload-progress.is-visible{display:grid;}' +
+      '.documents-outgoing-upload-progress__head{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12px;font-weight:900;color:#172554;}' +
+      '.documents-outgoing-upload-progress__percent{flex:0 0 auto;color:#2458ff;}' +
+      '.documents-outgoing-upload-progress__track{height:8px;border-radius:999px;background:#dbeafe;overflow:hidden;}' +
+      '.documents-outgoing-upload-progress__fill{display:block;width:0%;height:100%;border-radius:inherit;background:linear-gradient(90deg,#2458ff,#38bdf8);transition:width .16s ease;}' +
+      '.documents-outgoing-upload-progress__list{display:grid;gap:6px;}' +
+      '.documents-outgoing-upload-progress__file{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 10px;align-items:center;font-size:12px;color:#334155;}' +
+      '.documents-outgoing-upload-progress__file-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:800;color:#0f172a;}' +
+      '.documents-outgoing-upload-progress__file-status{font-weight:900;color:#64748b;}' +
+      '.documents-outgoing-upload-progress__file-track{grid-column:1 / -1;height:5px;border-radius:999px;background:#e2e8f0;overflow:hidden;}' +
+      '.documents-outgoing-upload-progress__file-fill{display:block;width:0%;height:100%;border-radius:inherit;background:#2458ff;transition:width .16s ease;}' +
+      '.documents-outgoing-upload-progress__file.is-done .documents-outgoing-upload-progress__file-status{color:#047857;}' +
+      '.documents-outgoing-upload-progress__file.is-error .documents-outgoing-upload-progress__file-status{color:#b91c1c;}' +
       '.documents-outgoing-private-toggle{grid-column:1 / -1;display:grid;grid-template-columns:auto minmax(0,1fr);align-items:start;gap:10px;width:100%;padding:11px 12px;border:1px solid #bfdbfe;border-radius:12px;background:#eff6ff;color:#172554;box-sizing:border-box;cursor:pointer;}' +
       '.documents-outgoing-private-toggle:hover,.documents-outgoing-private-toggle:focus-within{border-color:#93c5fd;background:#eaf3ff;}' +
       '.documents-outgoing-private-toggle input{width:18px;height:18px;margin:1px 0 0;accent-color:#2458ff;}' +
@@ -4919,7 +4971,7 @@
       '.documents-outgoing-form-modal__footer .documents-button--primary{border:1px solid #2458ff;background:#2458ff;color:#fff;box-shadow:0 10px 24px rgba(36,88,255,.22);}' +
       '.documents-outgoing-form-modal__footer .documents-button--primary:hover,.documents-outgoing-form-modal__footer .documents-button--primary:focus-visible{border-color:#1f4fdc;background:#1f4fdc;outline:0;}' +
       '.documents-outgoing-form-modal__footer .documents-button:disabled{opacity:.55;cursor:wait;box-shadow:none;}' +
-      '@media (max-width:720px){.documents-outgoing-modal__header{display:grid;padding:12px;}.documents-outgoing-modal__actions{justify-content:flex-start;}.documents-outgoing-modal__title{font-size:18px;}.documents-outgoing-modal__notice{margin:10px 12px 0;}.documents-outgoing-modal__body{padding:10px 12px 14px;}.documents-outgoing-table{min-width:1020px;}.documents-outgoing-form-modal{align-items:flex-end;padding:8px;}.documents-outgoing-form-modal__shell{max-height:calc(100dvh - 16px);border-radius:14px;}.documents-outgoing-form-modal__header{padding:15px 14px 13px;}.documents-outgoing-form-modal__title{font-size:19px;}.documents-outgoing-form-modal__body{padding:14px;}.documents-outgoing-form-modal__grid{grid-template-columns:1fr;gap:12px;}.documents-outgoing-form__wide{grid-column:auto;}.documents-outgoing-file-upload{grid-template-columns:1fr;align-items:stretch;}.documents-outgoing-file-upload__button{width:100%;}.documents-outgoing-file-upload__summary{white-space:normal;}.documents-outgoing-form-modal__footer{display:grid;grid-template-columns:1fr;gap:8px;padding:12px 14px;}.documents-outgoing-form-modal__footer .documents-button{width:100%;}}';
+      '@media (max-width:720px){.documents-outgoing-modal__header{display:grid;padding:12px;}.documents-outgoing-modal__actions{justify-content:flex-start;}.documents-outgoing-modal__title{font-size:18px;}.documents-outgoing-modal__notice{margin:10px 12px 0;}.documents-outgoing-modal__body{padding:10px 12px 14px;}.documents-outgoing-table{min-width:1020px;}.documents-outgoing-form-modal{align-items:flex-end;padding:8px;}.documents-outgoing-form-modal__shell{max-height:calc(100dvh - 16px);border-radius:14px;}.documents-outgoing-form-modal__header{padding:15px 14px 13px;}.documents-outgoing-form-modal__title{font-size:19px;}.documents-outgoing-form-modal__body{padding:14px;}.documents-outgoing-form-modal__grid{grid-template-columns:1fr;gap:12px;}.documents-outgoing-form__wide{grid-column:auto;}.documents-outgoing-file-upload{grid-template-columns:1fr;align-items:stretch;}.documents-outgoing-file-upload__button{width:100%;}.documents-outgoing-file-upload__summary{white-space:normal;}.documents-outgoing-upload-progress__file-name{white-space:normal;overflow-wrap:anywhere;}.documents-outgoing-form-modal__footer{display:grid;grid-template-columns:1fr;gap:8px;padding:12px 14px;}.documents-outgoing-form-modal__footer .documents-button{width:100%;}}';
     document.head.appendChild(style);
   }
 
@@ -11474,12 +11526,69 @@
       '.documents-template-modal__button--primary{background:linear-gradient(120deg,#2563eb,#38bdf8);color:#fff;box-shadow:0 16px 28px rgba(37,99,235,0.28);}' +
       '.documents-template-modal__button--secondary{background:rgba(148,163,184,0.18);color:#0f172a;}' +
       '.documents-template-modal__button:hover:not(:disabled){transform:translateY(-1px);}' +
-      '.documents-admin__archive-button{margin-right:8px;}' +
+      '.documents-admin__s3-button{margin-right:8px;}' +
+      '.documents-s3-modal{position:fixed;inset:0;z-index:1900;display:none;align-items:center;justify-content:center;padding:16px;background:rgba(15,23,42,0.32);backdrop-filter:blur(10px);}' +
+      '.documents-s3-modal.is-visible{display:flex;}' +
+      '.documents-s3-modal__panel{width:min(1320px,calc(100vw - 24px));height:min(920px,calc(100dvh - 24px));max-height:calc(100dvh - 24px);overflow:hidden;border-radius:22px;background:linear-gradient(165deg, rgba(255,255,255,0.96), rgba(248,250,252,0.92));border:1px solid rgba(255,255,255,0.95);box-shadow:0 28px 60px rgba(15,23,42,0.22);padding:18px;display:grid;grid-template-rows:auto auto auto minmax(0,1fr) auto;gap:14px;}' +
+      '.documents-s3-modal__title{margin:0;font-size:20px;font-weight:700;color:#0f172a;}' +
+      '.documents-s3-modal__subtitle{margin:0;color:#64748b;font-size:13px;line-height:1.45;}' +
+      '.documents-s3-modal__status{display:none;padding:10px 12px;border-radius:12px;font-size:13px;font-weight:600;background:rgba(59,130,246,0.12);color:#1d4ed8;}' +
+      '.documents-s3-modal__status.is-visible{display:block;}' +
+      '.documents-s3-modal__status--error{background:rgba(239,68,68,0.14);color:#b91c1c;}' +
+      '.documents-s3-modal__status--success{background:rgba(16,185,129,0.15);color:#047857;}' +
+      '.documents-s3-modal__summary{min-height:0;overflow:hidden;display:grid;grid-template-rows:auto minmax(0,1fr);gap:12px;}' +
+      '.documents-s3-modal__grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;}' +
+      '.documents-s3-modal__metric{border:1px solid rgba(148,163,184,0.3);border-radius:14px;padding:12px;background:rgba(255,255,255,0.74);display:flex;flex-direction:column;gap:4px;min-width:0;}' +
+      '.documents-s3-modal__metric-label{font-size:12px;font-weight:700;color:#64748b;line-height:1.3;}' +
+      '.documents-s3-modal__metric-value{font-size:18px;font-weight:800;color:#0f172a;line-height:1.2;word-break:break-word;}' +
+      '.documents-s3-modal__explorer{min-height:0;border:1px solid rgba(148,163,184,0.3);border-radius:14px;background:rgba(255,255,255,0.74);overflow:hidden;display:grid;grid-template-rows:auto auto auto auto minmax(0,1fr) auto;}' +
+      '.documents-s3-modal__explorer-head{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(148,163,184,0.22);}' +
+      '.documents-s3-modal__explorer-title{font-size:13px;font-weight:900;color:#0f172a;}' +
+      '.documents-s3-modal__explorer-path{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#475569;font-size:12px;font-weight:700;}' +
+      '.documents-s3-modal__explorer-up{flex:0 0 auto;min-height:30px;border:1px solid rgba(148,163,184,0.34);border-radius:9px;background:rgba(248,250,252,0.92);color:#0f172a;font-size:12px;font-weight:800;padding:0 10px;}' +
+      '.documents-s3-modal__explorer-up:disabled{opacity:.45;}' +
+      '.documents-s3-modal__toolbar{display:grid;grid-template-columns:minmax(220px,1.4fr) auto minmax(180px,.8fr);gap:8px;padding:10px 12px;border-bottom:1px solid rgba(148,163,184,0.16);background:rgba(248,250,252,0.68);}' +
+      '.documents-s3-modal__quick{display:flex;flex-wrap:wrap;gap:8px;padding:10px 12px;border-bottom:1px solid rgba(148,163,184,0.16);background:rgba(255,255,255,0.68);}' +
+      '.documents-s3-modal__explorer-meta{display:flex;flex-wrap:wrap;gap:8px 14px;padding:9px 12px;border-bottom:1px solid rgba(148,163,184,0.16);background:rgba(248,250,252,0.52);font-size:12px;font-weight:800;color:#475569;}' +
+      '.documents-s3-modal__explorer-meta span{min-width:0;overflow-wrap:anywhere;}' +
+      '.documents-s3-modal__input{width:100%;min-width:0;min-height:36px;border:1px solid rgba(148,163,184,0.36);border-radius:10px;background:rgba(255,255,255,0.92);color:#0f172a;font-size:13px;font-weight:700;padding:0 10px;}' +
+      '.documents-s3-modal__input:focus{outline:2px solid rgba(37,99,235,0.22);border-color:rgba(37,99,235,0.48);}' +
+      '.documents-s3-modal__mini-button{min-height:36px;border:1px solid rgba(148,163,184,0.34);border-radius:10px;background:rgba(255,255,255,0.88);color:#0f172a;font-size:12px;font-weight:850;padding:0 10px;white-space:nowrap;}' +
+      '.documents-s3-modal__mini-button:disabled{opacity:.5;}' +
+      '.documents-s3-modal__mini-button--danger{border-color:rgba(220,38,38,0.24);background:rgba(254,242,242,0.92);color:#b91c1c;}' +
+      '.documents-s3-modal__table-wrap{min-height:0;overflow:auto;scrollbar-gutter:stable;}' +
+      '.documents-s3-modal__table{width:100%;border-collapse:separate;border-spacing:0;min-width:960px;font-size:12px;color:#334155;}' +
+      '.documents-s3-modal__table th{position:sticky;top:0;z-index:1;background:#f8fafc;color:#475569;font-size:11px;text-align:left;text-transform:uppercase;letter-spacing:0;padding:8px;border-bottom:1px solid rgba(148,163,184,0.24);}' +
+      '.documents-s3-modal__table td{padding:8px;border-bottom:1px solid rgba(148,163,184,0.16);vertical-align:middle;}' +
+      '.documents-s3-modal__table tr:last-child td{border-bottom:0;}' +
+      '.documents-s3-modal__item-button{display:inline-flex;align-items:center;gap:7px;max-width:100%;border:0;background:transparent;color:#1d4ed8;font:inherit;font-weight:800;text-align:left;padding:0;}' +
+      '.documents-s3-modal__item-button[data-s3-type="file"]{color:#0f172a;}' +
+      '.documents-s3-modal__item-icon{flex:0 0 auto;width:22px;height:22px;border-radius:7px;display:inline-flex;align-items:center;justify-content:center;background:#e0f2fe;color:#0369a1;font-size:12px;font-weight:900;}' +
+      '.documents-s3-modal__item-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
+      '.documents-s3-modal__key{max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#64748b;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:11px;}' +
+      '.documents-s3-modal__row-actions{display:flex;gap:6px;justify-content:flex-end;}' +
+      '.documents-s3-modal__empty{padding:14px;color:#64748b;font-size:13px;font-weight:700;}' +
+      '.documents-s3-modal__actions{display:flex;flex-wrap:wrap;gap:10px;}' +
+      '.documents-s3-modal__button{border:none;border-radius:12px;padding:11px 14px;font-size:14px;font-weight:600;cursor:pointer;transition:transform .2s ease, box-shadow .2s ease, opacity .2s ease;}' +
+      '.documents-s3-modal__button:disabled{opacity:0.6;cursor:default;transform:none;box-shadow:none;}' +
+      '.documents-s3-modal__button--primary{background:linear-gradient(120deg,#2563eb,#38bdf8);color:#fff;box-shadow:0 16px 28px rgba(37,99,235,0.28);}' +
+      '.documents-s3-modal__button--secondary{background:rgba(148,163,184,0.18);color:#0f172a;}' +
+      '.documents-s3-modal__button:hover:not(:disabled){transform:translateY(-1px);}' +
       '@media (max-width: 720px){' +
       '.documents-template-modal{padding:8px;align-items:flex-end;}' +
       '.documents-template-modal__panel{width:100%;max-height:calc(100vh - 16px);border-radius:20px;padding:14px;}' +
       '.documents-template-modal__actions{display:grid;grid-template-columns:1fr;}' +
       '.documents-template-modal__button{width:100%;}' +
+      '.documents-s3-modal{padding:8px;align-items:flex-end;}' +
+      '.documents-s3-modal__panel{width:100%;height:calc(100dvh - 16px);max-height:calc(100dvh - 16px);border-radius:20px;padding:14px;}' +
+      '.documents-s3-modal__grid{grid-template-columns:repeat(2,minmax(0,1fr));}' +
+      '.documents-s3-modal__explorer-head{grid-template-columns:1fr auto;align-items:start;}' +
+      '.documents-s3-modal__explorer-title{grid-column:1 / 2;}' +
+      '.documents-s3-modal__explorer-path{grid-column:1 / -1;white-space:normal;overflow-wrap:anywhere;}' +
+      '.documents-s3-modal__toolbar{grid-template-columns:1fr;}' +
+      '.documents-s3-modal__table-wrap{overflow-x:auto;}' +
+      '.documents-s3-modal__actions{display:grid;grid-template-columns:1fr;}' +
+      '.documents-s3-modal__button{width:100%;}' +
       '}' +
       '';
     document.head.appendChild(style);
@@ -11518,6 +11627,10 @@
     var templateButton = createElement('button', 'documents-admin__log-button documents-admin__template-button', 'Шаблон');
     templateButton.type = 'button';
     headerActions.appendChild(templateButton);
+
+    var s3Button = createElement('button', 'documents-admin__log-button documents-admin__s3-button', 'S3');
+    s3Button.type = 'button';
+    headerActions.appendChild(s3Button);
 
     var logButton = createElement('button', 'documents-admin__log-button', 'Журнал мини-приложения');
     logButton.type = 'button';
@@ -11675,6 +11788,34 @@
     templateModal.appendChild(templatePanel);
     document.body.appendChild(templateModal);
 
+    var s3Modal = createElement('div', 'documents-s3-modal');
+    s3Modal.setAttribute('aria-hidden', 'true');
+    var s3Panel = createElement('div', 'documents-s3-modal__panel');
+    s3Panel.setAttribute('role', 'dialog');
+    s3Panel.setAttribute('aria-modal', 'true');
+    var s3Title = createElement('h3', 'documents-s3-modal__title', 'S3 холодное хранилище');
+    var s3Subtitle = createElement('p', 'documents-s3-modal__subtitle', 'Просмотр файлов, которые лежат в S3, и проверка загрузки новых вложений.');
+    var s3Status = createElement('div', 'documents-s3-modal__status');
+    s3Status.setAttribute('role', 'status');
+    var s3Summary = createElement('div', 'documents-s3-modal__summary');
+    var s3Actions = createElement('div', 'documents-s3-modal__actions');
+    var s3RefreshButton = createElement('button', 'documents-s3-modal__button documents-s3-modal__button--secondary', 'Обновить');
+    s3RefreshButton.type = 'button';
+    var s3TestButton = createElement('button', 'documents-s3-modal__button documents-s3-modal__button--primary', 'Проверить загрузку');
+    s3TestButton.type = 'button';
+    var s3CloseButton = createElement('button', 'documents-s3-modal__button documents-s3-modal__button--secondary', 'Закрыть');
+    s3CloseButton.type = 'button';
+    s3Actions.appendChild(s3RefreshButton);
+    s3Actions.appendChild(s3TestButton);
+    s3Actions.appendChild(s3CloseButton);
+    s3Panel.appendChild(s3Title);
+    s3Panel.appendChild(s3Subtitle);
+    s3Panel.appendChild(s3Status);
+    s3Panel.appendChild(s3Summary);
+    s3Panel.appendChild(s3Actions);
+    s3Modal.appendChild(s3Panel);
+    document.body.appendChild(s3Modal);
+
     document.body.appendChild(modal);
 
     adminElements.modal = modal;
@@ -11684,6 +11825,13 @@
     adminElements.saveButton = saveButton;
     adminElements.closeButton = closeButton;
     adminElements.logButton = logButton;
+    adminElements.s3Button = s3Button;
+    adminElements.s3Modal = s3Modal;
+    adminElements.s3Status = s3Status;
+    adminElements.s3Summary = s3Summary;
+    adminElements.s3RefreshButton = s3RefreshButton;
+    adminElements.s3TestButton = s3TestButton;
+    adminElements.s3CloseButton = s3CloseButton;
     adminElements.templateButton = templateButton;
     adminElements.logPanel = logPanel;
     adminElements.logStatus = logStatus;
@@ -11712,6 +11860,10 @@
       openAdminTemplateModal();
     });
 
+    s3Button.addEventListener('click', function() {
+      openAdminS3Modal();
+    });
+
     logButton.addEventListener('click', function() {
       toggleAdminLogPanel();
     });
@@ -11732,6 +11884,97 @@
       if (event.target === templateModal) {
         closeAdminTemplateModal();
       }
+    });
+
+    s3Modal.addEventListener('click', function(event) {
+      if (event.target === s3Modal) {
+        closeAdminS3Modal();
+      }
+    });
+
+    s3CloseButton.addEventListener('click', function() {
+      closeAdminS3Modal();
+    });
+
+    s3RefreshButton.addEventListener('click', function() {
+      refreshAdminS3Panel().catch(function() {});
+    });
+
+    s3TestButton.addEventListener('click', function() {
+      runAdminS3Test();
+    });
+
+    s3Summary.addEventListener('click', function(event) {
+      var target = event.target && event.target.closest
+        ? event.target.closest('[data-s3-path], [data-s3-up], [data-s3-copy], [data-s3-open-input], [data-s3-delete]')
+        : null;
+      if (!target || !s3Summary.contains(target)) {
+        return;
+      }
+      var s3State = ensureAdminS3State();
+      if (s3State.deleting) {
+        return;
+      }
+      if (target.hasAttribute('data-s3-copy')) {
+        copyAdminS3TextToClipboard(target.getAttribute('data-s3-copy') || '', 'S3 key скопирован.');
+        return;
+      }
+      if (target.hasAttribute('data-s3-open-input')) {
+        var pathInput = s3Summary.querySelector('[data-s3-path-input]');
+        var requestedPath = pathInput ? normalizeAdminS3BrowserPath(pathInput.value) : '';
+        fetchAdminS3Listing(requestedPath, { force: true }).catch(function() {});
+        return;
+      }
+      if (target.hasAttribute('data-s3-up')) {
+        var parentPath = s3State.listing && typeof s3State.listing.parentPath === 'string'
+          ? s3State.listing.parentPath
+          : '';
+        fetchAdminS3Listing(parentPath, { force: true }).catch(function() {});
+        return;
+      }
+      if (target.hasAttribute('data-s3-delete')) {
+        var deletePath = normalizeAdminS3BrowserPath(target.getAttribute('data-s3-delete') || '');
+        var deleteType = target.getAttribute('data-s3-type') === 'directory' ? 'directory' : 'file';
+        var deleteName = target.getAttribute('data-s3-name') || deletePath || 'объект';
+        if (!deletePath) {
+          setAdminS3Status('Корень S3 удалить нельзя.', 'error');
+          return;
+        }
+        var deleteMessage = 'Удалить из S3 «' + deleteName + '»?';
+        if (deleteType === 'directory') {
+          deleteMessage += '\n\nПапка будет удалена вместе со всем содержимым.';
+        }
+        if (!window.confirm(deleteMessage)) {
+          return;
+        }
+        deleteAdminS3Object(deletePath, deleteType).catch(function() {});
+        return;
+      }
+      var nextPath = target.getAttribute('data-s3-path') || '';
+      fetchAdminS3Listing(nextPath, { force: true }).catch(function() {});
+    });
+
+    s3Summary.addEventListener('input', function(event) {
+      var target = event.target && event.target.closest
+        ? event.target.closest('[data-s3-filter-input]')
+        : null;
+      if (!target || !s3Summary.contains(target)) {
+        return;
+      }
+      var s3State = ensureAdminS3State();
+      s3State.listingFilter = target.value || '';
+      applyAdminS3Filter(s3Summary, s3State.listingFilter);
+    });
+
+    s3Summary.addEventListener('keydown', function(event) {
+      var target = event.target && event.target.closest
+        ? event.target.closest('[data-s3-path-input]')
+        : null;
+      if (!target || !s3Summary.contains(target) || event.key !== 'Enter') {
+        return;
+      }
+      event.preventDefault();
+      fetchAdminS3Listing(normalizeAdminS3BrowserPath(target.value), { force: true }).catch(function() {});
     });
 
     templateOpenButton.addEventListener('click', function() {
@@ -12413,6 +12656,631 @@
     }
   }
 
+  function ensureAdminS3State() {
+    if (!state.admin.s3) {
+      state.admin.s3 = {
+        loading: false,
+        testing: false,
+        deleting: false,
+        error: '',
+        visible: false,
+        storage: null,
+        coldStorage: null,
+        test: null,
+        listing: null,
+        listingPath: '',
+        listingFilter: '',
+        listingLoading: false,
+        listingError: '',
+        listingLoadedAt: 0,
+        listingPromise: null,
+        promise: null
+      };
+    }
+    if (typeof state.admin.s3.listingPath !== 'string') {
+      state.admin.s3.listingPath = '';
+    }
+    if (!('deleting' in state.admin.s3)) {
+      state.admin.s3.deleting = false;
+    }
+    if (typeof state.admin.s3.listingFilter !== 'string') {
+      state.admin.s3.listingFilter = '';
+    }
+    if (!('listing' in state.admin.s3)) {
+      state.admin.s3.listing = null;
+    }
+    if (!('listingLoading' in state.admin.s3)) {
+      state.admin.s3.listingLoading = false;
+    }
+    if (!('listingError' in state.admin.s3)) {
+      state.admin.s3.listingError = '';
+    }
+    if (!Number.isFinite(Number(state.admin.s3.listingLoadedAt))) {
+      state.admin.s3.listingLoadedAt = 0;
+    }
+    if (!('listingPromise' in state.admin.s3)) {
+      state.admin.s3.listingPromise = null;
+    }
+    return state.admin.s3;
+  }
+
+  function setAdminS3Status(text, type) {
+    ensureAdminModal();
+    if (!adminElements.s3Status) {
+      return;
+    }
+    var status = adminElements.s3Status;
+    status.textContent = text || '';
+    status.classList.toggle('is-visible', Boolean(text));
+    status.classList.remove('documents-s3-modal__status--error', 'documents-s3-modal__status--success');
+    if (type === 'error') {
+      status.classList.add('documents-s3-modal__status--error');
+    } else if (type === 'success') {
+      status.classList.add('documents-s3-modal__status--success');
+    }
+  }
+
+  function createAdminS3Metric(label, value) {
+    var metric = createElement('div', 'documents-s3-modal__metric');
+    metric.appendChild(createElement('div', 'documents-s3-modal__metric-label', label));
+    metric.appendChild(createElement('div', 'documents-s3-modal__metric-value', value));
+    return metric;
+  }
+
+  function normalizeAdminS3BrowserPath(value) {
+    var raw = typeof value === 'string' ? value : '';
+    raw = raw.replace(/\\/g, '/').trim();
+    if (!raw) {
+      return '';
+    }
+    return raw.split('/').reduce(function(parts, part) {
+      var segment = String(part || '').trim();
+      if (!segment || segment === '.' || segment === '..') {
+        return parts;
+      }
+      parts.push(segment);
+      return parts;
+    }, []).join('/');
+  }
+
+  function copyAdminS3TextToClipboard(text, successMessage) {
+    var value = typeof text === 'string' ? text.trim() : '';
+    if (!value) {
+      setAdminS3Status('Нечего копировать.', 'error');
+      return;
+    }
+
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      navigator.clipboard.writeText(value)
+        .then(function() {
+          setAdminS3Status(successMessage || 'Скопировано в буфер обмена.', 'success');
+        })
+        .catch(function() {
+          fallbackCopy();
+        });
+      return;
+    }
+
+    fallbackCopy();
+
+    function fallbackCopy() {
+      var textarea = document.createElement('textarea');
+      textarea.value = value;
+      textarea.setAttribute('readonly', 'readonly');
+      textarea.style.position = 'fixed';
+      textarea.style.left = '-9999px';
+      textarea.style.top = '0';
+      document.body.appendChild(textarea);
+      try {
+        textarea.focus();
+        textarea.select();
+        textarea.setSelectionRange(0, textarea.value.length);
+        var executed = document.execCommand && document.execCommand('copy');
+        setAdminS3Status(
+          executed ? (successMessage || 'Скопировано в буфер обмена.') : 'Не удалось скопировать автоматически.',
+          executed ? 'success' : 'error'
+        );
+      } catch (copyError) {
+        setAdminS3Status('Не удалось скопировать автоматически.', 'error');
+      } finally {
+        textarea.remove();
+      }
+    }
+  }
+
+  function adminS3ItemMatchesFilter(item, filter) {
+    if (!filter) {
+      return true;
+    }
+    var haystack = [
+      item && item.name,
+      item && item.path,
+      item && item.remoteKey,
+      item && item.type
+    ].map(function(value) {
+      return typeof value === 'string' ? value.toLowerCase() : '';
+    }).join(' ');
+
+    return haystack.indexOf(filter) !== -1;
+  }
+
+  function applyAdminS3Filter(container, filter) {
+    if (!container) {
+      return;
+    }
+    var normalizedFilter = typeof filter === 'string' ? filter.trim().toLowerCase() : '';
+    var rows = Array.prototype.slice.call(container.querySelectorAll('[data-s3-row]'));
+    var visibleCount = 0;
+    rows.forEach(function(row) {
+      var search = (row.getAttribute('data-s3-search') || '').toLowerCase();
+      var visible = !normalizedFilter || search.indexOf(normalizedFilter) !== -1;
+      row.hidden = !visible;
+      if (visible) {
+        visibleCount++;
+      }
+    });
+    var counter = container.querySelector('[data-s3-filter-count]');
+    if (counter) {
+      counter.textContent = normalizedFilter
+        ? 'Найдено: ' + visibleCount + ' из ' + rows.length
+        : 'Объектов: ' + rows.length;
+    }
+    var empty = container.querySelector('[data-s3-filter-empty]');
+    if (empty) {
+      empty.hidden = !normalizedFilter || visibleCount > 0;
+    }
+  }
+
+  function createAdminS3QuickButton(label, path, currentPath) {
+    var button = createElement('button', 'documents-s3-modal__mini-button', label);
+    button.type = 'button';
+    button.disabled = normalizeAdminS3BrowserPath(path) === normalizeAdminS3BrowserPath(currentPath);
+    button.setAttribute('data-s3-path', normalizeAdminS3BrowserPath(path));
+    return button;
+  }
+
+  function createAdminS3Explorer(s3State) {
+    var listing = s3State.listing && typeof s3State.listing === 'object' ? s3State.listing : null;
+    var items = listing && Array.isArray(listing.items) ? listing.items : [];
+    var path = listing && typeof listing.path === 'string' ? listing.path : (s3State.listingPath || '');
+    var filter = typeof s3State.listingFilter === 'string' ? s3State.listingFilter.trim().toLowerCase() : '';
+    var explorer = createElement('div', 'documents-s3-modal__explorer');
+    var head = createElement('div', 'documents-s3-modal__explorer-head');
+    var title = createElement('div', 'documents-s3-modal__explorer-title', 'Проводник S3');
+    var pathLabel = path ? path : 'корень S3 documents-api';
+    var pathDetails = pathLabel;
+    if (listing) {
+      pathDetails += ' | папок: ' + (listing.directoriesCount || 0) + ', файлов: ' + (listing.filesCount || 0) + ', размер: ' + (listing.label || '0 Б');
+    }
+    var pathNode = createElement('div', 'documents-s3-modal__explorer-path', pathDetails);
+    var upButton = createElement('button', 'documents-s3-modal__explorer-up', 'Вверх');
+    upButton.type = 'button';
+    upButton.disabled = s3State.listingLoading || s3State.deleting || !path;
+    upButton.setAttribute('data-s3-up', 'true');
+    head.appendChild(title);
+    head.appendChild(pathNode);
+    head.appendChild(upButton);
+    explorer.appendChild(head);
+
+    var toolbar = createElement('div', 'documents-s3-modal__toolbar');
+    var pathInput = createElement('input', 'documents-s3-modal__input');
+    pathInput.type = 'text';
+    pathInput.value = path;
+    pathInput.placeholder = 'Путь внутри S3, например js/documents/telegram-user-tasks/users';
+    pathInput.setAttribute('aria-label', 'S3 путь');
+    pathInput.setAttribute('data-s3-path-input', 'true');
+    var openPathButton = createElement('button', 'documents-s3-modal__mini-button', 'Открыть путь');
+    openPathButton.type = 'button';
+    openPathButton.disabled = s3State.listingLoading || s3State.deleting;
+    openPathButton.setAttribute('data-s3-open-input', 'true');
+    var searchInput = createElement('input', 'documents-s3-modal__input');
+    searchInput.type = 'search';
+    searchInput.value = s3State.listingFilter || '';
+    searchInput.placeholder = 'Поиск в текущей папке';
+    searchInput.setAttribute('aria-label', 'Поиск по текущей S3 папке');
+    searchInput.setAttribute('data-s3-filter-input', 'true');
+    toolbar.appendChild(pathInput);
+    toolbar.appendChild(openPathButton);
+    toolbar.appendChild(searchInput);
+    explorer.appendChild(toolbar);
+
+    var quick = createElement('div', 'documents-s3-modal__quick');
+    quick.appendChild(createAdminS3QuickButton('Корень', '', path));
+    quick.appendChild(createAdminS3QuickButton('Telegram JSON', 'js/documents/telegram-user-tasks/users', path));
+    quick.appendChild(createAdminS3QuickButton('Тесты S3', '.s3-test', path));
+    if (state.organization) {
+      quick.appendChild(createAdminS3QuickButton('Текущая организация', String(state.organization).trim().replace(/\s+/g, '_'), path));
+    }
+    if (s3State.listingLoading || s3State.deleting) {
+      Array.prototype.forEach.call(quick.querySelectorAll('button'), function(button) {
+        button.disabled = true;
+      });
+    }
+    explorer.appendChild(quick);
+
+    if (s3State.listingLoading) {
+      explorer.appendChild(createElement('div', 'documents-s3-modal__empty', 'Загружаем список S3…'));
+      return explorer;
+    }
+
+    if (s3State.deleting) {
+      explorer.appendChild(createElement('div', 'documents-s3-modal__empty', 'Удаляем объект из S3…'));
+      return explorer;
+    }
+
+    if (s3State.listingError) {
+      explorer.appendChild(createElement('div', 'documents-s3-modal__empty', s3State.listingError));
+      return explorer;
+    }
+
+    if (!listing) {
+      explorer.appendChild(createElement('div', 'documents-s3-modal__empty', 'Список ещё не загружен.'));
+      return explorer;
+    }
+
+    var meta = createElement('div', 'documents-s3-modal__explorer-meta');
+    meta.appendChild(createElement('span', '', 'Папок: ' + (listing.directoriesCount || 0)));
+    meta.appendChild(createElement('span', '', 'Файлов: ' + (listing.filesCount || 0)));
+    meta.appendChild(createElement('span', '', 'Размер: ' + (listing.label || '0 Б')));
+    meta.appendChild(createElement('span', '', 'Обновлено: ' + (s3State.listingLoadedAt ? formatDateTime(new Date(s3State.listingLoadedAt).toISOString()) : '—')));
+    meta.appendChild(createElement('span', '', 'Remote: ' + (listing.remotePath || '—')));
+    explorer.appendChild(meta);
+
+    var visibleCount = 0;
+
+    var wrap = createElement('div', 'documents-s3-modal__table-wrap');
+    if (!items.length) {
+      wrap.appendChild(createElement('div', 'documents-s3-modal__empty', 'В этом S3-пути пока пусто.'));
+    } else {
+      var table = document.createElement('table');
+      table.className = 'documents-s3-modal__table';
+      var thead = document.createElement('thead');
+      var headRow = document.createElement('tr');
+      ['Имя', 'Тип', 'Размер', 'Изменён', 'S3 key', 'Действия'].forEach(function(label) {
+        headRow.appendChild(createElement('th', '', label));
+      });
+      thead.appendChild(headRow);
+      table.appendChild(thead);
+      var tbody = document.createElement('tbody');
+      items.forEach(function(item) {
+        var isDirectory = item && item.type === 'directory';
+        var row = document.createElement('tr');
+        var itemKey = item && (item.path || item.remoteKey || item.name) ? (item.path || item.remoteKey || item.name) : '';
+        var itemSearch = [
+          item && item.name,
+          item && item.path,
+          item && item.remoteKey,
+          item && item.type
+        ].map(function(value) {
+          return typeof value === 'string' ? value : '';
+        }).join(' ');
+        row.setAttribute('data-s3-row', 'true');
+        row.setAttribute('data-s3-search', itemSearch);
+        if (!adminS3ItemMatchesFilter(item, filter)) {
+          row.hidden = true;
+        } else {
+          visibleCount++;
+        }
+        var nameCell = document.createElement('td');
+        var nameButton = createElement('button', 'documents-s3-modal__item-button');
+        nameButton.type = 'button';
+        nameButton.setAttribute('data-s3-type', isDirectory ? 'directory' : 'file');
+        nameButton.setAttribute(isDirectory ? 'data-s3-path' : 'data-s3-copy', isDirectory ? itemKey : (item.remoteKey || item.path || ''));
+        nameButton.appendChild(createElement('span', 'documents-s3-modal__item-icon', isDirectory ? 'DIR' : 'FILE'));
+        nameButton.appendChild(createElement('span', 'documents-s3-modal__item-name', item.name || 'без имени'));
+        nameCell.appendChild(nameButton);
+        row.appendChild(nameCell);
+        row.appendChild(createElement('td', '', isDirectory ? 'Папка' : 'Файл'));
+        row.appendChild(createElement('td', '', isDirectory ? '—' : (item.sizeLabel || formatFileSize(item.size || 0))));
+        row.appendChild(createElement('td', '', item.modifiedAt ? formatDateTime(item.modifiedAt) : '—'));
+        row.appendChild(createElement('td', 'documents-s3-modal__key', item.remoteKey || item.path || '—'));
+        var actionCell = document.createElement('td');
+        var actionWrap = createElement('div', 'documents-s3-modal__row-actions');
+        if (isDirectory) {
+          var openButton = createElement('button', 'documents-s3-modal__mini-button', 'Открыть');
+          openButton.type = 'button';
+          openButton.setAttribute('data-s3-path', item.path || '');
+          actionWrap.appendChild(openButton);
+        }
+        var copyButton = createElement('button', 'documents-s3-modal__mini-button', 'Ключ');
+        copyButton.type = 'button';
+        copyButton.setAttribute('data-s3-copy', item.remoteKey || item.path || '');
+        actionWrap.appendChild(copyButton);
+        var deleteButton = createElement('button', 'documents-s3-modal__mini-button documents-s3-modal__mini-button--danger', 'Удалить');
+        deleteButton.type = 'button';
+        deleteButton.disabled = s3State.deleting;
+        deleteButton.setAttribute('data-s3-delete', item.path || itemKey);
+        deleteButton.setAttribute('data-s3-type', isDirectory ? 'directory' : 'file');
+        deleteButton.setAttribute('data-s3-name', item.name || item.path || itemKey);
+        actionWrap.appendChild(deleteButton);
+        actionCell.appendChild(actionWrap);
+        row.appendChild(actionCell);
+        tbody.appendChild(row);
+      });
+      table.appendChild(tbody);
+      wrap.appendChild(table);
+    }
+    explorer.appendChild(wrap);
+    var filterEmpty = createElement('div', 'documents-s3-modal__empty', 'По текущему поиску ничего не найдено.');
+    filterEmpty.hidden = !filter || visibleCount > 0;
+    filterEmpty.setAttribute('data-s3-filter-empty', 'true');
+    explorer.appendChild(filterEmpty);
+    var filterCount = createElement('div', 'documents-s3-modal__empty', filter ? 'Найдено: ' + visibleCount + ' из ' + items.length : 'Объектов: ' + items.length);
+    filterCount.setAttribute('data-s3-filter-count', 'true');
+    explorer.appendChild(filterCount);
+
+    return explorer;
+  }
+
+  function updateAdminS3Panel() {
+    ensureAdminModal();
+    var s3State = ensureAdminS3State();
+    if (adminElements.s3Button) {
+      adminElements.s3Button.disabled = !state.organization;
+    }
+    if (adminElements.s3RefreshButton) {
+      adminElements.s3RefreshButton.disabled = s3State.loading || s3State.testing || s3State.deleting || s3State.listingLoading;
+      adminElements.s3RefreshButton.textContent = (s3State.loading || s3State.listingLoading) ? 'Обновляем…' : 'Обновить';
+    }
+    if (adminElements.s3TestButton) {
+      adminElements.s3TestButton.disabled = s3State.loading || s3State.testing || s3State.deleting || s3State.listingLoading || !state.organization;
+      adminElements.s3TestButton.textContent = s3State.testing ? 'Проверяем…' : 'Проверить загрузку';
+    }
+    if (!adminElements.s3Summary) {
+      return;
+    }
+    adminElements.s3Summary.innerHTML = '';
+    var storage = s3State.storage && typeof s3State.storage === 'object' ? s3State.storage : {};
+    var cold = s3State.coldStorage && typeof s3State.coldStorage === 'object'
+      ? s3State.coldStorage
+      : (storage.coldStorage && typeof storage.coldStorage === 'object' ? storage.coldStorage : {});
+
+    var grid = createElement('div', 'documents-s3-modal__grid');
+    grid.appendChild(createAdminS3Metric('Всего вложений', String(storage.files || 0)));
+    grid.appendChild(createAdminS3Metric('В S3', String(storage.coldSyncedCount || 0)));
+    grid.appendChild(createAdminS3Metric('S3 в очереди', String(storage.coldPendingCount || 0)));
+    grid.appendChild(createAdminS3Metric('Локальный fallback', String(storage.coldFallbackCount || 0)));
+    grid.appendChild(createAdminS3Metric('Не найдено', String(storage.missingFilesCount || 0)));
+    grid.appendChild(createAdminS3Metric('Локально на сервере', storage.localLabel || '0 Б'));
+    grid.appendChild(createAdminS3Metric('Оценка S3', storage.coldLabel || '0 Б'));
+    adminElements.s3Summary.appendChild(grid);
+
+    adminElements.s3Summary.appendChild(createAdminS3Explorer(s3State));
+
+    if (s3State.deleting) {
+      setAdminS3Status('Удаляем объект из S3…', 'info');
+    } else if (s3State.loading || s3State.listingLoading) {
+      setAdminS3Status('Получаем статус S3…', 'info');
+    } else if (s3State.error) {
+      setAdminS3Status(s3State.error, 'error');
+    } else if (s3State.listingError) {
+      setAdminS3Status(s3State.listingError, 'error');
+    } else if (s3State.test && s3State.test.ok) {
+      setAdminS3Status(s3State.test.message || 'Проверка загрузки прошла успешно.', 'success');
+    } else if (s3State.test && s3State.test.ok === false) {
+      setAdminS3Status(s3State.test.message || 'Проверка загрузки не прошла.', 'error');
+    } else if (cold.available) {
+      setAdminS3Status('S3 доступен. Новые вложения получают S3-копию.', 'success');
+    } else {
+      setAdminS3Status('S3 пока недоступен, новые файлы останутся локально.', 'error');
+    }
+  }
+
+  function fetchAdminS3Status(options) {
+    var s3State = ensureAdminS3State();
+    var force = options && options.force;
+    if (!state.organization) {
+      s3State.error = 'Сначала выберите организацию.';
+      updateAdminS3Panel();
+      return Promise.reject(new Error(s3State.error));
+    }
+    if (s3State.loading && s3State.promise) {
+      return s3State.promise;
+    }
+    if (!force && s3State.storage && !s3State.error) {
+      updateAdminS3Panel();
+      return Promise.resolve(s3State);
+    }
+    s3State.loading = true;
+    s3State.error = '';
+    updateAdminS3Panel();
+    var request = fetch(buildApiUrl('storage_s3_status', {
+      organization: state.organization
+    }), {
+      credentials: 'same-origin',
+      cache: 'no-store'
+    })
+      .then(handleResponse)
+      .then(function(data) {
+        s3State.storage = data && data.storage && typeof data.storage === 'object' ? data.storage : null;
+        s3State.coldStorage = data && data.coldStorage && typeof data.coldStorage === 'object' ? data.coldStorage : null;
+        s3State.error = '';
+        updateAdminS3Panel();
+        return s3State;
+      })
+      .catch(function(error) {
+        s3State.error = error && error.message ? error.message : 'Не удалось получить статус S3.';
+        updateAdminS3Panel();
+        throw error;
+      })
+      .finally(function() {
+        s3State.loading = false;
+        s3State.promise = null;
+        updateAdminS3Panel();
+      });
+    s3State.promise = request;
+    return request;
+  }
+
+  function fetchAdminS3Listing(path, options) {
+    var s3State = ensureAdminS3State();
+    var force = options && options.force;
+    var nextPath = normalizeAdminS3BrowserPath(typeof path === 'string' ? path : (s3State.listingPath || ''));
+    if (!state.organization) {
+      s3State.listingError = 'Сначала выберите организацию.';
+      updateAdminS3Panel();
+      return Promise.reject(new Error(s3State.listingError));
+    }
+    if (s3State.listingLoading && s3State.listingPromise) {
+      return s3State.listingPromise;
+    }
+    if (!force && s3State.listing && s3State.listingPath === nextPath && !s3State.listingError) {
+      updateAdminS3Panel();
+      return Promise.resolve(s3State);
+    }
+    s3State.listingLoading = true;
+    s3State.listingError = '';
+    if (nextPath !== s3State.listingPath) {
+      s3State.listingFilter = '';
+    }
+    s3State.listingPath = nextPath;
+    updateAdminS3Panel();
+    var request = fetch(buildApiUrl('storage_s3_list', {
+      organization: state.organization,
+      scope: 'all',
+      path: nextPath
+    }), {
+      credentials: 'same-origin',
+      cache: 'no-store'
+    })
+      .then(handleResponse)
+      .then(function(data) {
+        var listing = data && data.listing && typeof data.listing === 'object' ? data.listing : null;
+        s3State.coldStorage = data && data.coldStorage && typeof data.coldStorage === 'object' ? data.coldStorage : s3State.coldStorage;
+        s3State.listing = listing;
+        s3State.listingPath = listing && typeof listing.path === 'string' ? listing.path : nextPath;
+        s3State.listingLoadedAt = Date.now();
+        s3State.listingError = listing && listing.ok === false
+          ? (listing.message || 'Не удалось получить список S3.')
+          : '';
+        updateAdminS3Panel();
+        return s3State;
+      })
+      .catch(function(error) {
+        s3State.listingError = error && error.message ? error.message : 'Не удалось получить список S3.';
+        updateAdminS3Panel();
+        throw error;
+      })
+      .finally(function() {
+        s3State.listingLoading = false;
+        s3State.listingPromise = null;
+        updateAdminS3Panel();
+      });
+    s3State.listingPromise = request;
+    return request;
+  }
+
+  function deleteAdminS3Object(path, type) {
+    var s3State = ensureAdminS3State();
+    var targetPath = normalizeAdminS3BrowserPath(path);
+    var targetType = type === 'directory' ? 'directory' : 'file';
+    if (s3State.deleting) {
+      return Promise.resolve(s3State);
+    }
+    if (!targetPath) {
+      s3State.listingError = 'Корень S3 удалить нельзя.';
+      updateAdminS3Panel();
+      return Promise.reject(new Error(s3State.listingError));
+    }
+    if (!state.organization) {
+      s3State.listingError = 'Сначала выберите организацию.';
+      updateAdminS3Panel();
+      return Promise.reject(new Error(s3State.listingError));
+    }
+
+    s3State.deleting = true;
+    s3State.listingError = '';
+    updateAdminS3Panel();
+    var payload = {
+      action: 'storage_s3_delete',
+      organization: state.organization,
+      scope: 'all',
+      path: targetPath,
+      type: targetType,
+      confirm: 'delete'
+    };
+    mergeTelegramUserId(payload);
+
+    return fetch(buildApiUrl('storage_s3_delete'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify(payload)
+    })
+      .then(handleResponse)
+      .then(function(data) {
+        s3State.coldStorage = data && data.coldStorage && typeof data.coldStorage === 'object' ? data.coldStorage : s3State.coldStorage;
+        setAdminS3Status(data && data.delete && data.delete.message ? data.delete.message : 'Объект удалён из S3.', 'success');
+        showMessage('success', data && data.delete && data.delete.message ? data.delete.message : 'Объект удалён из S3.');
+        return fetchAdminS3Listing(s3State.listingPath || '', { force: true });
+      })
+      .catch(function(error) {
+        s3State.listingError = error && error.message ? error.message : 'Не удалось удалить объект из S3.';
+        setAdminS3Status(s3State.listingError, 'error');
+        updateAdminS3Panel();
+        showMessage('error', s3State.listingError);
+        throw error;
+      })
+      .finally(function() {
+        s3State.deleting = false;
+        updateAdminS3Panel();
+      });
+  }
+
+  function refreshAdminS3Panel() {
+    var s3State = ensureAdminS3State();
+    var path = s3State.listingPath || '';
+    return Promise.all([
+      fetchAdminS3Status({ force: true }).catch(function(error) { return error; }),
+      fetchAdminS3Listing(path, { force: true }).catch(function(error) { return error; })
+    ]);
+  }
+
+  function runAdminS3Test() {
+    var s3State = ensureAdminS3State();
+    if (s3State.testing || !state.organization) {
+      return;
+    }
+    s3State.testing = true;
+    s3State.error = '';
+    updateAdminS3Panel();
+    setAdminS3Status('Проверяем загрузку тестового файла…', 'info');
+    var payload = {
+      action: 'storage_s3_test',
+      organization: state.organization
+    };
+    mergeTelegramUserId(payload);
+    fetch(buildApiUrl('storage_s3_test'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify(payload)
+    })
+      .then(handleResponse)
+      .then(function(data) {
+        s3State.test = data && data.test && typeof data.test === 'object' ? data.test : null;
+        s3State.storage = data && data.storage && typeof data.storage === 'object' ? data.storage : s3State.storage;
+        s3State.coldStorage = data && data.coldStorage && typeof data.coldStorage === 'object' ? data.coldStorage : s3State.coldStorage;
+        s3State.error = s3State.test && s3State.test.ok === false
+          ? (s3State.test.message || 'Проверка загрузки не прошла.')
+          : '';
+        updateAdminS3Panel();
+        if (!s3State.error) {
+          fetchAdminS3Listing(s3State.listingPath || '', { force: true }).catch(function() {});
+        }
+        showMessage(s3State.error ? 'warning' : 'success', s3State.error || 'Проверка загрузки выполнена успешно.');
+      })
+      .catch(function(error) {
+        s3State.error = error && error.message ? error.message : 'Не удалось выполнить тест S3.';
+        updateAdminS3Panel();
+        showMessage('error', s3State.error);
+      })
+      .finally(function() {
+        s3State.testing = false;
+        updateAdminS3Panel();
+      });
+  }
+
   function ensureAdminTemplateState() {
     if (!state.admin.template) {
       state.admin.template = {
@@ -12682,6 +13550,38 @@
     fetchAdminTemplate({ force: true }).catch(function(error) {
       docsLogger.warn('Не удалось загрузить шаблон организации:', error);
     });
+  }
+
+  function openAdminS3Modal() {
+    ensureAdminModal();
+    var s3State = ensureAdminS3State();
+    if (!state.organization) {
+      setAdminS3Status('Сначала выберите организацию.', 'error');
+      return;
+    }
+    s3State.visible = true;
+    if (adminElements.s3Modal) {
+      adminElements.s3Modal.classList.add('is-visible');
+      adminElements.s3Modal.setAttribute('aria-hidden', 'false');
+    }
+    updateAdminS3Panel();
+    refreshAdminS3Panel().catch(function(error) {
+      docsLogger.warn('Не удалось загрузить статус S3:', error);
+    });
+  }
+
+  function closeAdminS3Modal(options) {
+    ensureAdminModal();
+    var s3State = ensureAdminS3State();
+    s3State.visible = false;
+    if (adminElements.s3Modal) {
+      adminElements.s3Modal.classList.remove('is-visible');
+      adminElements.s3Modal.setAttribute('aria-hidden', 'true');
+    }
+    var shouldRestoreFocus = !(options && options.skipFocus);
+    if (shouldRestoreFocus && adminElements.s3Button && typeof adminElements.s3Button.focus === 'function') {
+      adminElements.s3Button.focus();
+    }
   }
 
   function closeAdminTemplateModal(options) {
@@ -13038,9 +13938,12 @@
       lastFocusedElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       ensureAdminUserLogState().visible = false;
       ensureAdminTemplateState().visible = false;
+      ensureAdminS3State().visible = false;
       closeAdminTemplateModal({ skipFocus: true });
+      closeAdminS3Modal({ skipFocus: true });
       updateAdminLogPanel();
       updateAdminTemplatePanel();
+      updateAdminS3Panel();
       adminElements.modal.classList.add('is-visible');
       adminElements.modal.setAttribute('aria-hidden', 'false');
       document.addEventListener('keydown', handleAdminKeydown, true);
@@ -13075,8 +13978,10 @@
     document.removeEventListener('keydown', handleAdminKeydown, true);
     ensureAdminUserLogState().visible = false;
     ensureAdminTemplateState().visible = false;
+    ensureAdminS3State().visible = false;
     updateAdminLogPanel();
     closeAdminTemplateModal({ skipFocus: true });
+    closeAdminS3Modal({ skipFocus: true });
     if (lastFocusedElement && typeof lastFocusedElement.focus === 'function') {
       lastFocusedElement.focus();
     }
@@ -13088,6 +13993,8 @@
       event.stopPropagation();
       if (ensureAdminTemplateState().visible) {
         closeAdminTemplateModal();
+      } else if (ensureAdminS3State().visible) {
+        closeAdminS3Modal();
       } else if (ensureAdminUserLogState().visible) {
         closeAdminLogPanel();
       } else {
@@ -20184,8 +21091,7 @@
     state.columnOrder = normalized;
     updateTableHeaderByColumnOrder();
     if (!options || options.render !== false) {
-      state.rowCache.clear();
-      clearVirtualTableRows(true);
+      clearRenderedTableRows(true);
       scheduleVirtualTableRender();
     }
   }
@@ -21625,13 +22531,12 @@
     };
   }
 
-  function clearVirtualTableRows(clearExpansionState) {
+  function clearRenderedTableRows(clearExpansionState) {
     if (state.virtualTable.renderFrame && typeof window !== 'undefined' && typeof window.cancelAnimationFrame === 'function') {
       window.cancelAnimationFrame(state.virtualTable.renderFrame);
       state.virtualTable.renderFrame = 0;
     }
     cancelProgressiveTableRender();
-    state.virtualTable.filteredEntries = [];
     removeVirtualGroupRows();
     setSpacerHeight(elements.tableTopSpacer, 0);
     setSpacerHeight(elements.tableBottomSpacer, 0);
@@ -21644,6 +22549,22 @@
         state.rowExpandedState.delete(cacheId);
       }
     });
+    if (elements.tableBody) {
+      var rows = elements.tableBody.querySelectorAll('tr');
+      for (var i = 0; i < rows.length; i += 1) {
+        var row = rows[i];
+        if (row
+          && row.parentNode === elements.tableBody
+          && !row.classList.contains('documents-table__spacer')) {
+          row.parentNode.removeChild(row);
+        }
+      }
+    }
+  }
+
+  function clearVirtualTableRows(clearExpansionState) {
+    clearRenderedTableRows(clearExpansionState);
+    state.virtualTable.filteredEntries = [];
   }
 
   function cancelProgressiveTableRender() {
@@ -22146,7 +23067,22 @@
           var message = isJson && data && typeof data === 'object'
             ? (data.error || data.message || '')
             : '';
-          reject(new Error(message || ('Статус ответа: ' + xhr.status)));
+          var statusError = new Error(message || ('Статус ответа: ' + xhr.status));
+          statusError.status = xhr.status;
+          if (isJson && data && typeof data === 'object') {
+            statusError.responseData = data;
+            statusError.reason = data.reason || '';
+          }
+          reject(statusError);
+          return;
+        }
+
+        if (isJson && data && typeof data === 'object' && data.success === false) {
+          var responseError = new Error(data.error || data.message || 'Сервер вернул ошибку без текста.');
+          responseError.status = xhr.status;
+          responseError.responseData = data;
+          responseError.reason = data.reason || '';
+          reject(responseError);
           return;
         }
 
@@ -22155,6 +23091,190 @@
 
       xhr.send(formData);
     });
+  }
+
+  function getProgressFileSize(file) {
+    return Math.max(0, Number(file && file.size) || 0);
+  }
+
+  function createOutgoingUploadProgress(selectedFiles) {
+    var files = Array.isArray(selectedFiles) ? selectedFiles.slice() : [];
+    var root = createElement('div', 'documents-outgoing-upload-progress');
+    var head = createElement('div', 'documents-outgoing-upload-progress__head');
+    var title = createElement('span', 'documents-outgoing-upload-progress__title', 'Загрузка файлов');
+    var percent = createElement('span', 'documents-outgoing-upload-progress__percent', '0%');
+    var track = createElement('div', 'documents-outgoing-upload-progress__track');
+    var fill = createElement('span', 'documents-outgoing-upload-progress__fill');
+    var list = createElement('div', 'documents-outgoing-upload-progress__list');
+    var rows = [];
+    var active = false;
+
+    track.appendChild(fill);
+    head.appendChild(title);
+    head.appendChild(percent);
+    root.appendChild(head);
+    root.appendChild(track);
+    root.appendChild(list);
+
+    function clampPercent(value) {
+      return Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
+    }
+
+    function getTotalFilesSize() {
+      return files.reduce(function(sum, file) {
+        return sum + getProgressFileSize(file);
+      }, 0);
+    }
+
+    function renderRows() {
+      rows = [];
+      list.textContent = '';
+      files.forEach(function(file, index) {
+        var row = createElement('div', 'documents-outgoing-upload-progress__file');
+        var name = createElement(
+          'div',
+          'documents-outgoing-upload-progress__file-name',
+          file && file.name ? file.name : ('Файл ' + (index + 1))
+        );
+        var status = createElement('div', 'documents-outgoing-upload-progress__file-status', '0%');
+        var fileTrack = createElement('div', 'documents-outgoing-upload-progress__file-track');
+        var fileFill = createElement('span', 'documents-outgoing-upload-progress__file-fill');
+        fileTrack.appendChild(fileFill);
+        row.appendChild(name);
+        row.appendChild(status);
+        row.appendChild(fileTrack);
+        list.appendChild(row);
+        rows.push({
+          row: row,
+          fill: fileFill,
+          status: status
+        });
+      });
+    }
+
+    function setFileProgressByLoadedBytes(loadedFileBytes, totalFilesSize) {
+      var offset = 0;
+      files.forEach(function(file, index) {
+        var size = getProgressFileSize(file);
+        var row = rows[index];
+        if (!row) {
+          return;
+        }
+        var filePercent = 0;
+        if (totalFilesSize <= 0) {
+          filePercent = active ? 1 : 0;
+        } else if (size <= 0) {
+          filePercent = loadedFileBytes > offset ? 100 : 0;
+        } else {
+          filePercent = clampPercent(((loadedFileBytes - offset) / size) * 100);
+        }
+        offset += size;
+        row.fill.style.width = filePercent + '%';
+        row.status.textContent = filePercent >= 100 ? 'Готово' : filePercent + '%';
+        row.row.classList.toggle('is-done', filePercent >= 100);
+        row.row.classList.remove('is-error');
+      });
+    }
+
+    function setOverallProgress(value) {
+      var normalized = clampPercent(value);
+      fill.style.width = normalized + '%';
+      percent.textContent = normalized + '%';
+    }
+
+    function setFiles(nextFiles) {
+      files = Array.isArray(nextFiles) ? nextFiles.slice() : [];
+      active = false;
+      setOverallProgress(0);
+      root.classList.toggle('is-visible', files.length > 0);
+      renderRows();
+    }
+
+    function start(message) {
+      active = true;
+      title.textContent = message || 'Загрузка файлов';
+      root.classList.toggle('is-visible', files.length > 0);
+      setOverallProgress(0);
+      setFileProgressByLoadedBytes(0, getTotalFilesSize());
+    }
+
+    function update(progress) {
+      if (!active) {
+        start();
+      }
+      var totalFilesSize = getTotalFilesSize();
+      if (!progress || !progress.lengthComputable || !progress.total) {
+        setOverallProgress(1);
+        setFileProgressByLoadedBytes(totalFilesSize > 0 ? 1 : 0, totalFilesSize);
+        return;
+      }
+      var ratio = Math.max(0, Math.min(1, Number(progress.loaded) / Number(progress.total)));
+      setOverallProgress(Math.max(1, ratio * 100));
+      setFileProgressByLoadedBytes(totalFilesSize * ratio, totalFilesSize);
+    }
+
+    function complete(message) {
+      active = false;
+      title.textContent = message || 'Файлы отправлены';
+      root.classList.toggle('is-visible', files.length > 0);
+      setOverallProgress(100);
+      setFileProgressByLoadedBytes(getTotalFilesSize(), getTotalFilesSize());
+    }
+
+    function fail(message) {
+      active = false;
+      title.textContent = message || 'Загрузка не завершена';
+      root.classList.toggle('is-visible', files.length > 0);
+      rows.forEach(function(row) {
+        row.row.classList.add('is-error');
+        row.status.textContent = 'Ошибка';
+      });
+    }
+
+    setFiles(files);
+
+    return {
+      element: root,
+      setFiles: setFiles,
+      start: start,
+      update: update,
+      complete: complete,
+      fail: fail
+    };
+  }
+
+  function updateBackgroundUploadFromProgress(backgroundUpload, progress) {
+    if (!backgroundUpload || !backgroundUpload.job) {
+      return;
+    }
+    var files = Array.isArray(backgroundUpload.files) ? backgroundUpload.files : [];
+    var statusText = backgroundUpload.statusText || 'Загружаем файлы';
+    var percent = 1;
+    if (progress && progress.lengthComputable && progress.total) {
+      percent = Math.max(1, Math.min(95, Math.round((Number(progress.loaded) / Number(progress.total)) * 95)));
+    }
+    backgroundUpload.job.update(percent, statusText);
+    backgroundUpload.job.setFilesState(files, 'uploading', percent, percent + '%');
+  }
+
+  function postRegistryActionWithOptionalUploadProgress(action, payload, uploadProgress, backgroundUpload) {
+    if (typeof FormData !== 'undefined' && payload instanceof FormData) {
+      if (uploadProgress && typeof uploadProgress.start === 'function') {
+        uploadProgress.start('Загрузка файлов на сервер');
+      }
+      if (backgroundUpload && backgroundUpload.job) {
+        backgroundUpload.job.update(1, backgroundUpload.statusText || 'Загружаем файлы');
+        backgroundUpload.job.setFilesState(backgroundUpload.files || [], 'uploading', 0, '0%');
+      }
+      return uploadFormDataWithProgress(buildApiUrl(action), payload, function(progress) {
+        if (uploadProgress && typeof uploadProgress.update === 'function') {
+          uploadProgress.update(progress);
+        }
+        updateBackgroundUploadFromProgress(backgroundUpload, progress);
+      });
+    }
+
+    return postOutgoingRegistryAction(action, payload);
   }
 
   var DOCUMENTS_UPLOAD_BATCH_SIZE = 4;
@@ -22331,6 +23451,328 @@
       'display:none;' +
       '}';
     document.head.appendChild(style);
+  }
+
+  var documentBackgroundUploadStack = null;
+  var documentBackgroundUploadJobSequence = 0;
+
+  function getBackgroundUploadFileKey(file) {
+    if (!file || typeof file !== 'object') {
+      return '';
+    }
+    return [
+      file.name || '',
+      file.size || 0,
+      file.lastModified || 0
+    ].join('::');
+  }
+
+  function getBackgroundUploadFilesCountLabel(count) {
+    var value = Math.abs(Number(count) || 0);
+    var mod10 = value % 10;
+    var mod100 = value % 100;
+    if (mod10 === 1 && mod100 !== 11) {
+      return 'файл';
+    }
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) {
+      return 'файла';
+    }
+    return 'файлов';
+  }
+
+  function buildBackgroundUploadTitle(sourceLabel, numberValue, summaryValue) {
+    var source = normalizeTextInputValue(sourceLabel) || 'Задача';
+    var number = normalizeTextInputValue(numberValue);
+    var summary = normalizeTextInputValue(summaryValue);
+    var title = source;
+    if (number) {
+      title += ' № ' + number;
+    }
+    if (summary) {
+      title += ' - ' + summary;
+    }
+    return title.length > 110 ? title.slice(0, 107) + '...' : title;
+  }
+
+  function getJournalUploadSourceLabel(journalConfig) {
+    if (!journalConfig || typeof journalConfig !== 'object') {
+      return 'Журнал';
+    }
+    return journalConfig.menuLabel || journalConfig.addLabel || journalConfig.title || 'Журнал';
+  }
+
+  function ensureDocumentBackgroundUploadStyle() {
+    if (document.getElementById('documents-background-upload-style')) {
+      return;
+    }
+    var style = document.createElement('style');
+    style.id = 'documents-background-upload-style';
+    style.textContent = '' +
+      '.documents-background-upload-stack{' +
+      'position:fixed;right:16px;bottom:16px;z-index:2147482600;display:flex;flex-direction:column;align-items:flex-end;gap:10px;width:min(380px,calc(100vw - 24px));pointer-events:none;' +
+      '}' +
+      '.documents-background-upload{' +
+      '--progress:0%;display:grid;grid-template-columns:54px minmax(0,1fr) auto;gap:10px;width:100%;box-sizing:border-box;padding:12px;border:1px solid rgba(191,219,254,.95);border-radius:16px;background:rgba(255,255,255,.96);box-shadow:0 18px 42px rgba(15,23,42,.18);color:#172554;pointer-events:auto;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);' +
+      '}' +
+      '.documents-background-upload--success{border-color:rgba(187,247,208,.95);background:rgba(240,253,244,.96);}' +
+      '.documents-background-upload--error{border-color:rgba(254,202,202,.95);background:rgba(255,247,247,.98);}' +
+      '.documents-background-upload__ring{' +
+      'position:relative;display:inline-flex;align-items:center;justify-content:center;width:48px;height:48px;border-radius:999px;background:conic-gradient(#2458ff var(--progress),#dbeafe 0);color:#2458ff;font-size:12px;font-weight:900;font-variant-numeric:tabular-nums;' +
+      '}' +
+      '.documents-background-upload--success .documents-background-upload__ring{background:#22c55e;color:#fff;}' +
+      '.documents-background-upload--error .documents-background-upload__ring{background:#ef4444;color:#fff;}' +
+      '.documents-background-upload__ring::after{content:"";position:absolute;inset:5px;border-radius:inherit;background:#fff;}' +
+      '.documents-background-upload--success .documents-background-upload__ring::after,.documents-background-upload--error .documents-background-upload__ring::after{display:none;}' +
+      '.documents-background-upload__percent{position:relative;z-index:1;}' +
+      '.documents-background-upload__body{display:grid;gap:6px;min-width:0;}' +
+      '.documents-background-upload__title{margin:0;color:#0f172a;font-size:13px;font-weight:900;line-height:1.25;}' +
+      '.documents-background-upload__status{color:#475569;font-size:12px;font-weight:800;line-height:1.35;overflow-wrap:anywhere;}' +
+      '.documents-background-upload__group{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;min-width:0;min-height:30px;padding:6px 8px;border:1px solid rgba(191,219,254,.82);border-radius:10px;background:#f8fbff;color:#172554;font:inherit;font-size:12px;font-weight:900;line-height:1.25;text-align:left;cursor:pointer;box-sizing:border-box;}' +
+      '.documents-background-upload__group:hover,.documents-background-upload__group:focus-visible{border-color:#93c5fd;background:#eff6ff;color:#1d4ed8;outline:none;}' +
+      '.documents-background-upload__group-summary{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
+      '.documents-background-upload__group-chevron{flex:0 0 auto;color:#64748b;font-size:14px;line-height:1;}' +
+      '.documents-background-upload--expanded .documents-background-upload__group-chevron{transform:rotate(180deg);}' +
+      '.documents-background-upload__files{display:none;gap:5px;min-width:0;max-height:176px;overflow:auto;padding:7px;border:1px solid rgba(226,232,240,.95);border-radius:10px;background:rgba(255,255,255,.78);scrollbar-width:thin;}' +
+      '.documents-background-upload--expanded .documents-background-upload__files{display:grid;}' +
+      '.documents-background-upload__file{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:3px 8px;align-items:center;color:#334155;font-size:11px;line-height:1.25;}' +
+      '.documents-background-upload__file-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:800;color:#172554;}' +
+      '.documents-background-upload__file-state{font-weight:900;color:#64748b;white-space:nowrap;}' +
+      '.documents-background-upload__file-track{grid-column:1 / -1;height:4px;border-radius:999px;background:#e2e8f0;overflow:hidden;}' +
+      '.documents-background-upload__file-fill{display:block;width:0%;height:100%;border-radius:inherit;background:#2458ff;transition:width .16s ease;}' +
+      '.documents-background-upload__file.is-ready .documents-background-upload__file-state{color:#047857;}' +
+      '.documents-background-upload__file.is-error .documents-background-upload__file-state{color:#b91c1c;}' +
+      '.documents-background-upload__more{color:#64748b;font-size:11px;font-weight:800;}' +
+      '.documents-background-upload__close{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border:0;border-radius:999px;background:transparent;color:#64748b;font-size:20px;line-height:1;cursor:pointer;}' +
+      '.documents-background-upload__close:hover,.documents-background-upload__close:focus-visible{background:#eff6ff;color:#1d4ed8;outline:none;}' +
+      '@media (max-width:640px){' +
+      '.documents-background-upload-stack{right:10px;bottom:10px;width:calc(100vw - 20px);}' +
+      '.documents-background-upload{grid-template-columns:46px minmax(0,1fr) auto;padding:10px;border-radius:14px;}' +
+      '.documents-background-upload__ring{width:42px;height:42px;font-size:11px;}' +
+      '.documents-background-upload__group-summary{white-space:normal;overflow-wrap:anywhere;}' +
+      '.documents-background-upload__files{max-height:150px;}' +
+      '.documents-background-upload__file-name{white-space:normal;overflow-wrap:anywhere;}' +
+      '}';
+    document.head.appendChild(style);
+  }
+
+  function ensureDocumentBackgroundUploadStack() {
+    if (!document.body) {
+      return null;
+    }
+    ensureDocumentBackgroundUploadStyle();
+    if (!documentBackgroundUploadStack) {
+      documentBackgroundUploadStack = createElement('div', 'documents-background-upload-stack');
+      documentBackgroundUploadStack.setAttribute('aria-live', 'polite');
+    }
+    if (documentBackgroundUploadStack.parentNode !== document.body) {
+      document.body.appendChild(documentBackgroundUploadStack);
+    }
+    return documentBackgroundUploadStack;
+  }
+
+  function createDocumentBackgroundUploadJob(files, options) {
+    var jobOptions = options && typeof options === 'object' ? options : {};
+    var stack = ensureDocumentBackgroundUploadStack();
+    var selectedFiles = Array.isArray(files) ? files.slice() : [];
+    var rowsByKey = Object.create(null);
+    var autoHideTimer = null;
+    var id = 'documents-background-upload-' + (++documentBackgroundUploadJobSequence);
+    var root = createElement('div', 'documents-background-upload');
+    var ring = createElement('div', 'documents-background-upload__ring');
+    var percent = createElement('span', 'documents-background-upload__percent', '0%');
+    var body = createElement('div', 'documents-background-upload__body');
+    var title = createElement('div', 'documents-background-upload__title', jobOptions.title || 'Загрузка задачи');
+    var status = createElement('div', 'documents-background-upload__status', jobOptions.initialStatus || 'Подготовка');
+    var groupToggle = createElement('button', 'documents-background-upload__group');
+    var groupSummary = createElement('span', 'documents-background-upload__group-summary');
+    var groupChevron = createElement('span', 'documents-background-upload__group-chevron', '⌄');
+    var list = createElement('div', 'documents-background-upload__files');
+    var closeButton = createElement('button', 'documents-background-upload__close', '×');
+    var fileStatesByKey = Object.create(null);
+
+    root.id = id;
+    root.setAttribute('role', 'status');
+    root.setAttribute('aria-live', 'polite');
+    groupToggle.type = 'button';
+    groupToggle.setAttribute('aria-expanded', 'false');
+    groupToggle.setAttribute('aria-controls', id + '-files');
+    closeButton.type = 'button';
+    closeButton.setAttribute('aria-label', 'Скрыть статус загрузки');
+    list.id = id + '-files';
+    ring.appendChild(percent);
+    groupToggle.appendChild(groupSummary);
+    groupToggle.appendChild(groupChevron);
+    body.appendChild(title);
+    body.appendChild(status);
+    body.appendChild(groupToggle);
+    body.appendChild(list);
+    root.appendChild(ring);
+    root.appendChild(body);
+    root.appendChild(closeButton);
+
+    function clampPercent(value) {
+      return Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
+    }
+
+    function setProgress(value) {
+      var normalized = clampPercent(value);
+      root.style.setProperty('--progress', normalized + '%');
+      percent.textContent = normalized >= 100 && root.classList.contains('documents-background-upload--success')
+        ? '✓'
+        : (root.classList.contains('documents-background-upload--error') ? '!' : normalized + '%');
+    }
+
+    function updateGroupSummary() {
+      var total = selectedFiles.length;
+      var ready = 0;
+      var error = 0;
+      var uploading = 0;
+      selectedFiles.forEach(function(file, index) {
+        var key = getBackgroundUploadFileKey(file) || ('file-' + index);
+        var state = fileStatesByKey[key] && fileStatesByKey[key].state ? fileStatesByKey[key].state : 'queued';
+        if (state === 'ready') {
+          ready += 1;
+        } else if (state === 'error') {
+          error += 1;
+        } else if (state === 'uploading') {
+          uploading += 1;
+        }
+      });
+      var parts = [total + ' ' + getBackgroundUploadFilesCountLabel(total)];
+      if (ready) {
+        parts.push('готово: ' + ready);
+      }
+      if (uploading) {
+        parts.push('загрузка: ' + uploading);
+      }
+      if (error) {
+        parts.push('ошибки: ' + error);
+      }
+      groupSummary.textContent = parts.join(' · ');
+    }
+
+    function renderFiles() {
+      rowsByKey = Object.create(null);
+      fileStatesByKey = Object.create(null);
+      list.textContent = '';
+      selectedFiles.forEach(function(file, index) {
+        var key = getBackgroundUploadFileKey(file) || ('file-' + index);
+        var row = createElement('div', 'documents-background-upload__file');
+        var name = createElement('div', 'documents-background-upload__file-name', file && file.name ? file.name : ('Файл ' + (index + 1)));
+        var fileStatus = createElement('div', 'documents-background-upload__file-state', 'Ожидает');
+        var track = createElement('div', 'documents-background-upload__file-track');
+        var fill = createElement('span', 'documents-background-upload__file-fill');
+        track.appendChild(fill);
+        row.appendChild(name);
+        row.appendChild(fileStatus);
+        row.appendChild(track);
+        list.appendChild(row);
+        rowsByKey[key] = {
+          row: row,
+          status: fileStatus,
+          fill: fill
+        };
+        fileStatesByKey[key] = {
+          state: 'queued',
+          progress: 0,
+          label: 'Ожидает'
+        };
+      });
+      updateGroupSummary();
+    }
+
+    function setFilesState(nextFiles, stateName, progress, label) {
+      (Array.isArray(nextFiles) ? nextFiles : []).forEach(function(file) {
+        var key = getBackgroundUploadFileKey(file);
+        var row = key ? rowsByKey[key] : null;
+        if (!row) {
+          return;
+        }
+        var normalizedProgress = clampPercent(progress);
+        row.row.classList.remove('is-uploading', 'is-ready', 'is-error');
+        if (stateName) {
+          row.row.classList.add('is-' + stateName);
+        }
+        row.fill.style.width = normalizedProgress + '%';
+        fileStatesByKey[key] = {
+          state: stateName || 'queued',
+          progress: normalizedProgress,
+          label: label || ''
+        };
+        if (stateName === 'ready') {
+          row.status.textContent = label || 'Готово';
+        } else if (stateName === 'error') {
+          row.status.textContent = label || 'Ошибка';
+        } else if (stateName === 'uploading') {
+          row.status.textContent = label || (normalizedProgress + '%');
+        } else {
+          row.status.textContent = label || 'Ожидает';
+        }
+      });
+      updateGroupSummary();
+    }
+
+    function update(value, text) {
+      root.classList.remove('documents-background-upload--success', 'documents-background-upload--error');
+      if (text) {
+        status.textContent = text;
+      }
+      setProgress(value);
+    }
+
+    function complete(text) {
+      if (autoHideTimer) {
+        window.clearTimeout(autoHideTimer);
+      }
+      root.classList.remove('documents-background-upload--error');
+      root.classList.add('documents-background-upload--success');
+      status.textContent = text || 'Готово';
+      setProgress(100);
+      setFilesState(selectedFiles, 'ready', 100, 'Готово');
+      autoHideTimer = window.setTimeout(dismiss, 10000);
+    }
+
+    function fail(text, failedFiles) {
+      if (autoHideTimer) {
+        window.clearTimeout(autoHideTimer);
+        autoHideTimer = null;
+      }
+      root.classList.remove('documents-background-upload--success');
+      root.classList.add('documents-background-upload--error');
+      root.setAttribute('role', 'alert');
+      status.textContent = text || 'Ошибка загрузки';
+      percent.textContent = '!';
+      setFilesState(failedFiles && failedFiles.length ? failedFiles : selectedFiles, 'error', 100, 'Ошибка');
+    }
+
+    function dismiss() {
+      if (autoHideTimer) {
+        window.clearTimeout(autoHideTimer);
+        autoHideTimer = null;
+      }
+      if (root.parentNode) {
+        root.parentNode.removeChild(root);
+      }
+    }
+
+    closeButton.addEventListener('click', dismiss);
+    groupToggle.addEventListener('click', function() {
+      var expanded = !root.classList.contains('documents-background-upload--expanded');
+      root.classList.toggle('documents-background-upload--expanded', expanded);
+      groupToggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    });
+    renderFiles();
+    setProgress(0);
+    if (stack) {
+      stack.appendChild(root);
+    }
+
+    return {
+      update: update,
+      complete: complete,
+      fail: fail,
+      setFilesState: setFilesState
+    };
   }
 
   function delay(ms) {
@@ -23079,24 +24521,104 @@
     });
   }
 
+  function buildOutgoingPreviewDownloadUrl(sourceUrl, fallbackUrl) {
+    var rawUrl = String(sourceUrl || '').trim();
+    if (!rawUrl) {
+      return String(fallbackUrl || '#');
+    }
+
+    try {
+      var url = new URL(rawUrl, window.location.origin);
+      url.searchParams.set('disposition', 'attachment');
+      return url.pathname + url.search + url.hash;
+    } catch (error) {
+      return rawUrl || String(fallbackUrl || '#');
+    }
+  }
+
+  function normalizeOutgoingPreviewDownloadName(fileName) {
+    var name = String(fileName || 'document').trim();
+    if (!name) {
+      return 'document';
+    }
+
+    name = name.replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, ' ').trim();
+    return name || 'document';
+  }
+
+  function buildOutgoingPreviewPrintButtonHtml(options) {
+    var config = options && typeof options === 'object' ? options : {};
+    var mode = String(config.printMode || 'frame');
+    var label = escapeOutgoingPreviewHtml(config.printLabel || 'Печать');
+    var disabledTitle = escapeOutgoingPreviewHtml(config.printDisabledTitle || 'Печать будет доступна после подготовки предпросмотра.');
+
+    if (mode === 'none') {
+      return '<span class="btn btn--disabled" aria-disabled="true" title="' + disabledTitle + '">Печать недоступна</span>';
+    }
+    if (config.printReady === false) {
+      return '<button class="btn" type="button" data-preview-print="window" disabled aria-disabled="true" title="' + disabledTitle + '">' + label + '</button>';
+    }
+    if (mode === 'window') {
+      return '<button class="btn" type="button" data-preview-print="window" onclick="window.focus();window.print();">' + label + '</button>';
+    }
+
+    return '<button class="btn" type="button" data-preview-print="frame" onclick="(function(){var f=document.querySelector(&quot;iframe&quot;);try{if(f&&f.contentWindow){f.contentWindow.focus();f.contentWindow.print();return;}}catch(e){}window.focus();window.print();}())">' + label + '</button>';
+  }
+
+  function buildOutgoingPreviewToolbarHtml(fileName, sourceUrl, fallbackDownloadUrl, options) {
+    var safeDownloadUrl = escapeOutgoingPreviewHtml(buildOutgoingPreviewDownloadUrl(sourceUrl, fallbackDownloadUrl));
+    var safeDownloadName = escapeOutgoingPreviewHtml(normalizeOutgoingPreviewDownloadName(fileName));
+    var originalUrl = String(sourceUrl || '').trim();
+    var originalAction = originalUrl
+      ? '<a class="btn" href="' + escapeOutgoingPreviewHtml(originalUrl) + '" target="_blank" rel="noopener noreferrer">Оригинал</a>'
+      : '';
+
+    return '<div class="name">' + escapeOutgoingPreviewHtml(fileName || 'Файл') + '</div><div class="actions">' +
+      buildOutgoingPreviewPrintButtonHtml(options) +
+      '<a class="btn" href="' + safeDownloadUrl + '" download="' + safeDownloadName + '">Скачать</a>' +
+      originalAction +
+      '</div>';
+  }
+
   function renderOutgoingPreviewBlob(previewWindow, fileName, blob, mimeType, sourceUrl) {
     var safeTitle = escapeOutgoingPreviewHtml(fileName || 'Файл');
     var type = String(mimeType || blob.type || '').toLowerCase();
     var blobUrl = URL.createObjectURL(blob);
     var extension = getFileExtension(fileName);
 
-    function writePreview(content) {
+    function enableDocxPrint() {
+      try {
+        var printButton = previewWindow.document.querySelector('[data-preview-print="window"]');
+        if (!printButton) {
+          return;
+        }
+        printButton.disabled = false;
+        printButton.removeAttribute('aria-disabled');
+        printButton.removeAttribute('title');
+        printButton.addEventListener('click', function() {
+          previewWindow.focus();
+          previewWindow.print();
+        });
+      } catch (error) {}
+    }
+
+    function writePreview(content, options) {
+      var toolbarHtml = buildOutgoingPreviewToolbarHtml(fileName, sourceUrl, blobUrl, options || {});
       previewWindow.document.open();
       previewWindow.document.write(
         '<!doctype html><html><head><meta charset="utf-8"><title>' + safeTitle + '</title>' +
         '<style>html,body{width:100%;height:100%;margin:0;background:#111827;color:#e2e8f0;' +
         'font:500 13px/1.45 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}' +
-        '.top{height:38px;display:flex;align-items:center;padding:0 12px;background:#0f172a;border-bottom:1px solid rgba(255,255,255,.08);box-sizing:border-box;}' +
-        '.name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
-        '.stage{height:calc(100% - 38px);display:flex;align-items:center;justify-content:center;overflow:auto;background:#111827;}' +
+        '.top{min-height:44px;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 12px;background:#0f172a;border-bottom:1px solid rgba(255,255,255,.08);box-sizing:border-box;}' +
+        '.name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:800;}.actions{display:flex;gap:8px;flex:0 0 auto;}' +
+        '.btn{display:inline-flex;align-items:center;justify-content:center;min-height:30px;padding:0 10px;border:1px solid rgba(226,232,240,.26);border-radius:8px;background:#fff;color:#172554;text-decoration:none;font:800 13px/1 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;cursor:pointer;white-space:nowrap;}' +
+        '.btn:disabled,.btn--disabled{opacity:.55;cursor:not-allowed;background:#e2e8f0;color:#64748b;}' +
+        '.btn:not(:disabled):not(.btn--disabled):hover{background:#eff6ff;border-color:#93c5fd;color:#1d4ed8;}.stage{height:calc(100% - 44px);display:flex;align-items:center;justify-content:center;overflow:auto;background:#111827;}' +
         'iframe{width:100%;height:100%;border:0;background:#fff;}img{display:block;max-width:100%;max-height:100%;object-fit:contain;}' +
         'pre{box-sizing:border-box;width:100%;min-height:100%;margin:0;padding:18px;white-space:pre-wrap;overflow-wrap:anywhere;background:#fff;color:#0f172a;}' +
-        '</style></head><body><div class="top"><div class="name">' + safeTitle + '</div></div><div class="stage">' +
+        '.preview-message{max-width:560px;margin:18px;padding:18px 20px;border:1px solid #334155;border-radius:12px;background:#fff;color:#0f172a;font-weight:800;text-align:center;}' +
+        '@media print{html,body{height:auto;background:#fff;color:#000;}.top{display:none;}.stage{height:auto;min-height:100vh;overflow:visible;background:#fff;}img{max-width:100%;max-height:none;}pre{min-height:0;padding:0;}iframe{height:100vh;}}' +
+        '</style></head><body><div class="top">' + toolbarHtml + '</div><div class="stage">' +
         content +
         '</div></body></html>'
       );
@@ -23104,21 +24626,25 @@
     }
 
     if (extension === 'docx' || type.indexOf('wordprocessingml.document') !== -1) {
+      var docxToolbarHtml = buildOutgoingPreviewToolbarHtml(fileName, sourceUrl, blobUrl, {
+        printMode: 'window',
+        printReady: false,
+        printDisabledTitle: 'Печать будет доступна после подготовки DOCX.'
+      });
       previewWindow.document.open();
       previewWindow.document.write(
         '<!doctype html><html><head><meta charset="utf-8"><title>' + safeTitle + '</title>' +
-        '<style>html,body{width:100%;height:100%;margin:0;background:#e2e8f0;color:#0f172a;' +
+        '<style>@page{size:A4;margin:12mm;}html,body{width:100%;height:100%;margin:0;background:#e2e8f0;color:#0f172a;' +
         'font:500 13px/1.45 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}' +
         '.top{min-height:44px;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 12px;background:#fff;border-bottom:1px solid #cbd5e1;box-sizing:border-box;}' +
         '.name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:900;}.actions{display:flex;gap:8px;flex:0 0 auto;}' +
-        '.btn{display:inline-flex;align-items:center;justify-content:center;min-height:30px;padding:0 10px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;color:#172554;text-decoration:none;font-weight:800;}' +
-        '.btn:hover{background:#eff6ff;border-color:#93c5fd;color:#1d4ed8;}.stage{height:calc(100% - 44px);overflow:auto;padding:14px;box-sizing:border-box;}' +
+        '.btn{display:inline-flex;align-items:center;justify-content:center;min-height:30px;padding:0 10px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;color:#172554;text-decoration:none;font:800 13px/1 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;cursor:pointer;white-space:nowrap;}' +
+        '.btn:disabled,.btn--disabled{opacity:.55;cursor:not-allowed;background:#e2e8f0;color:#64748b;}' +
+        '.btn:not(:disabled):not(.btn--disabled):hover{background:#eff6ff;border-color:#93c5fd;color:#1d4ed8;}.stage{height:calc(100% - 44px);overflow:auto;padding:14px;box-sizing:border-box;}' +
         '.paper{max-width:980px;min-height:calc(100% - 28px);margin:0 auto;background:#fff;border:1px solid #cbd5e1;border-radius:14px;padding:10px;box-shadow:0 16px 34px rgba(15,23,42,.14);box-sizing:border-box;}' +
         '.status{display:grid;place-items:center;min-height:220px;color:#475569;font-weight:800;text-align:center;}.docx-wrapper{background:transparent;box-shadow:none;padding:0;}' +
-        '</style></head><body><div class="top"><div class="name">' + safeTitle + '</div><div class="actions">' +
-        '<a class="btn" href="' + blobUrl + '" download="' + safeTitle + '">Скачать</a>' +
-        (sourceUrl ? '<a class="btn" href="' + escapeOutgoingPreviewHtml(sourceUrl) + '" target="_blank" rel="noopener noreferrer">Оригинал</a>' : '') +
-        '</div></div><div class="stage"><div class="paper" id="docx-preview"><div class="status">Готовим предпросмотр DOCX...</div></div></div></body></html>'
+        '@media print{html,body{width:auto;height:auto;min-height:0;overflow:visible;background:#fff;color:#000;}.top{display:none;}.stage{display:block;height:auto;min-height:0;overflow:visible;padding:0;background:#fff;}.paper{display:block;max-width:none;width:auto;min-height:0;margin:0;border:0;border-radius:0;box-shadow:none;padding:0;background:#fff;}.docx-wrapper,.docx,.docx section{display:block;max-width:none;min-height:0;overflow:visible;box-shadow:none;background:#fff;}.docx-wrapper{padding:0;margin:0;}.docx section{page-break-after:always;break-after:page;}.docx section:last-child{page-break-after:auto;break-after:auto;}}' +
+        '</style></head><body><div class="top">' + docxToolbarHtml + '</div><div class="stage"><div class="paper" id="docx-preview"><div class="status">Готовим предпросмотр DOCX...</div></div></div></body></html>'
       );
       previewWindow.document.close();
       blob.arrayBuffer()
@@ -23138,48 +24664,67 @@
               renderHeaders: true,
               renderFooters: true
             });
+          }).then(function(result) {
+            enableDocxPrint();
+            return result;
           });
         })
         .catch(function(error) {
           if (/^https?:\/\//i.test(String(sourceUrl || ''))) {
-            writePreview('<iframe src="https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(sourceUrl) + '"></iframe>');
+            writePreview('<iframe src="https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(sourceUrl) + '"></iframe>', {
+              printMode: 'none',
+              printDisabledTitle: 'Печать Office-предпросмотра из браузера недоступна. Откройте или скачайте оригинал.'
+            });
             return;
           }
-          writeOutgoingPreviewStatus(
-            previewWindow,
-            fileName,
-            (error && error.message ? error.message : 'Не удалось отрисовать DOCX.') + ' Файл можно скачать или открыть как оригинал.'
+          writePreview(
+            '<div class="preview-message">' +
+            escapeOutgoingPreviewHtml((error && error.message ? error.message : 'Не удалось отрисовать DOCX.') + ' Файл можно скачать.') +
+            '</div>',
+            {
+              printMode: 'none',
+              printDisabledTitle: 'DOCX не подготовлен для печати. Скачайте оригинал.'
+            }
           );
         });
       return;
     }
 
     if ((extension === 'doc' || extension === 'docm') && /^https?:\/\//i.test(String(sourceUrl || ''))) {
-      writePreview('<iframe src="https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(sourceUrl) + '"></iframe>');
+      writePreview('<iframe src="https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(sourceUrl) + '"></iframe>', {
+        printMode: 'none',
+        printDisabledTitle: 'Печать Office-предпросмотра из браузера недоступна. Откройте или скачайте оригинал.'
+      });
       return;
     }
 
     if (type.indexOf('pdf') !== -1) {
-      writePreview('<iframe src="' + blobUrl + '"></iframe>');
+      writePreview('<iframe src="' + blobUrl + '"></iframe>', { printMode: 'frame' });
       return;
     }
     if (type.indexOf('image/') === 0) {
-      writePreview('<img src="' + blobUrl + '" alt="' + safeTitle + '">');
+      writePreview('<img src="' + blobUrl + '" alt="' + safeTitle + '">', { printMode: 'window' });
       return;
     }
     if (type.indexOf('text/') === 0 || extension === 'txt' || extension === 'csv') {
       blob.text()
         .then(function(text) {
-          writePreview('<pre>' + escapeOutgoingPreviewHtml(text) + '</pre>');
+          writePreview('<pre>' + escapeOutgoingPreviewHtml(text) + '</pre>', { printMode: 'window' });
         })
         .catch(function() {
-          writeOutgoingPreviewStatus(previewWindow, fileName, 'Не удалось прочитать текст файла.');
+          writePreview('<div class="preview-message">Не удалось прочитать текст файла. Файл можно скачать.</div>', {
+            printMode: 'none',
+            printDisabledTitle: 'Текстовый предпросмотр не подготовлен для печати.'
+          });
         });
       return;
     }
 
     URL.revokeObjectURL(blobUrl);
-    writeOutgoingPreviewStatus(previewWindow, fileName, 'Быстрый просмотр для этого типа файла недоступен в браузере.');
+    writePreview('<div class="preview-message">Быстрый просмотр для этого типа файла недоступен в браузере. Файл можно скачать.</div>', {
+      printMode: 'none',
+      printDisabledTitle: 'Для этого типа файла доступно только скачивание.'
+    });
   }
 
   function openOutgoingAttachmentInNewTab(file, resolvedUrl) {
@@ -23795,6 +25340,28 @@
     return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
   }
 
+  function buildNextOutgoingNumber(records) {
+    var maxNumber = 0;
+    if (Array.isArray(records)) {
+      for (var i = 0; i < records.length; i += 1) {
+        var item = records[i];
+        if (!item || typeof item !== 'object') {
+          continue;
+        }
+        var value = String(item.outgoingNumber || '').trim();
+        var match = value.match(/^(\d+)/);
+        if (!match || !match[1]) {
+          continue;
+        }
+        var number = parseInt(match[1], 10);
+        if (Number.isFinite(number) && number > maxNumber) {
+          maxNumber = number;
+        }
+      }
+    }
+    return String(maxNumber + 1);
+  }
+
   function findOutgoingNumberDuplicate(records, value, excludeId) {
     var normalized = normalizeOutgoingNumberForCompare(value);
     if (!normalized || !Array.isArray(records)) {
@@ -23999,6 +25566,7 @@
     filesField.input.addEventListener('change', function() {
       var selected = Array.from(filesField.input.files || []);
       filesUploadSummary.classList.toggle('is-filled', selected.length > 0);
+      uploadProgress.setFiles(selected);
       if (!selected.length) {
         filesUploadSummary.textContent = 'Файлы не выбраны';
         return;
@@ -24014,9 +25582,11 @@
     });
     filesField.field.appendChild(createElement('div', 'documents-outgoing-form-modal__file-hint', 'PDF, изображения, DOCX/XLSX, TXT, RTF или ODT/ODS до 25 МБ на файл.'));
     var privateToggle = createOutgoingPrivateFilesToggle();
+    var uploadProgress = createOutgoingUploadProgress([]);
 
     grid.appendChild(filesField.field);
     grid.appendChild(privateToggle.field);
+    grid.appendChild(uploadProgress.element);
     form.appendChild(uploadSection.section);
     body.appendChild(form);
 
@@ -24051,9 +25621,18 @@
       });
       appendTelegramUserIdToFormData(requestPayload);
 
-      postOutgoingRegistryAction('outgoing_attach_files', requestPayload)
+      var backgroundUploadJob = createDocumentBackgroundUploadJob(selectedFiles, {
+        title: buildBackgroundUploadTitle('Исходящие', record.outgoingNumber || record.registryNumber, record.summary || record.addressee),
+        initialStatus: 'Подготовка'
+      });
+      postRegistryActionWithOptionalUploadProgress('outgoing_attach_files', requestPayload, uploadProgress, {
+        job: backgroundUploadJob,
+        files: selectedFiles,
+        statusText: 'Загружаем файлы'
+      })
         .then(function(data) {
-          closeAttachForm();
+          uploadProgress.complete('Файлы отправлены');
+          backgroundUploadJob.complete(data && data.message ? data.message : 'Файлы прикреплены.');
           showMessage('success', data && data.message ? data.message : 'Файлы прикреплены.');
           if (typeof onSaved === 'function') {
             onSaved(data);
@@ -24063,8 +25642,11 @@
           submitButton.disabled = false;
           cancelButton.disabled = false;
           submitButton.textContent = 'Прикрепить';
+          uploadProgress.fail('Не удалось загрузить файлы');
+          backgroundUploadJob.fail(error && error.message ? error.message : 'Не удалось прикрепить файлы.', selectedFiles);
           showMessage('error', error && error.message ? error.message : 'Не удалось прикрепить файлы.');
         });
+      closeAttachForm();
     });
 
     shell.appendChild(header);
@@ -24123,8 +25705,9 @@
     form.id = formId;
     form.setAttribute('autocomplete', 'off');
 
-    var closeOutgoingForm = function() {
-      if (outgoingFormSubmitting) {
+    var closeOutgoingForm = function(options) {
+      var closeOptions = options && typeof options === 'object' ? options : {};
+      if (outgoingFormSubmitting && !closeOptions.force) {
         showMessage('info', 'Дождитесь завершения сохранения и загрузки файлов.');
         return;
       }
@@ -24132,7 +25715,9 @@
         modal.parentNode.removeChild(modal);
       }
       document.removeEventListener('keydown', outgoingFormEscapeHandler);
-      releaseEditLockOnce();
+      if (!closeOptions.keepEditLock) {
+        releaseEditLockOnce();
+      }
     };
     var outgoingFormEscapeHandler = function(event) {
       if (event.key === 'Escape') {
@@ -24178,7 +25763,7 @@
     var filesSection = createOutgoingFormSection('Файлы и доступ', 'Добавьте новые файлы и выберите, кому они будут доступны.');
     var grid = detailsSection.grid;
     var filesGrid = filesSection.grid;
-    var registryNumberField = createOutgoingFormField({ name: 'registryNumber', label: 'Исходящий номер *', value: record && record.outgoingNumber, required: true });
+    var registryNumberField = createOutgoingFormField({ name: 'registryNumber', label: 'Исходящий номер *', value: isEditMode ? record && record.outgoingNumber : buildNextOutgoingNumber(knownRecords), required: true });
     var addresseeField = createOutgoingFormField({ name: 'correspondent', label: 'Адресат *', value: record && record.addressee, required: true });
     var fields = [
       registryNumberField,
@@ -24227,6 +25812,7 @@
     filesField.input.addEventListener('change', function() {
       var selected = Array.from(filesField.input.files || []);
       filesUploadSummary.classList.toggle('is-filled', selected.length > 0);
+      uploadProgress.setFiles(selected);
       if (!selected.length) {
         filesUploadSummary.textContent = 'Файлы не выбраны';
         return;
@@ -24243,6 +25829,7 @@
     var filesHint = createElement('div', 'documents-outgoing-form-modal__file-hint', 'PDF, изображения, DOCX/XLSX, TXT, RTF или ODT/ODS до 25 МБ на файл.');
     filesField.field.appendChild(filesHint);
     var privateToggle = createOutgoingPrivateFilesToggle();
+    var uploadProgress = createOutgoingUploadProgress([]);
     var existingFiles = normalizeOutgoingFileList(record && record.files);
     var removedFileKeys = [];
     var existingFilesPanel = null;
@@ -24321,6 +25908,7 @@
     }
     filesGrid.appendChild(filesField.field);
     filesGrid.appendChild(privateToggle.field);
+    filesGrid.appendChild(uploadProgress.element);
     form.appendChild(detailsSection.section);
     form.appendChild(filesSection.section);
     body.appendChild(form);
@@ -24391,8 +25979,27 @@
         requestPayload.filesRemaining = remainingFileKeys;
       }
 
-      postOutgoingRegistryAction('outgoing_save', requestPayload)
+      var backgroundUploadJob = null;
+      var backgroundUpload = null;
+      if (selectedFiles.length) {
+        backgroundUploadJob = createDocumentBackgroundUploadJob(selectedFiles, {
+          title: buildBackgroundUploadTitle('Исходящие', payload.registryNumber, payload.summary || payload.addressee),
+          initialStatus: isEditMode ? 'Обновление' : 'Создание'
+        });
+        backgroundUpload = {
+          job: backgroundUploadJob,
+          files: selectedFiles,
+          statusText: isEditMode ? 'Обновляем и загружаем файлы' : 'Создаём и загружаем файлы'
+        };
+      }
+      postRegistryActionWithOptionalUploadProgress('outgoing_save', requestPayload, uploadProgress, backgroundUpload)
         .then(function(data) {
+          if (selectedFiles.length) {
+            uploadProgress.complete('Файлы отправлены');
+          }
+          if (backgroundUploadJob) {
+            backgroundUploadJob.complete(data && data.message ? data.message : (isEditMode ? 'Исходящий документ обновлён.' : 'Исходящий документ создан.'));
+          }
           setOutgoingFormSubmitting(false);
           closeOutgoingForm();
           showMessage('success', data && data.message ? data.message : 'Запись сохранена.');
@@ -24402,6 +26009,17 @@
         })
         .catch(function(error) {
           setOutgoingFormSubmitting(false);
+          if (selectedFiles.length) {
+            uploadProgress.fail('Не удалось загрузить файлы');
+          }
+          if (backgroundUploadJob) {
+            if (isEditMode) {
+              releaseEditLockOnce();
+            }
+            backgroundUploadJob.fail(error && error.message ? error.message : (isEditMode ? 'Не удалось обновить исходящий документ.' : 'Не удалось создать исходящий документ.'), selectedFiles);
+            showMessage('error', error && error.message ? error.message : 'Не удалось сохранить запись.');
+            return;
+          }
           if (error && error.reason === 'outgoing_number_exists') {
             setOutgoingFormFieldError(registryNumberField, error.message || 'Этот исходящий номер уже занят.');
             registryNumberField.input.focus();
@@ -24418,6 +26036,10 @@
           }
           showMessage('error', error && error.message ? error.message : 'Не удалось сохранить запись.');
         });
+      if (backgroundUploadJob) {
+        setOutgoingFormSubmitting(false);
+        closeOutgoingForm({ keepEditLock: isEditMode });
+      }
     });
 
     shell.appendChild(header);
@@ -25384,6 +27006,22 @@
     return '/docs.php?' + params.toString();
   }
 
+  function openOrderAttachmentInNewTab(record, file, journalType) {
+    var config = getOrderJournalConfig(journalType);
+    var url = buildOrderFilePreviewUrl(record, file, config.type);
+    if (!url) {
+      showMessage('error', 'Не удалось открыть файл: ссылка недоступна.');
+      return;
+    }
+
+    var preparedFile = file && typeof file === 'object' ? Object.assign({}, file) : {};
+    preparedFile.url = url;
+    if (!preparedFile.originalName && !preparedFile.name) {
+      preparedFile.originalName = getAttachmentName(file);
+    }
+    openOutgoingAttachmentInNewTab(preparedFile, url);
+  }
+
   function renderOrderFilesCell(cell, record, journalConfig) {
     var config = getOrderJournalConfig(journalConfig && journalConfig.type);
     var fileColumnLabel = config && config.fileColumnLabel ? String(config.fileColumnLabel) : 'Файл';
@@ -25422,7 +27060,7 @@
           showMessage('error', 'Не удалось открыть файл: ссылка недоступна.');
           return;
         }
-        openOutgoingAttachmentInNewTab(file, url);
+        openOrderAttachmentInNewTab(record, file, config.type);
       });
       item.appendChild(link);
       list.appendChild(item);
@@ -25454,6 +27092,23 @@
       }
     }
     return null;
+  }
+
+  function buildNextOrderNumber(records) {
+    var maxNumber = 0;
+    if (Array.isArray(records)) {
+      for (var i = 0; i < records.length; i += 1) {
+        var item = records[i];
+        if (!item || typeof item !== 'object') {
+          continue;
+        }
+        var parsed = parseOrdersNumberSortValue(item.orderNumber);
+        if (parsed.hasNumber && parsed.base > maxNumber) {
+          maxNumber = parsed.base;
+        }
+      }
+    }
+    return String(maxNumber + 1);
   }
 
   function openOrdersAttachFilesModal(record, onSaved, journalType) {
@@ -25538,6 +27193,7 @@
     filesField.input.addEventListener('change', function() {
       var selected = Array.from(filesField.input.files || []);
       filesUploadSummary.classList.toggle('is-filled', selected.length > 0);
+      uploadProgress.setFiles(selected);
       if (!selected.length) {
         filesUploadSummary.textContent = 'Файлы не выбраны';
         return;
@@ -25550,7 +27206,9 @@
         : selected.length + ' файлов · ' + formatFileSize(totalSize);
     });
     filesField.field.appendChild(createElement('div', 'documents-outgoing-form-modal__file-hint', 'PDF, изображения, DOCX/XLSX, TXT, RTF или ODT/ODS до 25 МБ на файл.'));
+    var uploadProgress = createOutgoingUploadProgress([]);
     uploadSection.grid.appendChild(filesField.field);
+    uploadSection.grid.appendChild(uploadProgress.element);
     form.appendChild(uploadSection.section);
     body.appendChild(form);
 
@@ -25579,9 +27237,18 @@
         requestPayload.append('attachments[]', file);
       });
       appendTelegramUserIdToFormData(requestPayload);
-      postOutgoingRegistryAction('orders_attach_files', requestPayload)
+      var backgroundUploadJob = createDocumentBackgroundUploadJob(selectedFiles, {
+        title: buildBackgroundUploadTitle(getJournalUploadSourceLabel(journalConfig), record.orderNumber, getOrderRecordValue(record, 'summary')),
+        initialStatus: 'Подготовка'
+      });
+      postRegistryActionWithOptionalUploadProgress('orders_attach_files', requestPayload, uploadProgress, {
+        job: backgroundUploadJob,
+        files: selectedFiles,
+        statusText: 'Загружаем файлы'
+      })
         .then(function(data) {
-          closeAttachForm();
+          uploadProgress.complete('Файлы отправлены');
+          backgroundUploadJob.complete(data && data.message ? data.message : 'Файлы прикреплены.');
           showMessage('success', data && data.message ? data.message : 'Файлы прикреплены.');
           if (typeof onSaved === 'function') {
             onSaved(data);
@@ -25591,8 +27258,11 @@
           submitButton.disabled = false;
           cancelButton.disabled = false;
           submitButton.textContent = 'Прикрепить';
+          uploadProgress.fail('Не удалось загрузить файлы');
+          backgroundUploadJob.fail(error && error.message ? error.message : 'Не удалось прикрепить файлы.', selectedFiles);
           showMessage('error', error && error.message ? error.message : 'Не удалось прикрепить файлы.');
         });
+      closeAttachForm();
     });
 
     shell.appendChild(header);
@@ -25660,7 +27330,7 @@
 
     var detailsSection = createOutgoingFormSection(journalConfig.sectionTitle, journalConfig.sectionHint);
     var filesSection = createOutgoingFormSection(journalConfig.fileColumnLabel, 'Добавьте новые файлы или удалите уже прикреплённые.');
-    var orderNumberField = createOutgoingFormField({ name: 'orderNumber', label: journalConfig.numberLabel + ' *', value: record && record.orderNumber, required: true });
+    var orderNumberField = createOutgoingFormField({ name: 'orderNumber', label: journalConfig.numberLabel + ' *', value: isEditMode ? record && record.orderNumber : buildNextOrderNumber(knownRecords), required: true });
     var orderDateField = createOutgoingFormField({ name: 'orderDate', label: 'Дата *', type: 'date', value: record && record.orderDate, required: true });
     var summaryField = createOutgoingFormField({ name: 'summary', label: 'Краткое содержание *', type: 'textarea', value: record && record.summary, wide: true, rows: 5, required: true });
     var executorField = createOutgoingFormField({ name: 'executor', label: 'Исполнитель', value: record && record.executor, placeholder: 'Введите ФИО исполнителя' });
@@ -25705,6 +27375,7 @@
     filesField.input.addEventListener('change', function() {
       var selected = Array.from(filesField.input.files || []);
       filesUploadSummary.classList.toggle('is-filled', selected.length > 0);
+      uploadProgress.setFiles(selected);
       if (!selected.length) {
         filesUploadSummary.textContent = 'Файлы не выбраны';
         return;
@@ -25717,6 +27388,7 @@
         : selected.length + ' файлов · ' + formatFileSize(totalSize);
     });
     filesField.field.appendChild(createElement('div', 'documents-outgoing-form-modal__file-hint', 'PDF, изображения, DOCX/XLSX, TXT, RTF или ODT/ODS до 25 МБ на файл.'));
+    var uploadProgress = createOutgoingUploadProgress([]);
     var existingFiles = normalizeOutgoingFileList(record && record.files);
     var removedFileKeys = [];
     var existingFilesPanel = null;
@@ -25791,6 +27463,7 @@
       filesSection.grid.appendChild(existingFilesField);
     }
     filesSection.grid.appendChild(filesField.field);
+    filesSection.grid.appendChild(uploadProgress.element);
     form.appendChild(detailsSection.section);
     form.appendChild(filesSection.section);
     body.appendChild(form);
@@ -25858,8 +27531,27 @@
         requestPayload.filesToDelete = uniqueRemovedFileKeys;
         requestPayload.filesRemaining = remainingFileKeys;
       }
-      postOutgoingRegistryAction('orders_save', requestPayload)
+      var backgroundUploadJob = null;
+      var backgroundUpload = null;
+      if (selectedFiles.length) {
+        backgroundUploadJob = createDocumentBackgroundUploadJob(selectedFiles, {
+          title: buildBackgroundUploadTitle(getJournalUploadSourceLabel(journalConfig), payload.orderNumber, payload.summary),
+          initialStatus: isEditMode ? 'Обновление' : 'Создание'
+        });
+        backgroundUpload = {
+          job: backgroundUploadJob,
+          files: selectedFiles,
+          statusText: isEditMode ? 'Обновляем и загружаем файлы' : 'Создаём и загружаем файлы'
+        };
+      }
+      postRegistryActionWithOptionalUploadProgress('orders_save', requestPayload, uploadProgress, backgroundUpload)
         .then(function(data) {
+          if (selectedFiles.length) {
+            uploadProgress.complete('Файлы отправлены');
+          }
+          if (backgroundUploadJob) {
+            backgroundUploadJob.complete(data && data.message ? data.message : (isEditMode ? 'Запись журнала обновлена.' : 'Запись журнала создана.'));
+          }
           closeOrdersForm();
           showMessage('success', data && data.message ? data.message : 'Запись сохранена.');
           if (typeof onSaved === 'function') {
@@ -25868,6 +27560,14 @@
         })
         .catch(function(error) {
           submitButton.disabled = false;
+          if (selectedFiles.length) {
+            uploadProgress.fail('Не удалось загрузить файлы');
+          }
+          if (backgroundUploadJob) {
+            backgroundUploadJob.fail(error && error.message ? error.message : (isEditMode ? 'Не удалось обновить запись журнала.' : 'Не удалось создать запись журнала.'), selectedFiles);
+            showMessage('error', error && error.message ? error.message : 'Не удалось сохранить запись журнала.');
+            return;
+          }
           if (error && error.reason === 'order_number_exists') {
             setOutgoingFormFieldError(orderNumberField, error.message || 'Этот номер уже зарегистрирован.');
             orderNumberField.input.focus();
@@ -25889,6 +27589,9 @@
           }
           showMessage('error', 'Не удалось сохранить запись журнала: ' + message);
         });
+      if (backgroundUploadJob) {
+        closeOrdersForm();
+      }
     });
 
     shell.appendChild(header);
@@ -29012,6 +30715,22 @@
 
         var directCreateUploadActive = !isEditMode && initialCreateAttachmentFiles.length > 0;
         var deferredCreateUploadActive = !isEditMode && remainingCreateAttachmentFiles.length > 0;
+        var backgroundUploadActive = attachmentFiles.length > 0;
+        var backgroundTitleFields = updateFields || createFields || fillFieldsFromForm();
+        var backgroundUploadJob = backgroundUploadActive
+          ? createDocumentBackgroundUploadJob(attachmentFiles, {
+            title: buildBackgroundUploadTitle(
+              'Основная деятельность',
+              backgroundTitleFields.registryNumber || (doc && doc.registryNumber) || '',
+              backgroundTitleFields.summary || backgroundTitleFields.correspondent || backgroundTitleFields.documentNumber
+            ),
+            initialStatus: isEditMode ? 'Обновление' : 'Создание'
+          })
+          : null;
+        var backgroundTaskSaved = false;
+        var backgroundTaskCreated = false;
+        var backgroundCreatedDocumentId = '';
+        var backgroundPendingFiles = attachmentFiles.slice();
         if (attachmentFiles.length) {
           setSelectedAttachmentStates(
             attachmentFiles,
@@ -29019,11 +30738,17 @@
             0,
             isEditMode ? 'Ожидает сохранения карточки' : 'Ожидает отправки в задачу'
           );
+          if (backgroundUploadJob) {
+            backgroundUploadJob.setFilesState(attachmentFiles, 'queued', 0, 'Ожидает');
+          }
         }
 
         submitButton.textContent = isEditMode ? 'Сохраняем...' : 'Добавляем...';
         if (directCreateUploadActive) {
           setSelectedAttachmentStates(initialCreateAttachmentFiles, 'uploading', 0, 'Загружается: 0%');
+          if (backgroundUploadJob) {
+            backgroundUploadJob.setFilesState(initialCreateAttachmentFiles, 'uploading', 0, '0%');
+          }
         }
         updateUploadProgress(
           12,
@@ -29032,8 +30757,16 @@
             : 'Сохраняем карточку документа…',
           'is-stage-uploading'
         );
+        if (backgroundUploadJob) {
+          backgroundUploadJob.update(
+            12,
+            directCreateUploadActive
+              ? (deferredCreateUploadActive ? 'Создаём задачу и загружаем первую часть файлов…' : 'Создаём задачу и загружаем файлы…')
+              : (isEditMode ? 'Обновляем задачу…' : 'Создаём задачу…')
+          );
+        }
 
-        uploadFormDataWithProgress(buildApiUrl(isEditMode ? 'update' : 'create'), formData, function(progress) {
+        var saveRequest = uploadFormDataWithProgress(buildApiUrl(isEditMode ? 'update' : 'create'), formData, function(progress) {
           var progressInsideRequest = 0;
           if (progress && progress.lengthComputable && progress.total > 0) {
             progressInsideRequest = progress.loaded / progress.total;
@@ -29050,6 +30783,9 @@
               attachmentPercent,
               'Загружается: ' + attachmentPercent + '%'
             );
+            if (backgroundUploadJob) {
+              backgroundUploadJob.setFilesState(initialCreateAttachmentFiles, 'uploading', attachmentPercent, attachmentPercent + '%');
+            }
           }
           updateUploadProgress(
             uploadPercent,
@@ -29058,10 +30794,29 @@
               : 'Сохраняем карточку документа…',
             'is-stage-uploading'
           );
-        })
+          if (backgroundUploadJob) {
+            backgroundUploadJob.update(
+              uploadPercent,
+              directCreateUploadActive
+                ? (deferredCreateUploadActive ? 'Загружаем первую часть файлов…' : 'Загружаем файлы в задачу…')
+                : (isEditMode ? 'Обновляем задачу…' : 'Создаём задачу…')
+            );
+          }
+        });
+
+        if (backgroundUploadActive) {
+          setDocumentFormSubmitting(false);
+          closeModal(modal);
+        }
+
+        saveRequest
           .then(function(data) {
             if (directCreateUploadActive) {
               setSelectedAttachmentStates(initialCreateAttachmentFiles, 'ready', 100, 'Загружен в задачу');
+              if (backgroundUploadJob) {
+                backgroundUploadJob.setFilesState(initialCreateAttachmentFiles, 'ready', 100, 'Готово');
+              }
+              backgroundPendingFiles = remainingCreateAttachmentFiles.slice();
             }
             updateUploadProgress(
               isEditMode || deferredCreateUploadActive ? 34 : 95,
@@ -29070,6 +30825,16 @@
                 : 'Документ и файлы сохранены. Обновляем таблицу…',
               'is-stage-processing'
             );
+            if (backgroundUploadJob) {
+              backgroundUploadJob.update(
+                isEditMode || deferredCreateUploadActive ? 70 : 95,
+                isEditMode
+                  ? 'Задача обновлена. Загружаем файлы…'
+                  : (deferredCreateUploadActive
+                    ? 'Задача создана. Догружаем оставшиеся файлы…'
+                    : 'Задача создана. Обновляем таблицу…')
+              );
+            }
             if (isEditMode) {
               docsLogger.log('Перезапись', {
                 action: 'submit-update-response',
@@ -29105,10 +30870,20 @@
             } else if (data && data.createdDocument && data.createdDocument.id) {
               createdOrUpdatedDocumentId = String(data.createdDocument.id);
             }
+            if (!isEditMode && createdOrUpdatedDocumentId) {
+              backgroundTaskCreated = true;
+              backgroundCreatedDocumentId = createdOrUpdatedDocumentId;
+            }
+            if (createdOrUpdatedDocumentId) {
+              backgroundTaskSaved = true;
+            }
 
             var uploadPromise = Promise.resolve();
             var latestUploadData = null;
             var deferredAttachmentFiles = isEditMode ? attachmentFiles : remainingCreateAttachmentFiles;
+            if (deferredAttachmentFiles.length && !createdOrUpdatedDocumentId) {
+              throw new Error('Сервер не вернул ID задачи для догрузки файлов.');
+            }
             if (deferredAttachmentFiles.length && createdOrUpdatedDocumentId) {
               var batches = splitFilesToBatches(deferredAttachmentFiles, DOCUMENTS_UPLOAD_BATCH_SIZE);
               uploadPromise = batches.reduce(function(chain, batch, batchIndex) {
@@ -29125,6 +30900,9 @@
                     batch.forEach(function(file) {
                       setSelectedAttachmentState(file, 'uploading', 0, 'Загружается: 0%');
                     });
+                    if (backgroundUploadJob) {
+                      backgroundUploadJob.setFilesState(batch, 'uploading', 0, '0%');
+                    }
 
                     return uploadFormDataWithProgress(buildApiUrl('update'), batchFormData, function(progress) {
                       var progressInsideBatch = 0;
@@ -29140,13 +30918,25 @@
                           'Загружается: ' + attachmentPercent + '%'
                         );
                       });
+                      if (backgroundUploadJob) {
+                        backgroundUploadJob.setFilesState(batch, 'uploading', attachmentPercent, attachmentPercent + '%');
+                      }
                       var overallProgress = (batchIndex + progressInsideBatch) / batches.length;
                       var uploadPercent = 65 + Math.round(overallProgress * 30);
                       uploadPercent = Math.max(65, Math.min(95, uploadPercent));
                       updateUploadProgress(uploadPercent, 'Загружаем файлы: ' + (batchIndex + 1) + '/' + batches.length, 'is-stage-uploading');
+                  if (backgroundUploadJob) {
+                    backgroundUploadJob.update(uploadPercent, 'Загружаем файлы: ' + (batchIndex + 1) + '/' + batches.length);
+                  }
                     }).then(function(batchData) {
                       batch.forEach(function(file) {
                         setSelectedAttachmentState(file, 'ready', 100, 'Загружен в задачу');
+                      });
+                      if (backgroundUploadJob) {
+                        backgroundUploadJob.setFilesState(batch, 'ready', 100, 'Готово');
+                      }
+                      backgroundPendingFiles = backgroundPendingFiles.filter(function(file) {
+                        return batch.indexOf(file) === -1;
                       });
                       latestUploadData = batchData;
                       return batchData;
@@ -29160,9 +30950,13 @@
               if (latestUploadData) {
                 updateStateFromPayload(latestUploadData);
               }
-              setDocumentFormSubmitting(false);
-              closeModal(modal);
-              if (data && data.message) {
+              if (!backgroundUploadActive) {
+                setDocumentFormSubmitting(false);
+                closeModal(modal);
+              }
+              if (backgroundUploadJob) {
+                backgroundUploadJob.complete(isEditMode ? 'Готово. Задача обновлена.' : 'Готово. Задача и файлы сохранены.');
+              } else if (data && data.message) {
                 showMessage('success', data.message);
               } else {
                 showMessage('success', isEditMode ? 'Документ обновлён.' : 'Документ добавлен.');
@@ -29173,13 +30967,24 @@
           })
           .catch(function(error) {
             var errorMessage = error && error.message ? error.message : 'повторите попытку.';
-            setDocumentFormSubmitting(false);
+            if (!backgroundUploadActive) {
+              setDocumentFormSubmitting(false);
+            }
             updateSubmitButtonForDraftUploads();
             if (attachmentFiles.length) {
               markPendingSelectedAttachmentsError(attachmentFiles, 'Не загружен: ' + errorMessage);
             }
             setUploadProgressActive(true);
             updateUploadProgress(Math.max(uploadState.percent, 12), 'Ошибка загрузки: ' + errorMessage, 'is-stage-error');
+            if (backgroundUploadJob) {
+              var backgroundHadSavedTask = backgroundTaskSaved || backgroundTaskCreated || backgroundCreatedDocumentId;
+              backgroundUploadJob.fail(
+                backgroundHadSavedTask
+                  ? (isEditMode ? 'Задача обновлена, но часть файлов не загрузилась: ' : 'Задача создана, но часть файлов не загрузилась: ') + errorMessage
+                  : (isEditMode ? 'Задача не обновлена: ' : 'Задача не создана: ') + errorMessage,
+                backgroundHadSavedTask ? backgroundPendingFiles : attachmentFiles
+              );
+            }
             if (isEditMode) {
               docsLogger.warn('Перезапись', {
                 action: 'submit-update-error',
@@ -29187,7 +30992,9 @@
                 message: errorMessage
               });
             }
-            showMessage('error', 'Не удалось сохранить документ: ' + errorMessage);
+            if (!backgroundUploadActive) {
+              showMessage('error', 'Не удалось сохранить документ: ' + errorMessage);
+            }
           });
       });
 
@@ -29252,6 +31059,8 @@
           }
         }
         renderAttachmentsSummary(attachmentsStore);
+      } else {
+        registryField.input.value = buildNextDocumentRegistryNumber(state.documents);
       }
 
       shell.appendChild(header);
@@ -30459,6 +32268,24 @@
       promise: null,
       lastLoadedAt: 0
     };
+    state.admin.s3 = {
+      loading: false,
+      testing: false,
+      deleting: false,
+      error: '',
+      visible: false,
+      storage: null,
+      coldStorage: null,
+      test: null,
+      listing: null,
+      listingPath: '',
+      listingFilter: '',
+      listingLoading: false,
+      listingError: '',
+      listingLoadedAt: 0,
+      listingPromise: null,
+      promise: null
+    };
     var initialColumnOrder = loadColumnOrderFromLocalStorage();
     if (initialColumnOrder && initialColumnOrder.length) {
       state.columnOrder = initialColumnOrder;
@@ -30639,6 +32466,24 @@
       visible: false,
       promise: null
     };
+    state.admin.s3 = {
+      loading: false,
+      testing: false,
+      deleting: false,
+      error: '',
+      visible: false,
+      storage: null,
+      coldStorage: null,
+      test: null,
+      listing: null,
+      listingPath: '',
+      listingFilter: '',
+      listingLoading: false,
+      listingError: '',
+      listingLoadedAt: 0,
+      listingPromise: null,
+      promise: null
+    };
 
     if (config.clearLocalStorage !== false) {
       clearDocumentsLocalCacheForOrganization(state.organization);
@@ -30671,22 +32516,8 @@
     return loadRegistry(state.organization);
   };
 
-  window.optimizeDocumentsStorage = function(organization) {
-    var targetOrganization = organization || state.organization || '';
-    if (!targetOrganization) {
-      showMessage('error', 'Не удалось определить организацию для оптимизации.');
-      return Promise.reject(new Error('Организация не определена.'));
-    }
-
-    showMessage('warning', 'ZIP-архивация и дедупликация вложений отключены.');
-
-    return optimizeServerStorage(targetOrganization)
-      .then(function(result) {
-        return result;
-      })
-      .catch(function(error) {
-        showMessage('warning', error && error.message ? error.message : 'Оптимизация вложений отключена.');
-        throw error;
-      });
+  window.optimizeDocumentsStorage = function() {
+    showMessage('warning', 'Оптимизация хранилища временно отключена.');
+    return Promise.reject(new Error('Оптимизация хранилища временно отключена.'));
   };
 })();

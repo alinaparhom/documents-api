@@ -220,8 +220,10 @@ function loadEnvFromFile(string $path): array
 function getRuntimeEnv(): array
 {
     return array_merge(
+        loadEnvFromFile(__DIR__ . '/app/env.txt'),
         loadEnvFromFile(__DIR__ . '/.env'),
-        loadEnvFromFile(__DIR__ . '/app/.env')
+        loadEnvFromFile(__DIR__ . '/app/.env'),
+        loadEnvFromFile(__DIR__ . '/js/documents/app/.env')
     );
 }
 
@@ -661,7 +663,18 @@ function extractImageTextWithOcr(string $path): string
 
 function getGroqKey(array $env): string
 {
-    return trim((string)(getenv('GROQ_API_KEY') ?: ($env['GROQ_API_KEY'] ?? '')));
+    foreach (['GROQ_API_KEY', 'AI_API_KEY_PAID', 'AI_API_KEY', 'OPENAI_API_KEY'] as $key) {
+        $envValue = getenv($key);
+        if (is_string($envValue) && trim($envValue) !== '') {
+            return trim($envValue);
+        }
+
+        if (isset($env[$key]) && trim((string)$env[$key]) !== '') {
+            return trim((string)$env[$key]);
+        }
+    }
+
+    return '';
 }
 
 function resolveModel(array $env): string

@@ -416,9 +416,6 @@ export function createPdfViewer(root = document) {
   const OFFICE_FRAME_ZOOM_STEP = 10;
   const OFFICE_FRAME_ZOOM_GRANULARITY = 5;
   const OFFICE_FRAME_ZOOM_FIT = 100;
-  const OFFICE_FRAME_MOBILE_FIT_WIDTH = 860;
-  const OFFICE_FRAME_MOBILE_FIT_ZOOM = 110;
-  const OFFICE_FRAME_MOBILE_FIT_MIN_SCALE = 0.35;
   const zoomState = {
     enabled: false,
     scale: 1,
@@ -520,23 +517,6 @@ export function createPdfViewer(root = document) {
     }
   }
 
-  function isMobileOfficeViewport() {
-    if (typeof navigator === 'undefined') {
-      return false;
-    }
-    const { platform } = getPlatformDetails();
-    const userAgent = typeof navigator.userAgent === 'string' ? navigator.userAgent : '';
-    const navigatorPlatform = typeof navigator.platform === 'string' ? navigator.platform : '';
-    const maxTouchPoints = typeof navigator.maxTouchPoints === 'number' ? navigator.maxTouchPoints : 0;
-    const probe = `${platform} ${navigatorPlatform} ${userAgent}`.toLowerCase();
-    return /android|iphone|ipad|ipod|ios|mobile/.test(probe)
-      || (/macintosh/.test(probe) && maxTouchPoints > 1);
-  }
-
-  function shouldUseWordOfficeMobileFit() {
-    return isWordOfficeFrameActive() && isMobileOfficeViewport();
-  }
-
   function getWordOfficeFrameFileName() {
     if (!elements.frame || !elements.frame.dataset) {
       return '';
@@ -577,40 +557,6 @@ export function createPdfViewer(root = document) {
     return null;
   }
 
-  function isWordOfficeFrameUrl(url, fileName = '', extension = '') {
-    const parsed = getOfficeFrameUrl(url);
-    if (!parsed) {
-      return false;
-    }
-    const normalizedExtension = extension && String(extension).trim()
-      ? String(extension).trim().replace(/^\./, '')
-      : '';
-    return parsed.searchParams.has('wdZoom')
-      || hasWordOfficeExtension(getOfficeFrameSourceUrl(parsed))
-      || hasWordOfficeExtension(fileName)
-      || hasWordOfficeExtension(normalizedExtension ? `document.${normalizedExtension}` : '');
-  }
-
-  function prepareWordOfficeFrameUrl(url, fileName = '', extension = '') {
-    if (!url || !isWordOfficeFrameUrl(url, fileName, extension)) {
-      return url;
-    }
-    const parsed = getOfficeFrameUrl(url);
-    if (!parsed) {
-      return url;
-    }
-    if (isMobileOfficeViewport()) {
-      parsed.searchParams.set('wdZoom', String(OFFICE_FRAME_MOBILE_FIT_ZOOM));
-    } else {
-      parsed.searchParams.delete('wdZoom');
-    }
-    return parsed.toString();
-  }
-
-  function getWordOfficeFitZoom() {
-    return shouldUseWordOfficeMobileFit() ? OFFICE_FRAME_MOBILE_FIT_ZOOM : OFFICE_FRAME_ZOOM_FIT;
-  }
-
   function isWordOfficeFrameActive() {
     return viewerMode === 'frame' && Boolean(getWordOfficeFrameUrl());
   }
@@ -624,12 +570,12 @@ export function createPdfViewer(root = document) {
     }
     const parsed = getWordOfficeFrameUrl(url);
     if (!parsed) {
-      return getWordOfficeFitZoom();
+      return OFFICE_FRAME_ZOOM_FIT;
     }
     const rawZoom = parsed.searchParams.get('wdZoom');
     const zoom = Number.parseInt(rawZoom || '', 10);
     if (!Number.isFinite(zoom)) {
-      return getWordOfficeFitZoom();
+      return OFFICE_FRAME_ZOOM_FIT;
     }
     return clamp(zoom, OFFICE_FRAME_ZOOM_MIN, OFFICE_FRAME_ZOOM_MAX);
   }
@@ -662,21 +608,15 @@ export function createPdfViewer(root = document) {
     return false;
   }
 
-  function setWordOfficeFrameFitWidthUrl() {
+  function setWordOfficeFrameAutoFitUrl() {
     if (!elements.frame) {
       return false;
     }
     const parsed = getWordOfficeFrameUrl();
-    if (!parsed) {
+    if (!parsed || !parsed.searchParams.has('wdZoom')) {
       return false;
     }
-    if (shouldUseWordOfficeMobileFit()) {
-      parsed.searchParams.set('wdZoom', String(OFFICE_FRAME_MOBILE_FIT_ZOOM));
-    } else if (parsed.searchParams.has('wdZoom')) {
-      parsed.searchParams.delete('wdZoom');
-    } else {
-      return false;
-    }
+    parsed.searchParams.delete('wdZoom');
     const nextUrl = parsed.toString();
     const currentUrl = elements.frame.getAttribute('src') || '';
     if (nextUrl && nextUrl !== currentUrl) {
@@ -690,43 +630,15 @@ export function createPdfViewer(root = document) {
     if (elements.frame) {
       elements.frame.style.width = '';
       elements.frame.style.height = '';
-      elements.frame.style.minHeight = '';
       elements.frame.style.transform = 'none';
-      elements.frame.style.transformOrigin = '';
     }
     if (options.clearZoom && elements.frame && elements.frame.dataset) {
       delete elements.frame.dataset.officeZoom;
-      delete elements.frame.dataset.officeFitScale;
-    }
-    if (elements.zoom) {
-      elements.zoom.style.overflow = '';
     }
     if (options.resetScroll && elements.zoom) {
       elements.zoom.scrollLeft = 0;
       elements.zoom.scrollTop = 0;
     }
-  }
-
-  function applyWordOfficeMobileFitLayout() {
-    if (!elements.frame || !elements.zoom || !shouldUseWordOfficeMobileFit()) {
-      return false;
-    }
-    const rect = typeof elements.zoom.getBoundingClientRect === 'function'
-      ? elements.zoom.getBoundingClientRect()
-      : { width: 0, height: 0 };
-    const viewportWidth = Math.max(1, Math.round(elements.zoom.clientWidth || rect.width || 1));
-    const viewportHeight = Math.max(1, Math.round(elements.zoom.clientHeight || rect.height || 1));
-    const baseWidth = Math.max(viewportWidth, OFFICE_FRAME_MOBILE_FIT_WIDTH);
-    const scale = clamp(viewportWidth / baseWidth, OFFICE_FRAME_MOBILE_FIT_MIN_SCALE, 1);
-    const layoutHeight = Math.max(viewportHeight, Math.ceil(viewportHeight / scale));
-    elements.frame.style.width = `${baseWidth}px`;
-    elements.frame.style.height = `${layoutHeight}px`;
-    elements.frame.style.minHeight = `${layoutHeight}px`;
-    elements.frame.style.transformOrigin = '0 0';
-    elements.frame.style.transform = `scale(${scale})`;
-    elements.frame.dataset.officeFitScale = String(scale);
-    elements.zoom.style.overflow = 'hidden';
-    return true;
   }
 
   function applyWordOfficeFrameZoomLayout(zoomValue, options = {}) {
@@ -742,7 +654,6 @@ export function createPdfViewer(root = document) {
     if (elements.frame.dataset) {
       elements.frame.dataset.officeZoom = String(zoom);
     }
-    applyWordOfficeMobileFitLayout();
     if (options.resetScroll) {
       if (elements.zoom) {
         elements.zoom.scrollLeft = 0;
@@ -769,8 +680,7 @@ export function createPdfViewer(root = document) {
     zoomState.translateY = 0;
     zoomState.pointers.clear();
     resetWordOfficeFramePresentation({ ...options, clearZoom: true });
-    const urlChanged = setWordOfficeFrameFitWidthUrl();
-    applyWordOfficeMobileFitLayout();
+    const urlChanged = setWordOfficeFrameAutoFitUrl();
     updateZoomLayout();
     updateZoomControls();
     logZoomEvent('office-fit-width', {
@@ -2502,8 +2412,7 @@ export function createPdfViewer(root = document) {
         return false;
       }
       const fallbackTitle = title ? `Просмотр: ${title}` : 'Просмотр документа';
-      const rawFrameUrl = wantsPdf ? buildPdfUrlWithZoom(fallbackUrl, 'page-fit', null) : fallbackUrl;
-      const frameUrl = prepareWordOfficeFrameUrl(rawFrameUrl, frameFileName, frameFileExtension);
+      const frameUrl = wantsPdf ? buildPdfUrlWithZoom(fallbackUrl, 'page-fit', null) : fallbackUrl;
       setFrameFileContext(frameFileName, frameFileExtension);
       elements.frame.setAttribute('src', frameUrl);
       elements.frame.setAttribute('title', fallbackTitle);
@@ -2664,8 +2573,7 @@ export function createPdfViewer(root = document) {
       if (elements.frame) {
         elements.frame.removeAttribute('src');
       }
-      const rawTargetUrl = wantsPdf ? buildPdfUrlWithZoom(resolvedUrl, 'page-fit', null) : resolvedUrl;
-      const targetUrl = prepareWordOfficeFrameUrl(rawTargetUrl, frameFileName, frameFileExtension);
+      const targetUrl = wantsPdf ? buildPdfUrlWithZoom(resolvedUrl, 'page-fit', null) : resolvedUrl;
       if (wantsPdf && !forceFrame) {
         setViewerMode('pdf');
         logViewerDeep('viewer:mode:state', {
