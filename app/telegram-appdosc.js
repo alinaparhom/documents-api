@@ -13,7 +13,7 @@ const THEME_SETTINGS_SAVE_ENDPOINT = '/docs.php?action=mini_app_save_theme';
 const ASSIGNMENT_TEMPLATES_ENDPOINT = '/docs.php?action=mini_app_assignment_templates';
 const TASK_SNAPSHOT_API_URL = '/docs.php?action=mini_app_task_snapshot';
 const TASK_AI_SEARCH_API_URL = '/docs.php?action=mini_app_ai_task_search';
-const TASK_AI_ASSISTANT_WELCOME = 'Напишите как помощнику: что нужно найти в задачах, файлах или ответах.';
+const TASK_AI_ASSISTANT_WELCOME = 'Напишите, что нужно найти в задачах, файлах, OCR-тексте или ответах.';
 const CLIENT_LOG_ENDPOINT = '/docs.php?action=mini_app_log';
 const ENTRY_LOG_ENDPOINT = '/docs.php?action=mini_app_entry_log';
 const PDF_LOG_ENDPOINT = '/docs.php?action=mini_app_pdf_log';
@@ -39,7 +39,8 @@ let systemThemeMediaQuery = null;
 let isSystemThemeListenerBound = false;
 const THEME_MODE_OPTIONS = ['dark', 'light'];
 const TASK_LIST_MODE_OPTIONS = ['default', 'insight'];
-const TASK_AI_SEARCH_MODE_OPTIONS = ['local', 'ai'];
+const TASK_AI_SEARCH_MODE_OPTIONS = ['local'];
+const TASK_AI_SEARCH_LOCAL_RESULT_LIMIT = 1000;
 const TASK_LIST_MODE_STORAGE_KEY = 'appdosc_task_list_mode';
 const TASK_SEARCH_SESSION_STORAGE_KEY = 'appdosc_task_search_session';
 const TASK_SEARCH_EXCLUDED_FIELD_NAMES = new Set(['aiBrief', 'briefai']);
@@ -3042,7 +3043,7 @@ const state = {
     dateTo: '',
     overdue: false,
   },
-  taskSearchMode: 'ai',
+  taskSearchMode: 'local',
   taskSearchCleanup: null,
   taskSearchSession: null,
   taskSearchBackgroundLocked: false,
@@ -6955,7 +6956,7 @@ function normalizeTaskAiSearchSession(rawSession) {
     ? source.results
       .map((result) => normalizeTaskAiSearchResult(result))
       .filter(Boolean)
-      .slice(0, 12)
+      .slice(0, TASK_AI_SEARCH_LOCAL_RESULT_LIMIT)
     : [];
 
   return {
@@ -6974,15 +6975,15 @@ function normalizeTaskAiSearchSession(rawSession) {
 
 function normalizeTaskAiSearchMode(value) {
   const normalized = normalizeValue(value).toLowerCase();
-  return TASK_AI_SEARCH_MODE_OPTIONS.includes(normalized) ? normalized : 'ai';
+  return TASK_AI_SEARCH_MODE_OPTIONS.includes(normalized) ? normalized : 'local';
 }
 
 function getTaskAiSearchLoadingMessage(mode, source) {
   const normalizedMode = normalizeTaskAiSearchMode(mode);
   if (normalizedMode === 'local') {
     return source === 'voice'
-      ? 'Распознал голос. Ищу совпадения в JSON задач...'
-      : 'Ищу совпадения в JSON задач...';
+      ? 'Распознал голос. Ищу совпадения в задачах и OCR-тексте...'
+      : 'Ищу совпадения в задачах и OCR-тексте...';
   }
 
   return source === 'voice'
@@ -7107,11 +7108,11 @@ function buildTaskForCurrentSearchSnapshot(task) {
     }
   });
 
-  const files = compactTaskSearchEntries(task.files, ['originalName', 'name', 'storedName', 'url'], 16);
+  const files = compactTaskSearchEntries(task.files, ['originalName', 'name', 'storedName', 'url', 'ocrText', 'ocrStatus', 'ocrError'], 16);
   if (files.length) {
     compact.files = files;
   }
-  const responses = compactTaskSearchEntries(task.responses, ['originalName', 'name', 'storedName', 'textContent', 'comment', 'note', 'uploadedBy'], 12);
+  const responses = compactTaskSearchEntries(task.responses, ['originalName', 'name', 'storedName', 'textContent', 'comment', 'note', 'uploadedBy', 'ocrText', 'ocrStatus', 'ocrError'], 12);
   if (responses.length) {
     compact.responses = responses;
   }
@@ -7502,7 +7503,7 @@ async function requestTaskAiSearch(query, options = {}) {
         folderScope: folderPayload.folderScope,
         folderId: folderPayload.folderId,
         tasksSnapshot: currentSnapshot,
-        limit: 8,
+        limit: TASK_AI_SEARCH_LOCAL_RESULT_LIMIT,
       }),
       ...(options.signal ? { signal: options.signal } : {}),
     });
@@ -7510,7 +7511,9 @@ async function requestTaskAiSearch(query, options = {}) {
     if (error && error.name === 'AbortError') {
       throw error;
     }
-    throw new Error('ИИ-поиск сейчас недоступен. Повторите запрос позже.');
+    throw new Error(searchMode === 'local'
+      ? 'Локальный поиск сейчас недоступен. Повторите запрос позже.'
+      : 'ИИ-поиск сейчас недоступен. Повторите запрос позже.');
   }
 
   let payload = null;
@@ -7828,17 +7831,16 @@ function openTaskSearchModal() {
 	        <span class="appdosc-task-search-modal__kicker">Помощник</span>
 	        <button type="button" class="appdosc-task-search-modal__close" data-task-search-close aria-label="Закрыть помощника">×</button>
 	        <h3 class="appdosc-task-search-modal__title">Поиск задачи</h3>
-	        <p class="appdosc-task-search-modal__subtitle">Ищу только по вашему запросу: по задачам, вложениям, краткому содержанию файлов и ответам.</p>
+	        <p class="appdosc-task-search-modal__subtitle">Ищу только по вашему запросу: по задачам, вложениям, OCR-тексту файлов и ответам.</p>
           <div class="appdosc-ai-task-search__mode" role="group" aria-label="Режим поиска">
             <button type="button" class="appdosc-ai-task-search__mode-button" data-ai-task-search-mode="local">Локально</button>
-            <button type="button" class="appdosc-ai-task-search__mode-button" data-ai-task-search-mode="ai">ИИ Groq</button>
           </div>
           <label class="appdosc-ai-task-search__folder">
             <span class="appdosc-ai-task-search__folder-label">Папка</span>
             <select class="appdosc-ai-task-search__folder-select" data-ai-task-search-folder-scope></select>
           </label>
 	      </div>
-	      <section class="appdosc-ai-task-search" data-task-search-panel="ai" aria-label="ИИ-помощник по задачам">
+	      <section class="appdosc-ai-task-search" data-task-search-panel="ai" aria-label="Поиск по задачам">
 	        <div class="appdosc-ai-task-search__messages" data-ai-task-search-messages></div>
 	        <form class="appdosc-ai-task-search__form" data-ai-task-search-form>
           <textarea
@@ -7890,8 +7892,8 @@ function openTaskSearchModal() {
     let aiInputResizeFrame = 0;
     let cleanedUp = false;
     const taskSearchSession = getTaskAiSearchSession();
-    state.taskSearchMode = normalizeTaskAiSearchMode(taskSearchSession.searchMode || state.taskSearchMode);
-    const initialFolderScope = normalizeTaskSearchScope(taskSearchSession.folderScope || state.activeFilters.searchScope);
+    state.taskSearchMode = 'local';
+    const initialFolderScope = TASK_SEARCH_SCOPE_ALL;
     setTaskSearchBackgroundLocked(true);
 
     if (aiInput instanceof HTMLTextAreaElement) {
@@ -8137,7 +8139,7 @@ function openTaskSearchModal() {
     }
     if (aiFolderScope instanceof HTMLSelectElement) {
       populateTaskSearchScopeSelect(aiFolderScope, initialFolderScope);
-      saveTaskAiSearchSession({ folderScope: normalizeTaskSearchScope(aiFolderScope.value) });
+      saveTaskAiSearchSession({ searchMode: 'local', folderScope: normalizeTaskSearchScope(aiFolderScope.value) });
       aiFolderScope.addEventListener('change', () => {
         const nextScope = normalizeTaskSearchScope(aiFolderScope.value);
         saveTaskAiSearchSession({ folderScope: nextScope });

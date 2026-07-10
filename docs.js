@@ -686,6 +686,19 @@
     s3RefreshButton: null,
     s3TestButton: null,
     s3CloseButton: null,
+    ocrButton: null,
+    ocrModal: null,
+    ocrStatus: null,
+    ocrBody: null,
+    ocrFileInput: null,
+    ocrChooseButton: null,
+    ocrPdfTextButton: null,
+    ocrBrowserButton: null,
+    ocrServerAutoButton: null,
+    ocrServerTextButton: null,
+    ocrServerOcrButton: null,
+    ocrCopyButton: null,
+    ocrCloseButton: null,
     templateButton: null,
     templateModal: null,
     templateStatus: null,
@@ -1242,6 +1255,8 @@
   var SEARCH_OPTION_OVERSCAN = 8;
   var SEARCH_POPOVER_MIN_WIDTH = 300;
   var SEARCH_POPOVER_MIN_HEIGHT = 260;
+  var ADMIN_S3_READ_MAX_BYTES = 1048576;
+  var ADMIN_OCR_PDF_MAX_PAGES = 8;
 
   var DEFAULT_VISUAL_SETTINGS = buildDefaultVisualSettings();
 
@@ -1367,6 +1382,19 @@
         listingLoadedAt: 0,
         listingPromise: null,
         promise: null
+      },
+      ocr: {
+        visible: false,
+        file: null,
+        fileName: '',
+        fileType: '',
+        running: '',
+        status: '',
+        statusType: 'info',
+        results: {},
+        selectedResult: '',
+        limits: null,
+        monitoring: null
       }
     },
     resizeTimer: null,
@@ -3274,7 +3302,7 @@
     var endpoint = apiUrl || (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
     var formData = new FormData();
     formData.append('action', 'ocr_extract');
-    formData.append('language', 'rus');
+    formData.append('language', 'rus+eng');
 
     var prepareSource = Promise.resolve();
     if (source && source.fileObject) {
@@ -3380,25 +3408,121 @@
   }
 
   var briefPdfJsLoader = null;
+  var briefPdfJsWorkerSrc = '';
+
+  function getDocsScriptDirectory() {
+    var scripts = document.getElementsByTagName('script');
+    for (var index = scripts.length - 1; index >= 0; index -= 1) {
+      var source = scripts[index] && scripts[index].src ? String(scripts[index].src) : '';
+      var docsIndex = source.indexOf('/docs.js');
+      if (docsIndex === -1) {
+        docsIndex = source.indexOf('/js/documents/docs.js');
+      }
+      if (docsIndex !== -1) {
+        return source.slice(0, source.lastIndexOf('/') + 1);
+      }
+    }
+
+    return '';
+  }
+
+  function addPdfJsScriptCandidate(candidates, seen, source) {
+    var value = source ? String(source).trim() : '';
+    if (!value) {
+      return;
+    }
+
+    var key = value;
+    try {
+      key = new URL(value, window.location.href).href.replace(/[?#].*$/g, '');
+    } catch (error) {}
+
+    if (seen[key]) {
+      return;
+    }
+    seen[key] = true;
+    candidates.push(value);
+  }
+
+  function resolvePdfJsWorkerSrc(scriptSrc) {
+    var explicitWorker = window.DOCUMENTS_PDFJS_WORKER_URL ? String(window.DOCUMENTS_PDFJS_WORKER_URL).trim() : '';
+    if (explicitWorker) {
+      return explicitWorker;
+    }
+
+    try {
+      var baseSource = scriptSrc || '';
+      if (!baseSource || baseSource === '/pdf/pdf.min.js') {
+        var scriptDirectory = getDocsScriptDirectory();
+        if (scriptDirectory) {
+          baseSource = scriptDirectory + 'pdf/pdf.min.js';
+        }
+      }
+
+      return new URL('pdf.worker.min.js', baseSource || window.location.href).href;
+    } catch (error) {
+      return 'pdf/pdf.worker.min.js';
+    }
+  }
+
+  function applyBriefPdfJsWorker(pdfjsLib) {
+    if (pdfjsLib && pdfjsLib.GlobalWorkerOptions) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = briefPdfJsWorkerSrc || resolvePdfJsWorkerSrc('/pdf/pdf.min.js');
+    }
+  }
+
   function ensureBriefPdfJsLoaded() {
     if (typeof window !== 'undefined' && window.pdfjsLib) {
+      applyBriefPdfJsWorker(window.pdfjsLib);
       return Promise.resolve(window.pdfjsLib);
     }
     if (briefPdfJsLoader) {
       return briefPdfJsLoader;
     }
     briefPdfJsLoader = new Promise(function(resolve, reject) {
-      var script = document.createElement('script');
-      script.src = '/pdf/pdf.min.js';
-      script.onload = function() {
+      var scriptDirectory = getDocsScriptDirectory();
+      var candidates = [];
+      var seenCandidates = Object.create(null);
+      addPdfJsScriptCandidate(candidates, seenCandidates, window.DOCUMENTS_PDFJS_URL || '');
+      if (scriptDirectory) {
+        addPdfJsScriptCandidate(candidates, seenCandidates, scriptDirectory + 'pdf/pdf.min.js');
+      }
+      addPdfJsScriptCandidate(candidates, seenCandidates, '/pdf/pdf.min.js');
+      addPdfJsScriptCandidate(candidates, seenCandidates, 'pdf/pdf.min.js');
+      addPdfJsScriptCandidate(candidates, seenCandidates, './pdf/pdf.min.js');
+
+      var candidateIndex = 0;
+      function loadNextCandidate() {
         if (window.pdfjsLib) {
+          applyBriefPdfJsWorker(window.pdfjsLib);
           resolve(window.pdfjsLib);
-        } else {
-          reject(new Error('pdfjsLib не найден'));
+          return;
         }
-      };
-      script.onerror = function() { reject(new Error('Не удалось загрузить PDF библиотеку')); };
-      document.head.appendChild(script);
+        if (candidateIndex >= candidates.length) {
+          briefPdfJsLoader = null;
+          reject(new Error('Не удалось загрузить PDF библиотеку. Проверьте, что pdf/pdf.min.js доступен на сервере.'));
+          return;
+        }
+
+        var script = document.createElement('script');
+        script.src = candidates[candidateIndex];
+        candidateIndex += 1;
+        script.onload = function() {
+          if (window.pdfjsLib) {
+            briefPdfJsWorkerSrc = resolvePdfJsWorkerSrc(script.src);
+            applyBriefPdfJsWorker(window.pdfjsLib);
+            resolve(window.pdfjsLib);
+            return;
+          }
+          loadNextCandidate();
+        };
+        script.onerror = function() {
+          loadNextCandidate();
+        };
+        document.head.appendChild(script);
+      }
+
+      loadNextCandidate();
     });
     return briefPdfJsLoader;
   }
@@ -3411,9 +3535,7 @@
     }
     try {
       var pdfjsLib = await ensureBriefPdfJsLoaded();
-      if (pdfjsLib && pdfjsLib.GlobalWorkerOptions) {
-        pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf/pdf.worker.min.js';
-      }
+      applyBriefPdfJsWorker(pdfjsLib);
       var bytes = await file.arrayBuffer();
       var loadingTask = pdfjsLib.getDocument({ data: bytes });
       var pdf = await loadingTask.promise;
@@ -11527,6 +11649,7 @@
       '.documents-template-modal__button--secondary{background:rgba(148,163,184,0.18);color:#0f172a;}' +
       '.documents-template-modal__button:hover:not(:disabled){transform:translateY(-1px);}' +
       '.documents-admin__s3-button{margin-right:8px;}' +
+      '.documents-admin__ocr-button{margin-right:8px;}' +
       '.documents-s3-modal{position:fixed;inset:0;z-index:1900;display:none;align-items:center;justify-content:center;padding:16px;background:rgba(15,23,42,0.32);backdrop-filter:blur(10px);}' +
       '.documents-s3-modal.is-visible{display:flex;}' +
       '.documents-s3-modal__panel{width:min(1320px,calc(100vw - 24px));height:min(920px,calc(100dvh - 24px));max-height:calc(100dvh - 24px);overflow:hidden;border-radius:22px;background:linear-gradient(165deg, rgba(255,255,255,0.96), rgba(248,250,252,0.92));border:1px solid rgba(255,255,255,0.95);box-shadow:0 28px 60px rgba(15,23,42,0.22);padding:18px;display:grid;grid-template-rows:auto auto auto minmax(0,1fr) auto;gap:14px;}' +
@@ -11541,6 +11664,16 @@
       '.documents-s3-modal__metric{border:1px solid rgba(148,163,184,0.3);border-radius:14px;padding:12px;background:rgba(255,255,255,0.74);display:flex;flex-direction:column;gap:4px;min-width:0;}' +
       '.documents-s3-modal__metric-label{font-size:12px;font-weight:700;color:#64748b;line-height:1.3;}' +
       '.documents-s3-modal__metric-value{font-size:18px;font-weight:800;color:#0f172a;line-height:1.2;word-break:break-word;}' +
+      '.documents-s3-modal__ocr{border:1px solid rgba(20,184,166,.28);border-radius:14px;background:rgba(240,253,250,.78);padding:12px;display:grid;gap:10px;min-width:0;}' +
+      '.documents-s3-modal__ocr-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;min-width:0;}' +
+      '.documents-s3-modal__ocr-title{font-size:13px;font-weight:900;color:#0f172a;line-height:1.25;}' +
+      '.documents-s3-modal__ocr-message{font-size:12px;font-weight:800;color:#0f766e;line-height:1.35;overflow-wrap:anywhere;text-align:right;}' +
+      '.documents-s3-modal__ocr-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:8px;}' +
+      '.documents-s3-modal__ocr-item{border:1px solid rgba(15,118,110,.16);border-radius:10px;background:rgba(255,255,255,.8);padding:8px;display:grid;gap:2px;min-width:0;}' +
+      '.documents-s3-modal__ocr-label{font-size:10px;font-weight:900;color:#64748b;text-transform:uppercase;letter-spacing:0;line-height:1.25;}' +
+      '.documents-s3-modal__ocr-value{font-size:15px;font-weight:950;color:#0f172a;line-height:1.2;overflow-wrap:anywhere;}' +
+      '.documents-s3-modal__ocr-errors{display:grid;gap:5px;}' +
+      '.documents-s3-modal__ocr-error{font-size:12px;font-weight:800;line-height:1.35;color:#991b1b;background:rgba(254,242,242,.86);border:1px solid rgba(254,202,202,.86);border-radius:8px;padding:7px 8px;overflow-wrap:anywhere;}' +
       '.documents-s3-modal__explorer{min-height:0;border:1px solid rgba(148,163,184,0.3);border-radius:14px;background:rgba(255,255,255,0.74);overflow:hidden;display:grid;grid-template-rows:auto auto auto auto minmax(0,1fr) auto;}' +
       '.documents-s3-modal__explorer-head{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(148,163,184,0.22);}' +
       '.documents-s3-modal__explorer-title{font-size:13px;font-weight:900;color:#0f172a;}' +
@@ -11563,17 +11696,61 @@
       '.documents-s3-modal__table tr:last-child td{border-bottom:0;}' +
       '.documents-s3-modal__item-button{display:inline-flex;align-items:center;gap:7px;max-width:100%;border:0;background:transparent;color:#1d4ed8;font:inherit;font-weight:800;text-align:left;padding:0;}' +
       '.documents-s3-modal__item-button[data-s3-type="file"]{color:#0f172a;}' +
+      '.documents-s3-modal__item-button:disabled{opacity:.55;cursor:default;}' +
       '.documents-s3-modal__item-icon{flex:0 0 auto;width:22px;height:22px;border-radius:7px;display:inline-flex;align-items:center;justify-content:center;background:#e0f2fe;color:#0369a1;font-size:12px;font-weight:900;}' +
       '.documents-s3-modal__item-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
       '.documents-s3-modal__key{max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#64748b;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:11px;}' +
       '.documents-s3-modal__row-actions{display:flex;gap:6px;justify-content:flex-end;}' +
       '.documents-s3-modal__empty{padding:14px;color:#64748b;font-size:13px;font-weight:700;}' +
+      '.documents-s3-reader{position:fixed;inset:0;z-index:1980;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(15,23,42,0.38);backdrop-filter:blur(10px);box-sizing:border-box;}' +
+      '.documents-s3-reader__panel{width:min(980px,calc(100vw - 24px));height:min(760px,calc(100dvh - 24px));display:grid;grid-template-rows:auto auto minmax(0,1fr);overflow:hidden;border:1px solid rgba(226,232,240,0.95);border-radius:16px;background:#fff;box-shadow:0 26px 58px rgba(15,23,42,0.24);}' +
+      '.documents-s3-reader__header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:14px 16px;border-bottom:1px solid #e2e8f0;}' +
+      '.documents-s3-reader__title{margin:0;color:#0f172a;font-size:18px;font-weight:900;line-height:1.25;overflow-wrap:anywhere;}' +
+      '.documents-s3-reader__meta{margin-top:4px;color:#64748b;font-size:12px;font-weight:700;line-height:1.35;overflow-wrap:anywhere;}' +
+      '.documents-s3-reader__actions{display:flex;align-items:center;gap:8px;flex:0 0 auto;}' +
+      '.documents-s3-reader__status{display:none;margin:10px 16px 0;padding:9px 10px;border:1px solid #bfdbfe;border-radius:8px;background:#eff6ff;color:#1d4ed8;font-size:12px;font-weight:800;line-height:1.35;}' +
+      '.documents-s3-reader__status.is-visible{display:block;}' +
+      '.documents-s3-reader__status--error{border-color:#fecaca;background:#fff1f2;color:#b91c1c;}' +
+      '.documents-s3-reader__body{min-height:0;overflow:auto;scrollbar-gutter:stable;padding:12px 16px 16px;background:#f8fafc;}' +
+      '.documents-s3-reader__text{min-height:100%;margin:0;padding:12px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;color:#0f172a;font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere;}' +
       '.documents-s3-modal__actions{display:flex;flex-wrap:wrap;gap:10px;}' +
       '.documents-s3-modal__button{border:none;border-radius:12px;padding:11px 14px;font-size:14px;font-weight:600;cursor:pointer;transition:transform .2s ease, box-shadow .2s ease, opacity .2s ease;}' +
       '.documents-s3-modal__button:disabled{opacity:0.6;cursor:default;transform:none;box-shadow:none;}' +
       '.documents-s3-modal__button--primary{background:linear-gradient(120deg,#2563eb,#38bdf8);color:#fff;box-shadow:0 16px 28px rgba(37,99,235,0.28);}' +
       '.documents-s3-modal__button--secondary{background:rgba(148,163,184,0.18);color:#0f172a;}' +
       '.documents-s3-modal__button:hover:not(:disabled){transform:translateY(-1px);}' +
+      '.documents-ocr-modal{position:fixed;inset:0;z-index:1960;display:none;align-items:stretch;justify-content:stretch;background:#fff;color:#0f172a;}' +
+      '.documents-ocr-modal.is-visible{display:flex;}' +
+      '.documents-ocr-modal__panel{width:100%;height:100vh;height:100dvh;max-height:100dvh;display:grid;grid-template-rows:auto auto minmax(0,1fr);overflow:hidden;background:#fff;}' +
+      '.documents-ocr-modal__header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:14px 18px;border-bottom:1px solid #e2e8f0;background:#fff;}' +
+      '.documents-ocr-modal__title{margin:0;font-size:20px;line-height:1.2;font-weight:900;color:#0f172a;}' +
+      '.documents-ocr-modal__subtitle{margin:5px 0 0;color:#64748b;font-size:13px;line-height:1.4;font-weight:700;}' +
+      '.documents-ocr-modal__actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex:0 0 auto;}' +
+      '.documents-ocr-modal__button{min-height:36px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;color:#0f172a;padding:0 12px;font:inherit;font-size:12px;font-weight:900;cursor:pointer;}' +
+      '.documents-ocr-modal__button:hover,.documents-ocr-modal__button:focus-visible{border-color:#14b8a6;background:#f0fdfa;color:#0f766e;outline:0;}' +
+      '.documents-ocr-modal__button:disabled{opacity:.58;cursor:default;}' +
+      '.documents-ocr-modal__button--primary{border-color:#0f766e;background:#0f766e;color:#fff;}' +
+      '.documents-ocr-modal__button--primary:hover,.documents-ocr-modal__button--primary:focus-visible{border-color:#115e59;background:#115e59;color:#fff;}' +
+      '.documents-ocr-modal__status{display:none;margin:12px 18px 0;padding:10px 12px;border-radius:8px;border:1px solid #99f6e4;background:#f0fdfa;color:#0f766e;font-size:13px;font-weight:800;line-height:1.35;}' +
+      '.documents-ocr-modal__status.is-visible{display:block;}' +
+      '.documents-ocr-modal__status--error{border-color:#fecaca;background:#fff1f2;color:#b91c1c;}' +
+      '.documents-ocr-modal__status--success{border-color:#bbf7d0;background:#ecfdf5;color:#047857;}' +
+      '.documents-ocr-modal__body{min-height:0;overflow:auto;scrollbar-gutter:stable;padding:12px 18px 18px;display:grid;grid-template-columns:minmax(260px,360px) minmax(0,1fr);gap:12px;align-content:start;background:#f8fafc;}' +
+      '.documents-ocr-modal__controls,.documents-ocr-modal__result{border:1px solid #d1d5db;border-radius:8px;background:#fff;padding:12px;display:flex;flex-direction:column;gap:10px;min-width:0;}' +
+      '.documents-ocr-modal__file{border:1px dashed #94a3b8;border-radius:8px;background:#f8fafc;padding:12px;display:flex;flex-direction:column;gap:6px;min-width:0;}' +
+      '.documents-ocr-modal__file-name{font-size:13px;font-weight:900;color:#0f172a;overflow-wrap:anywhere;}' +
+      '.documents-ocr-modal__file-meta{font-size:12px;font-weight:800;color:#64748b;overflow-wrap:anywhere;}' +
+      '.documents-ocr-modal__group{display:grid;gap:8px;}' +
+      '.documents-ocr-modal__group-title{font-size:11px;line-height:1.25;font-weight:900;color:#64748b;text-transform:uppercase;letter-spacing:0;}' +
+      '.documents-ocr-modal__result-list{display:grid;gap:8px;}' +
+      '.documents-ocr-modal__result-card{border:1px solid #e2e8f0;border-radius:8px;background:#fff;padding:10px;display:grid;gap:6px;min-width:0;font:inherit;text-align:left;cursor:pointer;}' +
+      '.documents-ocr-modal__result-head{display:flex;align-items:center;justify-content:space-between;gap:8px;}' +
+      '.documents-ocr-modal__result-title{font-size:13px;font-weight:900;color:#0f172a;}' +
+      '.documents-ocr-modal__result-meta{font-size:11px;font-weight:800;color:#64748b;}' +
+      '.documents-ocr-modal__result-text{max-height:120px;overflow:auto;scrollbar-gutter:stable;white-space:pre-wrap;font-size:12px;line-height:1.45;color:#334155;background:#f8fafc;border-radius:7px;padding:8px;}' +
+      '.documents-ocr-modal__result-card.is-selected{border-color:#14b8a6;box-shadow:0 0 0 2px rgba(20,184,166,.12);}' +
+      '.documents-ocr-modal__textarea{width:100%;min-height:420px;resize:vertical;border:1px solid #cbd5e1;border-radius:8px;padding:10px;font:inherit;font-size:13px;line-height:1.5;color:#0f172a;background:#fff;}' +
+      '.documents-ocr-modal__empty{padding:16px;color:#64748b;font-size:13px;font-weight:800;}' +
       '@media (max-width: 720px){' +
       '.documents-template-modal{padding:8px;align-items:flex-end;}' +
       '.documents-template-modal__panel{width:100%;max-height:calc(100vh - 16px);border-radius:20px;padding:14px;}' +
@@ -11582,6 +11759,8 @@
       '.documents-s3-modal{padding:8px;align-items:flex-end;}' +
       '.documents-s3-modal__panel{width:100%;height:calc(100dvh - 16px);max-height:calc(100dvh - 16px);border-radius:20px;padding:14px;}' +
       '.documents-s3-modal__grid{grid-template-columns:repeat(2,minmax(0,1fr));}' +
+      '.documents-s3-modal__ocr-head{display:grid;grid-template-columns:1fr;}' +
+      '.documents-s3-modal__ocr-message{text-align:left;}' +
       '.documents-s3-modal__explorer-head{grid-template-columns:1fr auto;align-items:start;}' +
       '.documents-s3-modal__explorer-title{grid-column:1 / 2;}' +
       '.documents-s3-modal__explorer-path{grid-column:1 / -1;white-space:normal;overflow-wrap:anywhere;}' +
@@ -11589,6 +11768,18 @@
       '.documents-s3-modal__table-wrap{overflow-x:auto;}' +
       '.documents-s3-modal__actions{display:grid;grid-template-columns:1fr;}' +
       '.documents-s3-modal__button{width:100%;}' +
+      '.documents-s3-reader{padding:8px;align-items:flex-end;}' +
+      '.documents-s3-reader__panel{width:100%;height:calc(100dvh - 16px);border-radius:14px;}' +
+      '.documents-s3-reader__header{padding:12px;}' +
+      '.documents-s3-reader__actions{display:grid;grid-template-columns:1fr;min-width:104px;}' +
+      '.documents-s3-reader__actions .documents-s3-modal__mini-button{width:100%;}' +
+      '.documents-s3-reader__body{padding:10px 12px 12px;}' +
+      '.documents-ocr-modal__header{padding:12px;gap:10px;}' +
+      '.documents-ocr-modal__actions{display:grid;grid-template-columns:1fr;min-width:118px;}' +
+      '.documents-ocr-modal__button{width:100%;}' +
+      '.documents-ocr-modal__status{margin:10px 12px 0;}' +
+      '.documents-ocr-modal__body{grid-template-columns:1fr;padding:10px 12px 12px;}' +
+      '.documents-ocr-modal__textarea{min-height:300px;}' +
       '}' +
       '';
     document.head.appendChild(style);
@@ -11631,6 +11822,10 @@
     var s3Button = createElement('button', 'documents-admin__log-button documents-admin__s3-button', 'S3');
     s3Button.type = 'button';
     headerActions.appendChild(s3Button);
+
+    var ocrButton = createElement('button', 'documents-admin__log-button documents-admin__ocr-button', 'OCR');
+    ocrButton.type = 'button';
+    headerActions.appendChild(ocrButton);
 
     var logButton = createElement('button', 'documents-admin__log-button', 'Журнал мини-приложения');
     logButton.type = 'button';
@@ -11816,6 +12011,45 @@
     s3Modal.appendChild(s3Panel);
     document.body.appendChild(s3Modal);
 
+    var ocrModal = createElement('div', 'documents-ocr-modal');
+    ocrModal.setAttribute('aria-hidden', 'true');
+    var ocrPanel = createElement('div', 'documents-ocr-modal__panel');
+    ocrPanel.setAttribute('role', 'dialog');
+    ocrPanel.setAttribute('aria-modal', 'true');
+    ocrPanel.setAttribute('aria-labelledby', 'documents-ocr-title');
+    var ocrHeader = createElement('div', 'documents-ocr-modal__header');
+    var ocrTitleWrap = createElement('div', 'documents-ocr-modal__title-wrap');
+    var ocrTitle = createElement('h3', 'documents-ocr-modal__title', 'OCR документа в текст');
+    ocrTitle.id = 'documents-ocr-title';
+    var ocrSubtitle = createElement('p', 'documents-ocr-modal__subtitle', 'Tesseract, PDF, изображения и DOCX.');
+    ocrTitleWrap.appendChild(ocrTitle);
+    ocrTitleWrap.appendChild(ocrSubtitle);
+    var ocrActions = createElement('div', 'documents-ocr-modal__actions');
+    var ocrChooseButton = createElement('button', 'documents-ocr-modal__button documents-ocr-modal__button--primary', 'Выбрать файл');
+    ocrChooseButton.type = 'button';
+    var ocrCopyButton = createElement('button', 'documents-ocr-modal__button', 'Скопировать');
+    ocrCopyButton.type = 'button';
+    var ocrCloseButton = createElement('button', 'documents-ocr-modal__button', 'Закрыть');
+    ocrCloseButton.type = 'button';
+    ocrActions.appendChild(ocrChooseButton);
+    ocrActions.appendChild(ocrCopyButton);
+    ocrActions.appendChild(ocrCloseButton);
+    ocrHeader.appendChild(ocrTitleWrap);
+    ocrHeader.appendChild(ocrActions);
+    var ocrStatus = createElement('div', 'documents-ocr-modal__status');
+    ocrStatus.setAttribute('role', 'status');
+    var ocrBody = createElement('div', 'documents-ocr-modal__body');
+    var ocrFileInput = document.createElement('input');
+    ocrFileInput.type = 'file';
+    ocrFileInput.accept = '.pdf,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff,application/pdf,image/*';
+    ocrFileInput.style.display = 'none';
+    ocrPanel.appendChild(ocrHeader);
+    ocrPanel.appendChild(ocrStatus);
+    ocrPanel.appendChild(ocrBody);
+    ocrPanel.appendChild(ocrFileInput);
+    ocrModal.appendChild(ocrPanel);
+    document.body.appendChild(ocrModal);
+
     document.body.appendChild(modal);
 
     adminElements.modal = modal;
@@ -11832,6 +12066,14 @@
     adminElements.s3RefreshButton = s3RefreshButton;
     adminElements.s3TestButton = s3TestButton;
     adminElements.s3CloseButton = s3CloseButton;
+    adminElements.ocrButton = ocrButton;
+    adminElements.ocrModal = ocrModal;
+    adminElements.ocrStatus = ocrStatus;
+    adminElements.ocrBody = ocrBody;
+    adminElements.ocrFileInput = ocrFileInput;
+    adminElements.ocrChooseButton = ocrChooseButton;
+    adminElements.ocrCopyButton = ocrCopyButton;
+    adminElements.ocrCloseButton = ocrCloseButton;
     adminElements.templateButton = templateButton;
     adminElements.logPanel = logPanel;
     adminElements.logStatus = logStatus;
@@ -11862,6 +12104,10 @@
 
     s3Button.addEventListener('click', function() {
       openAdminS3Modal();
+    });
+
+    ocrButton.addEventListener('click', function() {
+      openAdminOcrModal();
     });
 
     logButton.addEventListener('click', function() {
@@ -11896,6 +12142,55 @@
       closeAdminS3Modal();
     });
 
+    ocrModal.addEventListener('click', function(event) {
+      if (event.target === ocrModal) {
+        closeAdminOcrModal();
+      }
+    });
+
+    ocrCloseButton.addEventListener('click', function() {
+      closeAdminOcrModal();
+    });
+
+    ocrChooseButton.addEventListener('click', function() {
+      if (adminElements.ocrFileInput) {
+        adminElements.ocrFileInput.click();
+      }
+    });
+
+    ocrCopyButton.addEventListener('click', function() {
+      copyAdminOcrSelectedText();
+    });
+
+    ocrFileInput.addEventListener('change', function(event) {
+      var fileList = event && event.target && event.target.files ? event.target.files : [];
+      var file = fileList && fileList[0] ? fileList[0] : null;
+      if (file) {
+        setAdminOcrFile(file);
+      }
+      ocrFileInput.value = '';
+    });
+
+    ocrBody.addEventListener('click', function(event) {
+      var target = event.target && event.target.closest
+        ? event.target.closest('[data-ocr-action], [data-ocr-select]')
+        : null;
+      if (!target || !ocrBody.contains(target)) {
+        return;
+      }
+      var action = target.getAttribute('data-ocr-action') || '';
+      if (action) {
+        runAdminOcrAction(action).catch(function(error) {
+          docsLogger.warn('OCR action failed:', error);
+        });
+        return;
+      }
+      var selectKey = target.getAttribute('data-ocr-select') || '';
+      if (selectKey) {
+        selectAdminOcrResult(selectKey);
+      }
+    });
+
     s3RefreshButton.addEventListener('click', function() {
       refreshAdminS3Panel().catch(function() {});
     });
@@ -11906,13 +12201,17 @@
 
     s3Summary.addEventListener('click', function(event) {
       var target = event.target && event.target.closest
-        ? event.target.closest('[data-s3-path], [data-s3-up], [data-s3-copy], [data-s3-open-input], [data-s3-delete]')
+        ? event.target.closest('[data-s3-path], [data-s3-up], [data-s3-copy], [data-s3-open-input], [data-s3-delete], [data-s3-read]')
         : null;
       if (!target || !s3Summary.contains(target)) {
         return;
       }
       var s3State = ensureAdminS3State();
-      if (s3State.deleting) {
+      if (s3State.deleting || s3State.reading) {
+        return;
+      }
+      if (target.hasAttribute('data-s3-read')) {
+        readAdminS3File(target.getAttribute('data-s3-read') || '', target.getAttribute('data-s3-name') || '').catch(function() {});
         return;
       }
       if (target.hasAttribute('data-s3-copy')) {
@@ -12656,6 +12955,477 @@
     }
   }
 
+  function ensureAdminOcrState() {
+    if (!state.admin.ocr) {
+      state.admin.ocr = {
+        visible: false,
+        file: null,
+        fileName: '',
+        fileType: '',
+        running: '',
+        status: '',
+        statusType: 'info',
+        results: {},
+        selectedResult: '',
+        limits: null,
+        monitoring: null
+      };
+    }
+    if (!state.admin.ocr.results || typeof state.admin.ocr.results !== 'object') {
+      state.admin.ocr.results = {};
+    }
+    if (!('limits' in state.admin.ocr)) {
+      state.admin.ocr.limits = null;
+    }
+    if (!('monitoring' in state.admin.ocr)) {
+      state.admin.ocr.monitoring = null;
+    }
+    return state.admin.ocr;
+  }
+
+  function setAdminOcrStatus(text, type) {
+    ensureAdminModal();
+    var ocrState = ensureAdminOcrState();
+    ocrState.status = text || '';
+    ocrState.statusType = type || 'info';
+    if (!adminElements.ocrStatus) {
+      return;
+    }
+    var status = adminElements.ocrStatus;
+    status.textContent = ocrState.status;
+    status.classList.toggle('is-visible', Boolean(ocrState.status));
+    status.classList.remove('documents-ocr-modal__status--error', 'documents-ocr-modal__status--success');
+    if (type === 'error') {
+      status.classList.add('documents-ocr-modal__status--error');
+    } else if (type === 'success') {
+      status.classList.add('documents-ocr-modal__status--success');
+    }
+  }
+
+  function getAdminOcrFileType(file) {
+    var name = file && file.name ? String(file.name).toLowerCase() : '';
+    var type = file && file.type ? String(file.type).toLowerCase() : '';
+    if (type === 'application/pdf' || /\.pdf$/i.test(name)) {
+      return 'pdf';
+    }
+    if (type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || /\.docx$/i.test(name)) {
+      return 'docx';
+    }
+    if (type.indexOf('image/') === 0 || /\.(png|jpe?g|webp|bmp|tiff?)$/i.test(name)) {
+      return 'image';
+    }
+    return '';
+  }
+
+  function setAdminOcrFile(file) {
+    var ocrState = ensureAdminOcrState();
+    var fileType = getAdminOcrFileType(file);
+    if (!fileType) {
+      ocrState.file = null;
+      ocrState.fileName = '';
+      ocrState.fileType = '';
+      ocrState.results = {};
+      ocrState.selectedResult = '';
+      setAdminOcrStatus('Поддерживаются только PDF, DOCX и изображения.', 'error');
+      updateAdminOcrPanel();
+      return;
+    }
+    ocrState.file = file;
+    ocrState.fileName = file && file.name ? String(file.name) : 'document';
+    ocrState.fileType = fileType;
+    ocrState.running = '';
+    ocrState.results = {};
+    ocrState.selectedResult = '';
+    setAdminOcrStatus('Файл выбран. Нажмите «Распознать текст».', 'info');
+    updateAdminOcrPanel();
+  }
+
+  function normalizeAdminOcrText(text) {
+    return String(text || '')
+      .replace(/\r\n/g, '\n')
+      .replace(/\u0000/g, '')
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{4,}/g, '\n\n\n')
+      .trim();
+  }
+
+  function saveAdminOcrResult(key, title, text, meta, error) {
+    var ocrState = ensureAdminOcrState();
+    var normalizedText = normalizeAdminOcrText(text);
+    ocrState.results[key] = {
+      key: key,
+      title: title,
+      text: normalizedText,
+      meta: meta || '',
+      error: error || '',
+      createdAt: new Date().toISOString()
+    };
+    if (normalizedText && (!ocrState.selectedResult || !ocrState.results[ocrState.selectedResult] || !ocrState.results[ocrState.selectedResult].text)) {
+      ocrState.selectedResult = key;
+    }
+    updateAdminOcrPanel();
+    return ocrState.results[key];
+  }
+
+  function selectAdminOcrResult(key) {
+    var ocrState = ensureAdminOcrState();
+    if (!ocrState.results[key]) {
+      return;
+    }
+    ocrState.selectedResult = key;
+    updateAdminOcrPanel();
+  }
+
+  function canvasToAdminOcrBlob(canvas) {
+    return new Promise(function(resolve, reject) {
+      if (!canvas || typeof canvas.toBlob !== 'function') {
+        reject(new Error('Браузер не смог подготовить изображение страницы.'));
+        return;
+      }
+      canvas.toBlob(function(blob) {
+        if (blob) {
+          resolve(blob);
+        } else {
+          reject(new Error('Браузер не смог создать PNG страницы.'));
+        }
+      }, 'image/png');
+    });
+  }
+
+  async function renderAdminPdfPagesToImages(file) {
+    var pdfjsLib = await ensureBriefPdfJsLoaded();
+    applyBriefPdfJsWorker(pdfjsLib);
+    var bytes = await file.arrayBuffer();
+    var pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
+    var pageCount = Math.max(0, Number(pdf.numPages) || 0);
+    if (pageCount < 1) {
+      throw new Error('В PDF не найдено страниц для распознавания.');
+    }
+    var pageLimit = Math.max(1, Number(ADMIN_OCR_PDF_MAX_PAGES) || 1);
+    var pagesToRender = Math.min(pageCount, pageLimit);
+    var pages = [];
+    for (var pageIndex = 1; pageIndex <= pagesToRender; pageIndex += 1) {
+      var page = await pdf.getPage(pageIndex);
+      var viewport = page.getViewport({ scale: 3 });
+      var canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.floor(viewport.width));
+      canvas.height = Math.max(1, Math.floor(viewport.height));
+      var context = canvas.getContext('2d');
+      if (!context) {
+        throw new Error('Браузер не смог подготовить страницу PDF.');
+      }
+      setAdminOcrStatus('Готовим страницу PDF ' + pageIndex + ' из ' + pagesToRender + '…', 'info');
+      await page.render({ canvasContext: context, viewport: viewport }).promise;
+      var blob = await canvasToAdminOcrBlob(canvas);
+      canvas.width = 1;
+      canvas.height = 1;
+      pages.push({
+        page: pageIndex,
+        blob: blob
+      });
+    }
+    return {
+      pages: pages,
+      totalPages: pdf.numPages || pageCount,
+      pagesLimit: pageLimit
+    };
+  }
+
+  function requestAdminOcrImage(file, fileName, pageNumber) {
+    var formData = new FormData();
+    formData.append('action', 'ocr_test');
+    formData.append('organization', state.organization || '');
+    if (pageNumber) {
+      formData.append('page', String(pageNumber));
+    }
+    formData.append('file', file, fileName || 'ocr-page.png');
+    appendTelegramUserIdToFormData(formData);
+    return fetch(buildApiUrl('ocr_test', { organization: state.organization || '' }), {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: formData
+    }).then(handleResponse);
+  }
+
+  async function requestAdminServerOcr() {
+    var ocrState = ensureAdminOcrState();
+    if (!ocrState.file) {
+      throw new Error('Файл не выбран.');
+    }
+
+    if (ocrState.fileType !== 'pdf') {
+      return requestAdminOcrImage(ocrState.file, ocrState.fileName || 'ocr-image');
+    }
+
+    var rendered = await renderAdminPdfPagesToImages(ocrState.file);
+    var pageTexts = [];
+    var firstError = '';
+    for (var index = 0; index < rendered.pages.length; index += 1) {
+      var item = rendered.pages[index];
+      setAdminOcrStatus('Распознаём страницу ' + item.page + ' из ' + rendered.pages.length + '…', 'info');
+      var data = await requestAdminOcrImage(item.blob, 'page-' + item.page + '.png', item.page);
+      var text = data && data.text ? normalizeAdminOcrText(data.text) : '';
+      if (text) {
+        pageTexts.push('--- Страница ' + item.page + ' ---\n' + text);
+      } else if (!firstError && data && data.error) {
+        firstError = String(data.error);
+      }
+    }
+
+    return {
+      text: normalizeAdminOcrText(pageTexts.join('\n\n')),
+      method: 'tesseract:pdf-pages',
+      pagesProcessed: rendered.pages.length,
+      totalPages: rendered.totalPages,
+      pagesLimit: rendered.pagesLimit,
+      serverOk: pageTexts.length > 0,
+      error: firstError
+    };
+  }
+
+  function requestAdminOcrStatus() {
+    var formData = new FormData();
+    formData.append('action', 'ocr_status');
+    formData.append('organization', state.organization || '');
+    appendTelegramUserIdToFormData(formData);
+    return fetch(buildApiUrl('ocr_status', { organization: state.organization || '' }), {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: formData
+    }).then(handleResponse);
+  }
+
+  function requestAdminOcrBackgroundRun() {
+    var payload = {
+      action: 'ocr_background_run',
+      organization: state.organization || '',
+      limit: 1
+    };
+    mergeTelegramUserId(payload);
+    return fetch(buildApiUrl('ocr_background_run', { organization: state.organization || '' }), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify(payload)
+    }).then(handleResponse);
+  }
+
+  function formatAdminOcrDependencyStatus(status) {
+    status = status && typeof status === 'object' ? status : {};
+    return [
+      'tesseract: ' + (status.tesseractAvailable ? 'есть' : 'нет'),
+      'pdftoppm: ' + (status.pdftoppmAvailable ? 'есть' : 'нет'),
+      'docx: ' + (status.zipArchiveAvailable && status.domDocumentAvailable ? 'есть' : 'нет')
+    ].join(', ');
+  }
+
+  function runAdminOcrAction(action) {
+    var ocrState = ensureAdminOcrState();
+    if (ocrState.running) {
+      return Promise.resolve();
+    }
+    if (action === 'server-status') {
+      ocrState.running = action;
+      setAdminOcrStatus('Проверяю серверный OCR…', 'info');
+      updateAdminOcrPanel();
+      return requestAdminOcrStatus().then(function(data) {
+        ocrState.limits = data && data.limits && typeof data.limits === 'object' ? data.limits : ocrState.limits;
+        ocrState.monitoring = data && data.monitoring && typeof data.monitoring === 'object' ? data.monitoring : ocrState.monitoring;
+        if (ocrState.limits && ocrState.limits.maxPdfPagesPerFile) {
+          ADMIN_OCR_PDF_MAX_PAGES = Math.max(1, Number(ocrState.limits.maxPdfPagesPerFile) || ADMIN_OCR_PDF_MAX_PAGES);
+        }
+        var status = data && data.status ? data.status : {};
+        var message = data && data.message ? String(data.message) : 'Проверка серверного OCR завершена.';
+        message += ' ' + formatAdminOcrDependencyStatus(status) + '.';
+        setAdminOcrStatus(message, data && data.ready ? 'success' : 'error');
+      }).catch(function(error) {
+        setAdminOcrStatus(error && error.message ? error.message : 'Не удалось проверить серверный OCR.', 'error');
+        throw error;
+      }).finally(function() {
+        ocrState.running = '';
+        updateAdminOcrPanel();
+      });
+    }
+    if (action === 'background-run') {
+      ocrState.running = action;
+      setAdminOcrStatus('Запускаю фоновую OCR-обработку одного файла…', 'info');
+      updateAdminOcrPanel();
+      return requestAdminOcrBackgroundRun().then(function(data) {
+        ocrState.monitoring = data && data.monitoring && typeof data.monitoring === 'object' ? data.monitoring : ocrState.monitoring;
+        var accepted = Number(data && data.accepted) || 0;
+        setAdminOcrStatus(
+          data && data.message ? String(data.message) : (accepted > 0 ? 'Фоновый OCR запущен.' : 'Нет файлов для фонового OCR.'),
+          accepted > 0 ? 'success' : 'info'
+        );
+        window.setTimeout(function() {
+          requestAdminOcrStatus().then(function(statusData) {
+            ocrState.limits = statusData && statusData.limits && typeof statusData.limits === 'object' ? statusData.limits : ocrState.limits;
+            ocrState.monitoring = statusData && statusData.monitoring && typeof statusData.monitoring === 'object' ? statusData.monitoring : ocrState.monitoring;
+            updateAdminOcrPanel();
+          }).catch(function(error) {
+            docsLogger.warn('Не удалось обновить OCR-мониторинг:', error);
+          });
+        }, 5000);
+      }).catch(function(error) {
+        setAdminOcrStatus(error && error.message ? error.message : 'Не удалось запустить фоновый OCR.', 'error');
+        throw error;
+      }).finally(function() {
+        ocrState.running = '';
+        updateAdminOcrPanel();
+      });
+    }
+    if (!ocrState.file) {
+      setAdminOcrStatus('Сначала выберите файл.', 'error');
+      updateAdminOcrPanel();
+      return Promise.reject(new Error('Файл не выбран.'));
+    }
+    ocrState.running = action;
+    setAdminOcrStatus('Запускаем распознавание…', 'info');
+    updateAdminOcrPanel();
+
+    var runner = requestAdminServerOcr().then(function(data) {
+      var title = 'OCR';
+      var text = data && data.text ? String(data.text) : '';
+      var metaParts = [];
+      if (data && data.method) {
+        metaParts.push(String(data.method));
+      }
+      if (data && data.pagesProcessed) {
+        metaParts.push('страниц: ' + data.pagesProcessed);
+      }
+      if (data && data.totalPages && data.pagesLimit && Number(data.totalPages) > Number(data.pagesLimit)) {
+        metaParts.push('лимит PDF: первые ' + data.pagesLimit + ' из ' + data.totalPages);
+      } else if (data && data.pagesLimit) {
+        metaParts.push('лимит PDF: ' + data.pagesLimit);
+      }
+      saveAdminOcrResult('server-ocr', title, text, metaParts.join(', '), data && data.error ? String(data.error) : '');
+      setAdminOcrStatus(text ? 'Текст распознан.' : (data && data.error ? String(data.error) : 'OCR не вернул текст.'), text ? 'success' : 'error');
+    });
+
+    return runner.catch(function(error) {
+      var message = error && error.message ? error.message : 'OCR завершился с ошибкой.';
+      saveAdminOcrResult(action, action, '', '', message);
+      setAdminOcrStatus(message, 'error');
+      throw error;
+    }).finally(function() {
+      ocrState.running = '';
+      updateAdminOcrPanel();
+    });
+  }
+
+  function createAdminOcrActionButton(action, label, disabled) {
+    var button = createElement('button', 'documents-ocr-modal__button', label);
+    button.type = 'button';
+    button.setAttribute('data-ocr-action', action);
+    button.disabled = Boolean(disabled);
+    return button;
+  }
+
+  function createAdminOcrResultCard(result, selected) {
+    var card = createElement('button', 'documents-ocr-modal__result-card');
+    card.type = 'button';
+    card.setAttribute('data-ocr-select', result.key);
+    if (selected) {
+      card.classList.add('is-selected');
+    }
+    var head = createElement('div', 'documents-ocr-modal__result-head');
+    head.appendChild(createElement('div', 'documents-ocr-modal__result-title', result.title || result.key));
+    head.appendChild(createElement('div', 'documents-ocr-modal__result-meta', result.text ? String(result.text.length) + ' симв.' : 'ошибка'));
+    card.appendChild(head);
+    var meta = result.error || result.meta || '';
+    card.appendChild(createElement('div', 'documents-ocr-modal__result-meta', meta));
+    card.appendChild(createElement('div', 'documents-ocr-modal__result-text', result.text || result.error || 'Текста нет.'));
+    return card;
+  }
+
+  function updateAdminOcrPanel() {
+    ensureAdminModal();
+    var ocrState = ensureAdminOcrState();
+    if (adminElements.ocrButton) {
+      adminElements.ocrButton.disabled = !state.organization;
+    }
+    if (adminElements.ocrCopyButton) {
+      var selected = ocrState.selectedResult && ocrState.results[ocrState.selectedResult] ? ocrState.results[ocrState.selectedResult] : null;
+      adminElements.ocrCopyButton.disabled = !selected || !selected.text;
+    }
+    if (!adminElements.ocrBody) {
+      return;
+    }
+    adminElements.ocrBody.innerHTML = '';
+
+    var controls = createElement('section', 'documents-ocr-modal__controls');
+    var fileBox = createElement('div', 'documents-ocr-modal__file');
+    fileBox.appendChild(createElement('div', 'documents-ocr-modal__file-name', ocrState.fileName || 'Файл не выбран'));
+    var selectedTypeLabel = 'Изображение';
+    if (ocrState.fileType === 'pdf') {
+      selectedTypeLabel = 'PDF';
+    } else if (ocrState.fileType === 'docx') {
+      selectedTypeLabel = 'Word DOCX';
+    }
+    var fileMeta = ocrState.file
+      ? (selectedTypeLabel + ' • ' + formatTemplateSize(ocrState.file.size || 0))
+      : 'PDF, DOCX, PNG, JPG, WEBP, BMP, TIFF';
+    fileBox.appendChild(createElement('div', 'documents-ocr-modal__file-meta', fileMeta));
+    controls.appendChild(fileBox);
+
+    var serverGroup = createElement('div', 'documents-ocr-modal__group');
+    serverGroup.appendChild(createElement('div', 'documents-ocr-modal__group-title', 'Текст из файла'));
+    serverGroup.appendChild(createAdminOcrActionButton('server-status', 'Обновить мониторинг', Boolean(ocrState.running)));
+    serverGroup.appendChild(createAdminOcrActionButton('background-run', 'Запустить фоновый OCR', Boolean(ocrState.running) || !state.organization));
+    serverGroup.appendChild(createAdminOcrActionButton('server-ocr', 'Распознать текст', !ocrState.file || Boolean(ocrState.running)));
+    controls.appendChild(serverGroup);
+
+    if (ocrState.monitoring && typeof ocrState.monitoring === 'object') {
+      controls.appendChild(createAdminS3OcrMonitor(ocrState.monitoring));
+    }
+
+    var resultList = createElement('div', 'documents-ocr-modal__result-list');
+    var resultKeys = Object.keys(ocrState.results || {});
+    if (resultKeys.length) {
+      resultKeys.forEach(function(key) {
+        resultList.appendChild(createAdminOcrResultCard(ocrState.results[key], key === ocrState.selectedResult));
+      });
+    } else {
+      resultList.appendChild(createElement('div', 'documents-ocr-modal__empty', 'Результатов пока нет. Нажмите «Распознать текст».'));
+    }
+    controls.appendChild(resultList);
+
+    var resultPanel = createElement('section', 'documents-ocr-modal__result');
+    var selectedResult = ocrState.selectedResult && ocrState.results[ocrState.selectedResult] ? ocrState.results[ocrState.selectedResult] : null;
+    resultPanel.appendChild(createElement('div', 'documents-ocr-modal__group-title', selectedResult ? selectedResult.title : 'Итоговый текст'));
+    var textarea = document.createElement('textarea');
+    textarea.className = 'documents-ocr-modal__textarea';
+    textarea.readOnly = true;
+    textarea.value = selectedResult && selectedResult.text ? selectedResult.text : '';
+    textarea.placeholder = 'Здесь появится текст выбранного результата.';
+    resultPanel.appendChild(textarea);
+
+    adminElements.ocrBody.appendChild(controls);
+    adminElements.ocrBody.appendChild(resultPanel);
+    setAdminOcrStatus(ocrState.status, ocrState.statusType);
+  }
+
+  function copyAdminOcrSelectedText() {
+    var ocrState = ensureAdminOcrState();
+    var selected = ocrState.selectedResult && ocrState.results[ocrState.selectedResult] ? ocrState.results[ocrState.selectedResult] : null;
+    var text = selected && selected.text ? selected.text : '';
+    if (!text) {
+      setAdminOcrStatus('Нет текста для копирования.', 'error');
+      return;
+    }
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      navigator.clipboard.writeText(text)
+        .then(function() {
+          setAdminOcrStatus('Текст скопирован.', 'success');
+        })
+        .catch(function() {
+          setAdminOcrStatus('Не удалось скопировать автоматически. Выделите текст вручную.', 'error');
+        });
+      return;
+    }
+    setAdminOcrStatus('Автокопирование недоступно. Выделите текст вручную.', 'error');
+  }
+
   function ensureAdminS3State() {
     if (!state.admin.s3) {
       state.admin.s3 = {
@@ -12674,6 +13444,7 @@
         listingError: '',
         listingLoadedAt: 0,
         listingPromise: null,
+        reading: false,
         promise: null
       };
     }
@@ -12701,6 +13472,9 @@
     if (!('listingPromise' in state.admin.s3)) {
       state.admin.s3.listingPromise = null;
     }
+    if (!('reading' in state.admin.s3)) {
+      state.admin.s3.reading = false;
+    }
     return state.admin.s3;
   }
 
@@ -12725,6 +13499,51 @@
     metric.appendChild(createElement('div', 'documents-s3-modal__metric-label', label));
     metric.appendChild(createElement('div', 'documents-s3-modal__metric-value', value));
     return metric;
+  }
+
+  function createAdminS3OcrMetric(label, value) {
+    var item = createElement('div', 'documents-s3-modal__ocr-item');
+    item.appendChild(createElement('div', 'documents-s3-modal__ocr-label', label));
+    item.appendChild(createElement('div', 'documents-s3-modal__ocr-value', value));
+    return item;
+  }
+
+  function createAdminS3OcrMonitor(ocr) {
+    var data = ocr && typeof ocr === 'object' ? ocr : {};
+    var statuses = data.statuses && typeof data.statuses === 'object' ? data.statuses : {};
+    var limits = data.limits && typeof data.limits === 'object' ? data.limits : {};
+    var panel = createElement('section', 'documents-s3-modal__ocr');
+    var head = createElement('div', 'documents-s3-modal__ocr-head');
+    head.appendChild(createElement('div', 'documents-s3-modal__ocr-title', 'OCR мониторинг'));
+    head.appendChild(createElement('div', 'documents-s3-modal__ocr-message', data.message || 'Данных OCR пока нет.'));
+    panel.appendChild(head);
+
+    var grid = createElement('div', 'documents-s3-modal__ocr-grid');
+    grid.appendChild(createAdminS3OcrMetric('Файлов', String(data.totalFiles || 0)));
+    grid.appendChild(createAdminS3OcrMetric('Готово', String(statuses.ready || 0)));
+    grid.appendChild(createAdminS3OcrMetric('В очереди', String(statuses.queued || 0)));
+    grid.appendChild(createAdminS3OcrMetric('Не запускалось', String(statuses.not_started || 0)));
+    grid.appendChild(createAdminS3OcrMetric('Ошибки', String((statuses.error || 0) + (statuses.dependency_missing || 0))));
+    grid.appendChild(createAdminS3OcrMetric('Кэш OCR', String(data.cacheItems || 0)));
+    grid.appendChild(createAdminS3OcrMetric('Попадания кэша', String(data.cacheHits || 0)));
+    grid.appendChild(createAdminS3OcrMetric('Файлов за запрос', String(limits.backgroundFilesPerRequest || 1)));
+    grid.appendChild(createAdminS3OcrMetric('PDF страниц', String(limits.maxPdfPagesPerFile || ADMIN_OCR_PDF_MAX_PAGES)));
+    panel.appendChild(grid);
+
+    if (Array.isArray(data.errors) && data.errors.length) {
+      var errors = createElement('div', 'documents-s3-modal__ocr-errors');
+      data.errors.slice(0, 4).forEach(function(entry) {
+        var parts = [
+          entry && entry.file ? String(entry.file) : 'Файл',
+          entry && entry.record ? String(entry.record) : '',
+          entry && entry.error ? String(entry.error) : ''
+        ].filter(Boolean);
+        errors.appendChild(createElement('div', 'documents-s3-modal__ocr-error', parts.join(' | ')));
+      });
+      panel.appendChild(errors);
+    }
+
+    return panel;
   }
 
   function normalizeAdminS3BrowserPath(value) {
@@ -12887,6 +13706,7 @@
     var quick = createElement('div', 'documents-s3-modal__quick');
     quick.appendChild(createAdminS3QuickButton('Корень', '', path));
     quick.appendChild(createAdminS3QuickButton('Telegram JSON', 'js/documents/telegram-user-tasks/users', path));
+    quick.appendChild(createAdminS3QuickButton('OCR кэш', 'js/documents/telegram-user-tasks', path));
     quick.appendChild(createAdminS3QuickButton('Тесты S3', '.s3-test', path));
     if (state.organization) {
       quick.appendChild(createAdminS3QuickButton('Текущая организация', String(state.organization).trim().replace(/\s+/g, '_'), path));
@@ -12965,7 +13785,14 @@
         var nameButton = createElement('button', 'documents-s3-modal__item-button');
         nameButton.type = 'button';
         nameButton.setAttribute('data-s3-type', isDirectory ? 'directory' : 'file');
-        nameButton.setAttribute(isDirectory ? 'data-s3-path' : 'data-s3-copy', isDirectory ? itemKey : (item.remoteKey || item.path || ''));
+        nameButton.setAttribute(isDirectory ? 'data-s3-path' : 'data-s3-read', itemKey);
+        if (!isDirectory) {
+          nameButton.setAttribute('data-s3-name', item.name || itemKey);
+          if (Number(item.size || 0) > ADMIN_S3_READ_MAX_BYTES) {
+            nameButton.disabled = true;
+            nameButton.title = 'Файл больше лимита чтения в модальном окне.';
+          }
+        }
         nameButton.appendChild(createElement('span', 'documents-s3-modal__item-icon', isDirectory ? 'DIR' : 'FILE'));
         nameButton.appendChild(createElement('span', 'documents-s3-modal__item-name', item.name || 'без имени'));
         nameCell.appendChild(nameButton);
@@ -12981,6 +13808,16 @@
           openButton.type = 'button';
           openButton.setAttribute('data-s3-path', item.path || '');
           actionWrap.appendChild(openButton);
+        } else {
+          var readButton = createElement('button', 'documents-s3-modal__mini-button', 'Прочитать');
+          readButton.type = 'button';
+          readButton.disabled = s3State.reading || Number(item.size || 0) > ADMIN_S3_READ_MAX_BYTES;
+          if (Number(item.size || 0) > ADMIN_S3_READ_MAX_BYTES) {
+            readButton.title = 'Файл больше лимита чтения в модальном окне.';
+          }
+          readButton.setAttribute('data-s3-read', item.path || itemKey);
+          readButton.setAttribute('data-s3-name', item.name || item.path || itemKey);
+          actionWrap.appendChild(readButton);
         }
         var copyButton = createElement('button', 'documents-s3-modal__mini-button', 'Ключ');
         copyButton.type = 'button';
@@ -13019,11 +13856,11 @@
       adminElements.s3Button.disabled = !state.organization;
     }
     if (adminElements.s3RefreshButton) {
-      adminElements.s3RefreshButton.disabled = s3State.loading || s3State.testing || s3State.deleting || s3State.listingLoading;
+      adminElements.s3RefreshButton.disabled = s3State.loading || s3State.testing || s3State.deleting || s3State.listingLoading || s3State.reading;
       adminElements.s3RefreshButton.textContent = (s3State.loading || s3State.listingLoading) ? 'Обновляем…' : 'Обновить';
     }
     if (adminElements.s3TestButton) {
-      adminElements.s3TestButton.disabled = s3State.loading || s3State.testing || s3State.deleting || s3State.listingLoading || !state.organization;
+      adminElements.s3TestButton.disabled = s3State.loading || s3State.testing || s3State.deleting || s3State.listingLoading || s3State.reading || !state.organization;
       adminElements.s3TestButton.textContent = s3State.testing ? 'Проверяем…' : 'Проверить загрузку';
     }
     if (!adminElements.s3Summary) {
@@ -13045,9 +13882,13 @@
     grid.appendChild(createAdminS3Metric('Оценка S3', storage.coldLabel || '0 Б'));
     adminElements.s3Summary.appendChild(grid);
 
+    adminElements.s3Summary.appendChild(createAdminS3OcrMonitor(storage.ocr));
+
     adminElements.s3Summary.appendChild(createAdminS3Explorer(s3State));
 
-    if (s3State.deleting) {
+    if (s3State.reading) {
+      setAdminS3Status('Читаем файл из S3…', 'info');
+    } else if (s3State.deleting) {
       setAdminS3Status('Удаляем объект из S3…', 'info');
     } else if (s3State.loading || s3State.listingLoading) {
       setAdminS3Status('Получаем статус S3…', 'info');
@@ -13223,6 +14064,137 @@
       })
       .finally(function() {
         s3State.deleting = false;
+        updateAdminS3Panel();
+      });
+  }
+
+  function openAdminS3ReaderModal(file) {
+    var data = file && typeof file === 'object' ? file : {};
+    var modal = createElement('div', 'documents-s3-reader');
+    var panel = createElement('div', 'documents-s3-reader__panel');
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-modal', 'true');
+    var header = createElement('div', 'documents-s3-reader__header');
+    var titleWrap = createElement('div', '');
+    var title = createElement('h3', 'documents-s3-reader__title', data.name || data.path || 'S3 файл');
+    var meta = createElement('div', 'documents-s3-reader__meta', [
+      data.label || formatFileSize(data.bytes || 0),
+      data.path || '',
+      data.remotePath || data.key || ''
+    ].filter(Boolean).join(' | '));
+    var actions = createElement('div', 'documents-s3-reader__actions');
+    var copyButton = createElement('button', 'documents-s3-modal__mini-button', 'Копировать');
+    var closeButton = createElement('button', 'documents-s3-modal__mini-button', 'Закрыть');
+    var status = createElement('div', 'documents-s3-reader__status');
+    var body = createElement('div', 'documents-s3-reader__body');
+    var text = createElement('pre', 'documents-s3-reader__text');
+    text.textContent = typeof data.text === 'string' && data.text ? data.text : 'Файл пустой.';
+
+    copyButton.type = 'button';
+    closeButton.type = 'button';
+    status.setAttribute('role', 'status');
+    titleWrap.appendChild(title);
+    titleWrap.appendChild(meta);
+    actions.appendChild(copyButton);
+    actions.appendChild(closeButton);
+    header.appendChild(titleWrap);
+    header.appendChild(actions);
+    body.appendChild(text);
+    panel.appendChild(header);
+    panel.appendChild(status);
+    panel.appendChild(body);
+    modal.appendChild(panel);
+    document.body.appendChild(modal);
+
+    function closeReader() {
+      modal.remove();
+    }
+
+    function setReaderStatus(message, type) {
+      status.textContent = message || '';
+      status.classList.toggle('is-visible', Boolean(message));
+      status.classList.toggle('documents-s3-reader__status--error', type === 'error');
+    }
+
+    copyButton.addEventListener('click', function() {
+      var value = text.textContent || '';
+      if (!value) {
+        setReaderStatus('Нечего копировать.', 'error');
+        return;
+      }
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        navigator.clipboard.writeText(value)
+          .then(function() {
+            setReaderStatus('Текст скопирован.');
+          })
+          .catch(function() {
+            setReaderStatus('Не удалось скопировать автоматически.', 'error');
+          });
+        return;
+      }
+      setReaderStatus('Автокопирование недоступно в этом браузере.', 'error');
+    });
+    closeButton.addEventListener('click', closeReader);
+    modal.addEventListener('click', function(event) {
+      if (event.target === modal) {
+        closeReader();
+      }
+    });
+    if (typeof closeButton.focus === 'function') {
+      closeButton.focus();
+    }
+  }
+
+  function readAdminS3File(path, name) {
+    var s3State = ensureAdminS3State();
+    var targetPath = normalizeAdminS3BrowserPath(path);
+    if (s3State.reading) {
+      return Promise.resolve(null);
+    }
+    if (!targetPath) {
+      setAdminS3Status('Файл S3 не выбран.', 'error');
+      return Promise.reject(new Error('Файл S3 не выбран.'));
+    }
+    if (!state.organization) {
+      setAdminS3Status('Сначала выберите организацию.', 'error');
+      return Promise.reject(new Error('Сначала выберите организацию.'));
+    }
+
+    s3State.reading = true;
+    updateAdminS3Panel();
+    setAdminS3Status('Читаем файл из S3…', 'info');
+    var payload = {
+      action: 'storage_s3_read',
+      organization: state.organization,
+      scope: 'all',
+      path: targetPath
+    };
+    mergeTelegramUserId(payload);
+
+    return fetch(buildApiUrl('storage_s3_read'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify(payload)
+    })
+      .then(handleResponse)
+      .then(function(data) {
+        var file = data && data.file && typeof data.file === 'object' ? data.file : {};
+        if (!file.name && name) {
+          file.name = name;
+        }
+        openAdminS3ReaderModal(file);
+        setAdminS3Status('Файл прочитан из S3.', 'success');
+        return file;
+      })
+      .catch(function(error) {
+        var message = error && error.message ? error.message : 'Не удалось прочитать файл S3.';
+        setAdminS3Status(message, 'error');
+        showMessage('error', message);
+        throw error;
+      })
+      .finally(function() {
+        s3State.reading = false;
         updateAdminS3Panel();
       });
   }
@@ -13568,6 +14540,43 @@
     refreshAdminS3Panel().catch(function(error) {
       docsLogger.warn('Не удалось загрузить статус S3:', error);
     });
+  }
+
+  function openAdminOcrModal() {
+    ensureAdminModal();
+    var ocrState = ensureAdminOcrState();
+    if (!state.organization) {
+      setAdminOcrStatus('Сначала выберите организацию.', 'error');
+      return;
+    }
+    ocrState.visible = true;
+    if (adminElements.ocrModal) {
+      adminElements.ocrModal.classList.add('is-visible');
+      adminElements.ocrModal.setAttribute('aria-hidden', 'false');
+    }
+    if (!ocrState.status) {
+      setAdminOcrStatus('Выберите файл и запустите нужные варианты OCR.', 'info');
+    }
+    updateAdminOcrPanel();
+    if (!ocrState.monitoring && !ocrState.running) {
+      runAdminOcrAction('server-status').catch(function(error) {
+        docsLogger.warn('Не удалось загрузить OCR-мониторинг:', error);
+      });
+    }
+  }
+
+  function closeAdminOcrModal(options) {
+    ensureAdminModal();
+    var ocrState = ensureAdminOcrState();
+    ocrState.visible = false;
+    if (adminElements.ocrModal) {
+      adminElements.ocrModal.classList.remove('is-visible');
+      adminElements.ocrModal.setAttribute('aria-hidden', 'true');
+    }
+    var shouldRestoreFocus = !(options && options.skipFocus);
+    if (shouldRestoreFocus && adminElements.ocrButton && typeof adminElements.ocrButton.focus === 'function') {
+      adminElements.ocrButton.focus();
+    }
   }
 
   function closeAdminS3Modal(options) {
@@ -13939,11 +14948,14 @@
       ensureAdminUserLogState().visible = false;
       ensureAdminTemplateState().visible = false;
       ensureAdminS3State().visible = false;
+      ensureAdminOcrState().visible = false;
       closeAdminTemplateModal({ skipFocus: true });
       closeAdminS3Modal({ skipFocus: true });
+      closeAdminOcrModal({ skipFocus: true });
       updateAdminLogPanel();
       updateAdminTemplatePanel();
       updateAdminS3Panel();
+      updateAdminOcrPanel();
       adminElements.modal.classList.add('is-visible');
       adminElements.modal.setAttribute('aria-hidden', 'false');
       document.addEventListener('keydown', handleAdminKeydown, true);
@@ -13979,9 +14991,11 @@
     ensureAdminUserLogState().visible = false;
     ensureAdminTemplateState().visible = false;
     ensureAdminS3State().visible = false;
+    ensureAdminOcrState().visible = false;
     updateAdminLogPanel();
     closeAdminTemplateModal({ skipFocus: true });
     closeAdminS3Modal({ skipFocus: true });
+    closeAdminOcrModal({ skipFocus: true });
     if (lastFocusedElement && typeof lastFocusedElement.focus === 'function') {
       lastFocusedElement.focus();
     }
@@ -13995,6 +15009,8 @@
         closeAdminTemplateModal();
       } else if (ensureAdminS3State().visible) {
         closeAdminS3Modal();
+      } else if (ensureAdminOcrState().visible) {
+        closeAdminOcrModal();
       } else if (ensureAdminUserLogState().visible) {
         closeAdminLogPanel();
       } else {
@@ -23277,7 +24293,8 @@
     return postOutgoingRegistryAction(action, payload);
   }
 
-  var DOCUMENTS_UPLOAD_BATCH_SIZE = 4;
+  // OCR на сервере обрабатывает один файл за запрос, поэтому вложения отправляем по одному.
+  var DOCUMENTS_UPLOAD_BATCH_SIZE = 1;
   var DOCUMENTS_UPLOAD_STEP_DELAY = 0;
   var DOCUMENTS_ATTACHMENT_VISIBLE_LIMIT = 30;
   var DOCUMENTS_ATTACHMENT_MAX_FILE_SIZE = 25 * 1024 * 1024;
@@ -30731,6 +31748,15 @@
         var backgroundTaskCreated = false;
         var backgroundCreatedDocumentId = '';
         var backgroundPendingFiles = attachmentFiles.slice();
+        var backgroundFormClosed = false;
+        function closeBackgroundDocumentForm() {
+          if (backgroundFormClosed) {
+            return;
+          }
+          backgroundFormClosed = true;
+          setDocumentFormSubmitting(false);
+          closeModal(modal);
+        }
         if (attachmentFiles.length) {
           setSelectedAttachmentStates(
             attachmentFiles,
@@ -30805,8 +31831,7 @@
         });
 
         if (backgroundUploadActive) {
-          setDocumentFormSubmitting(false);
-          closeModal(modal);
+          closeBackgroundDocumentForm();
         }
 
         saveRequest
@@ -30873,6 +31898,9 @@
             if (!isEditMode && createdOrUpdatedDocumentId) {
               backgroundTaskCreated = true;
               backgroundCreatedDocumentId = createdOrUpdatedDocumentId;
+              if (backgroundUploadActive) {
+                closeBackgroundDocumentForm();
+              }
             }
             if (createdOrUpdatedDocumentId) {
               backgroundTaskSaved = true;
@@ -30967,7 +31995,7 @@
           })
           .catch(function(error) {
             var errorMessage = error && error.message ? error.message : 'повторите попытку.';
-            if (!backgroundUploadActive) {
+            if (!backgroundFormClosed) {
               setDocumentFormSubmitting(false);
             }
             updateSubmitButtonForDraftUploads();
@@ -30992,7 +32020,7 @@
                 message: errorMessage
               });
             }
-            if (!backgroundUploadActive) {
+            if (!backgroundUploadActive || !backgroundFormClosed) {
               showMessage('error', 'Не удалось сохранить документ: ' + errorMessage);
             }
           });
@@ -32286,6 +33314,19 @@
       listingPromise: null,
       promise: null
     };
+    state.admin.ocr = {
+      visible: false,
+      file: null,
+      fileName: '',
+      fileType: '',
+      running: '',
+      status: '',
+      statusType: 'info',
+      results: {},
+      selectedResult: '',
+      limits: null,
+      monitoring: null
+    };
     var initialColumnOrder = loadColumnOrderFromLocalStorage();
     if (initialColumnOrder && initialColumnOrder.length) {
       state.columnOrder = initialColumnOrder;
@@ -32483,6 +33524,19 @@
       listingLoadedAt: 0,
       listingPromise: null,
       promise: null
+    };
+    state.admin.ocr = {
+      visible: false,
+      file: null,
+      fileName: '',
+      fileType: '',
+      running: '',
+      status: '',
+      statusType: 'info',
+      results: {},
+      selectedResult: '',
+      limits: null,
+      monitoring: null
     };
 
     if (config.clearLocalStorage !== false) {
