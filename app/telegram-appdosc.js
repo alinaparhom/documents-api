@@ -7048,6 +7048,35 @@ function compactTaskSearchEntries(entries, fields, limit) {
   return result;
 }
 
+function compactTaskSearchFileEntries(entries, fields, limit) {
+  if (!Array.isArray(entries) || !Array.isArray(fields)) {
+    return [];
+  }
+  const result = [];
+  entries.forEach((entry) => {
+    if (result.length >= limit || !isPlainObject(entry)) {
+      return;
+    }
+    const compact = copyTaskSearchScalarFields(entry, fields, {});
+    if (isPlainObject(entry.coldStorage)) {
+      const coldStorage = copyTaskSearchScalarFields(entry.coldStorage, [
+        'provider',
+        'remote',
+        'key',
+        'status',
+        'updatedAt',
+      ], {});
+      if (Object.keys(coldStorage).length) {
+        compact.coldStorage = coldStorage;
+      }
+    }
+    if (Object.keys(compact).length) {
+      result.push(compact);
+    }
+  });
+  return result;
+}
+
 function resolveTaskSearchTextValue(value) {
   if (isPlainObject(value)) {
     return normalizeValue(value.summary || value.content || value.description || value.text || value.title || value.name || value.fullName || value.fio);
@@ -7066,6 +7095,7 @@ function buildTaskForCurrentSearchSnapshot(task) {
     'registryNumber',
     'documentNumber',
     'organization',
+    'documentFolder',
     'dueDate',
     'registrationDate',
     'documentDate',
@@ -7108,11 +7138,33 @@ function buildTaskForCurrentSearchSnapshot(task) {
     }
   });
 
-  const files = compactTaskSearchEntries(task.files, ['originalName', 'name', 'storedName', 'url', 'ocrText', 'ocrStatus', 'ocrError'], 16);
+  const ocrFileFields = [
+    'originalName',
+    'name',
+    'storedName',
+    'url',
+    'size',
+    'storageProvider',
+    'ocrSignature',
+    'ocrText',
+    'ocrSearchTerms',
+    'ocrStatus',
+    'ocrMethod',
+    'ocrQueuedAt',
+    'ocrUpdatedAt',
+    'ocrError',
+  ];
+  const files = compactTaskSearchFileEntries(task.files, ocrFileFields, 16);
   if (files.length) {
     compact.files = files;
   }
-  const responses = compactTaskSearchEntries(task.responses, ['originalName', 'name', 'storedName', 'textContent', 'comment', 'note', 'uploadedBy', 'ocrText', 'ocrStatus', 'ocrError'], 12);
+  const responses = compactTaskSearchFileEntries(task.responses, [
+    ...ocrFileFields,
+    'textContent',
+    'comment',
+    'note',
+    'uploadedBy',
+  ], 12);
   if (responses.length) {
     compact.responses = responses;
   }

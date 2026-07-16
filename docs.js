@@ -1394,7 +1394,11 @@
         results: {},
         selectedResult: '',
         limits: null,
-        monitoring: null
+        monitoring: null,
+        serverStatus: null,
+        monitorView: '',
+        testVisible: false,
+        refreshTimer: null
       }
     },
     resizeTimer: null,
@@ -11664,16 +11668,47 @@
       '.documents-s3-modal__metric{border:1px solid rgba(148,163,184,0.3);border-radius:14px;padding:12px;background:rgba(255,255,255,0.74);display:flex;flex-direction:column;gap:4px;min-width:0;}' +
       '.documents-s3-modal__metric-label{font-size:12px;font-weight:700;color:#64748b;line-height:1.3;}' +
       '.documents-s3-modal__metric-value{font-size:18px;font-weight:800;color:#0f172a;line-height:1.2;word-break:break-word;}' +
-      '.documents-s3-modal__ocr{border:1px solid rgba(20,184,166,.28);border-radius:14px;background:rgba(240,253,250,.78);padding:12px;display:grid;gap:10px;min-width:0;}' +
+      '.documents-s3-modal__ocr{border:1px solid rgba(20,184,166,.24);border-radius:14px;background:rgba(255,255,255,.9);padding:12px;display:grid;gap:10px;min-width:0;}' +
       '.documents-s3-modal__ocr-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;min-width:0;}' +
-      '.documents-s3-modal__ocr-title{font-size:13px;font-weight:900;color:#0f172a;line-height:1.25;}' +
-      '.documents-s3-modal__ocr-message{font-size:12px;font-weight:800;color:#0f766e;line-height:1.35;overflow-wrap:anywhere;text-align:right;}' +
-      '.documents-s3-modal__ocr-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:8px;}' +
-      '.documents-s3-modal__ocr-item{border:1px solid rgba(15,118,110,.16);border-radius:10px;background:rgba(255,255,255,.8);padding:8px;display:grid;gap:2px;min-width:0;}' +
+      '.documents-s3-modal__ocr-title-wrap{display:grid;gap:3px;min-width:0;}' +
+      '.documents-s3-modal__ocr-title{font-size:14px;font-weight:900;color:#0f172a;line-height:1.25;}' +
+      '.documents-s3-modal__ocr-message{font-size:12px;font-weight:700;color:#64748b;line-height:1.35;overflow-wrap:anywhere;}' +
+      '.documents-s3-modal__ocr-health{flex:0 0 auto;border-radius:999px;padding:6px 9px;font-size:11px;font-weight:900;line-height:1;background:#f1f5f9;color:#475569;}' +
+      '.documents-s3-modal__ocr-health--ready{background:#dcfce7;color:#047857;}' +
+      '.documents-s3-modal__ocr-health--warning{background:#fef3c7;color:#a16207;}' +
+      '.documents-s3-modal__ocr-health--error{background:#fee2e2;color:#b91c1c;}' +
+      '.documents-s3-modal__ocr-grid{display:grid;grid-template-columns:repeat(6,minmax(90px,1fr));gap:7px;}' +
+      '.documents-s3-modal__ocr-item{border:1px solid rgba(148,163,184,.2);border-radius:9px;background:#f8fafc;padding:7px 8px;display:grid;gap:2px;min-width:0;}' +
       '.documents-s3-modal__ocr-label{font-size:10px;font-weight:900;color:#64748b;text-transform:uppercase;letter-spacing:0;line-height:1.25;}' +
       '.documents-s3-modal__ocr-value{font-size:15px;font-weight:950;color:#0f172a;line-height:1.2;overflow-wrap:anywhere;}' +
       '.documents-s3-modal__ocr-errors{display:grid;gap:5px;}' +
       '.documents-s3-modal__ocr-error{font-size:12px;font-weight:800;line-height:1.35;color:#991b1b;background:rgba(254,242,242,.86);border:1px solid rgba(254,202,202,.86);border-radius:8px;padding:7px 8px;overflow-wrap:anywhere;}' +
+      '.documents-s3-modal__ocr-toolbar{display:flex;flex-wrap:wrap;gap:7px;}' +
+      '.documents-s3-modal__ocr-tabs{display:flex;gap:5px;overflow-x:auto;scrollbar-gutter:stable;padding-bottom:1px;}' +
+      '.documents-s3-modal__ocr-tab{flex:0 0 auto;min-height:30px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;color:#475569;padding:0 10px;font:inherit;font-size:11px;font-weight:900;cursor:pointer;}' +
+      '.documents-s3-modal__ocr-tab.is-active{border-color:#0f766e;background:#0f766e;color:#fff;}' +
+      '.documents-s3-modal__ocr-section{display:grid;gap:7px;min-width:0;}' +
+      '.documents-s3-modal__ocr-section-head{display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0;}' +
+      '.documents-s3-modal__ocr-section-title{font-size:12px;font-weight:950;color:#0f172a;line-height:1.25;}' +
+      '.documents-s3-modal__ocr-section-count{font-size:11px;font-weight:900;color:#64748b;line-height:1.25;}' +
+      '.documents-s3-modal__ocr-table-wrap{min-width:0;max-height:360px;overflow-x:auto;overflow-y:auto;scrollbar-gutter:stable;border:1px solid rgba(148,163,184,.24);border-radius:10px;background:#fff;}' +
+      '.documents-s3-modal__ocr-table{width:100%;min-width:780px;border-collapse:separate;border-spacing:0;font-size:12px;color:#334155;}' +
+      '.documents-s3-modal__ocr-table th{position:sticky;top:0;z-index:1;background:#f0fdfa;color:#0f766e;font-size:10px;text-align:left;text-transform:uppercase;letter-spacing:0;padding:8px;border-bottom:1px solid rgba(20,184,166,.22);}' +
+      '.documents-s3-modal__ocr-table td{padding:8px;border-bottom:1px solid rgba(20,184,166,.12);vertical-align:top;overflow-wrap:anywhere;}' +
+      '.documents-s3-modal__ocr-table tr:last-child td{border-bottom:0;}' +
+      '.documents-s3-modal__ocr-table td:nth-child(2){max-width:360px;}' +
+      '.documents-s3-modal__ocr-file-name{font-weight:850;color:#0f172a;line-height:1.3;overflow-wrap:anywhere;}' +
+      '.documents-s3-modal__ocr-cell-meta{display:block;margin-top:3px;color:#64748b;font-size:10px;font-weight:700;line-height:1.3;overflow-wrap:anywhere;}' +
+      '.documents-s3-modal__ocr-badge{display:inline-flex;border-radius:999px;padding:4px 7px;background:#f1f5f9;color:#475569;font-size:10px;font-weight:900;line-height:1.1;white-space:nowrap;}' +
+      '.documents-s3-modal__ocr-badge--ready{background:#dcfce7;color:#047857;}' +
+      '.documents-s3-modal__ocr-badge--queued,.documents-s3-modal__ocr-badge--processing{background:#dbeafe;color:#1d4ed8;}' +
+      '.documents-s3-modal__ocr-badge--error,.documents-s3-modal__ocr-badge--dependency_missing{background:#fee2e2;color:#b91c1c;}' +
+      '.documents-s3-modal__ocr-badge--skipped,.documents-s3-modal__ocr-badge--unsupported{background:#fef3c7;color:#a16207;}' +
+      '.documents-s3-modal__ocr-row-actions{display:flex;flex-wrap:wrap;gap:5px;}' +
+      '.documents-s3-modal__ocr-diagnostics{border:1px solid #fecaca;border-radius:9px;background:#fff7f7;color:#991b1b;overflow:hidden;}' +
+      '.documents-s3-modal__ocr-dependencies{border-color:#cbd5e1;background:#f8fafc;color:#334155;}' +
+      '.documents-s3-modal__ocr-diagnostics-summary{cursor:pointer;padding:8px 10px;font-size:11px;font-weight:850;line-height:1.35;overflow-wrap:anywhere;}' +
+      '.documents-s3-modal__ocr-diagnostics-content{display:grid;gap:5px;padding:0 8px 8px;}' +
       '.documents-s3-modal__explorer{min-height:0;border:1px solid rgba(148,163,184,0.3);border-radius:14px;background:rgba(255,255,255,0.74);overflow:hidden;display:grid;grid-template-rows:auto auto auto auto minmax(0,1fr) auto;}' +
       '.documents-s3-modal__explorer-head{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(148,163,184,0.22);}' +
       '.documents-s3-modal__explorer-title{font-size:13px;font-weight:900;color:#0f172a;}' +
@@ -11719,9 +11754,9 @@
       '.documents-s3-modal__button--primary{background:linear-gradient(120deg,#2563eb,#38bdf8);color:#fff;box-shadow:0 16px 28px rgba(37,99,235,0.28);}' +
       '.documents-s3-modal__button--secondary{background:rgba(148,163,184,0.18);color:#0f172a;}' +
       '.documents-s3-modal__button:hover:not(:disabled){transform:translateY(-1px);}' +
-      '.documents-ocr-modal{position:fixed;inset:0;z-index:1960;display:none;align-items:stretch;justify-content:stretch;background:#fff;color:#0f172a;}' +
+      '.documents-ocr-modal{position:fixed;inset:0;z-index:1960;display:none;align-items:center;justify-content:center;padding:16px;background:rgba(15,23,42,.38);backdrop-filter:blur(8px);color:#0f172a;}' +
       '.documents-ocr-modal.is-visible{display:flex;}' +
-      '.documents-ocr-modal__panel{width:100%;height:100vh;height:100dvh;max-height:100dvh;display:grid;grid-template-rows:auto auto minmax(0,1fr);overflow:hidden;background:#fff;}' +
+      '.documents-ocr-modal__panel{width:min(1180px,calc(100vw - 24px));height:min(820px,calc(100dvh - 24px));max-height:calc(100dvh - 24px);display:grid;grid-template-rows:auto auto minmax(0,1fr);overflow:hidden;border:1px solid rgba(226,232,240,.95);border-radius:18px;background:#fff;box-shadow:0 28px 64px rgba(15,23,42,.26);}' +
       '.documents-ocr-modal__header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:14px 18px;border-bottom:1px solid #e2e8f0;background:#fff;}' +
       '.documents-ocr-modal__title{margin:0;font-size:20px;line-height:1.2;font-weight:900;color:#0f172a;}' +
       '.documents-ocr-modal__subtitle{margin:5px 0 0;color:#64748b;font-size:13px;line-height:1.4;font-weight:700;}' +
@@ -11735,13 +11770,15 @@
       '.documents-ocr-modal__status.is-visible{display:block;}' +
       '.documents-ocr-modal__status--error{border-color:#fecaca;background:#fff1f2;color:#b91c1c;}' +
       '.documents-ocr-modal__status--success{border-color:#bbf7d0;background:#ecfdf5;color:#047857;}' +
-      '.documents-ocr-modal__body{min-height:0;overflow:auto;scrollbar-gutter:stable;padding:12px 18px 18px;display:grid;grid-template-columns:minmax(260px,360px) minmax(0,1fr);gap:12px;align-content:start;background:#f8fafc;}' +
+      '.documents-ocr-modal__body{min-height:0;overflow:auto;scrollbar-gutter:stable;padding:12px 18px 18px;display:grid;grid-template-columns:minmax(260px,340px) minmax(0,1fr);gap:12px;align-content:start;background:#f8fafc;}' +
+      '.documents-ocr-modal__monitor{grid-column:1 / -1;}' +
       '.documents-ocr-modal__controls,.documents-ocr-modal__result{border:1px solid #d1d5db;border-radius:8px;background:#fff;padding:12px;display:flex;flex-direction:column;gap:10px;min-width:0;}' +
       '.documents-ocr-modal__file{border:1px dashed #94a3b8;border-radius:8px;background:#f8fafc;padding:12px;display:flex;flex-direction:column;gap:6px;min-width:0;}' +
       '.documents-ocr-modal__file-name{font-size:13px;font-weight:900;color:#0f172a;overflow-wrap:anywhere;}' +
       '.documents-ocr-modal__file-meta{font-size:12px;font-weight:800;color:#64748b;overflow-wrap:anywhere;}' +
       '.documents-ocr-modal__group{display:grid;gap:8px;}' +
       '.documents-ocr-modal__group-title{font-size:11px;line-height:1.25;font-weight:900;color:#64748b;text-transform:uppercase;letter-spacing:0;}' +
+      '.documents-ocr-modal__inline-actions{display:flex;flex-wrap:wrap;gap:8px;}' +
       '.documents-ocr-modal__result-list{display:grid;gap:8px;}' +
       '.documents-ocr-modal__result-card{border:1px solid #e2e8f0;border-radius:8px;background:#fff;padding:10px;display:grid;gap:6px;min-width:0;font:inherit;text-align:left;cursor:pointer;}' +
       '.documents-ocr-modal__result-head{display:flex;align-items:center;justify-content:space-between;gap:8px;}' +
@@ -11749,7 +11786,7 @@
       '.documents-ocr-modal__result-meta{font-size:11px;font-weight:800;color:#64748b;}' +
       '.documents-ocr-modal__result-text{max-height:120px;overflow:auto;scrollbar-gutter:stable;white-space:pre-wrap;font-size:12px;line-height:1.45;color:#334155;background:#f8fafc;border-radius:7px;padding:8px;}' +
       '.documents-ocr-modal__result-card.is-selected{border-color:#14b8a6;box-shadow:0 0 0 2px rgba(20,184,166,.12);}' +
-      '.documents-ocr-modal__textarea{width:100%;min-height:420px;resize:vertical;border:1px solid #cbd5e1;border-radius:8px;padding:10px;font:inherit;font-size:13px;line-height:1.5;color:#0f172a;background:#fff;}' +
+      '.documents-ocr-modal__textarea{width:100%;min-height:260px;resize:vertical;border:1px solid #cbd5e1;border-radius:8px;padding:10px;font:inherit;font-size:13px;line-height:1.5;color:#0f172a;background:#fff;}' +
       '.documents-ocr-modal__empty{padding:16px;color:#64748b;font-size:13px;font-weight:800;}' +
       '@media (max-width: 720px){' +
       '.documents-template-modal{padding:8px;align-items:flex-end;}' +
@@ -11774,12 +11811,17 @@
       '.documents-s3-reader__actions{display:grid;grid-template-columns:1fr;min-width:104px;}' +
       '.documents-s3-reader__actions .documents-s3-modal__mini-button{width:100%;}' +
       '.documents-s3-reader__body{padding:10px 12px 12px;}' +
-      '.documents-ocr-modal__header{padding:12px;gap:10px;}' +
-      '.documents-ocr-modal__actions{display:grid;grid-template-columns:1fr;min-width:118px;}' +
+      '.documents-ocr-modal{padding:8px;align-items:flex-end;}' +
+      '.documents-ocr-modal__panel{width:100%;height:calc(100dvh - 16px);max-height:calc(100dvh - 16px);border-radius:14px;}' +
+      '.documents-ocr-modal__header{display:grid;grid-template-columns:1fr;padding:12px;gap:10px;}' +
+      '.documents-ocr-modal__actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));width:100%;}' +
       '.documents-ocr-modal__button{width:100%;}' +
       '.documents-ocr-modal__status{margin:10px 12px 0;}' +
       '.documents-ocr-modal__body{grid-template-columns:1fr;padding:10px 12px 12px;}' +
+      '.documents-ocr-modal__inline-actions{display:grid;grid-template-columns:1fr;}' +
       '.documents-ocr-modal__textarea{min-height:300px;}' +
+      '.documents-s3-modal__ocr-grid{grid-template-columns:repeat(3,minmax(0,1fr));}' +
+      '.documents-s3-modal__ocr-toolbar{display:grid;grid-template-columns:1fr 1fr;}' +
       '}' +
       '';
     document.head.appendChild(style);
@@ -12019,9 +12061,9 @@
     ocrPanel.setAttribute('aria-labelledby', 'documents-ocr-title');
     var ocrHeader = createElement('div', 'documents-ocr-modal__header');
     var ocrTitleWrap = createElement('div', 'documents-ocr-modal__title-wrap');
-    var ocrTitle = createElement('h3', 'documents-ocr-modal__title', 'OCR документа в текст');
+    var ocrTitle = createElement('h3', 'documents-ocr-modal__title', 'OCR мониторинг');
     ocrTitle.id = 'documents-ocr-title';
-    var ocrSubtitle = createElement('p', 'documents-ocr-modal__subtitle', 'Tesseract, PDF, изображения и DOCX.');
+    var ocrSubtitle = createElement('p', 'documents-ocr-modal__subtitle', 'Новые загрузки, ошибки и ручной тест файла.');
     ocrTitleWrap.appendChild(ocrTitle);
     ocrTitleWrap.appendChild(ocrSubtitle);
     var ocrActions = createElement('div', 'documents-ocr-modal__actions');
@@ -12041,7 +12083,7 @@
     var ocrBody = createElement('div', 'documents-ocr-modal__body');
     var ocrFileInput = document.createElement('input');
     ocrFileInput.type = 'file';
-    ocrFileInput.accept = '.pdf,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff,application/pdf,image/*';
+    ocrFileInput.accept = '.pdf,.docx,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/*';
     ocrFileInput.style.display = 'none';
     ocrPanel.appendChild(ocrHeader);
     ocrPanel.appendChild(ocrStatus);
@@ -12153,6 +12195,9 @@
     });
 
     ocrChooseButton.addEventListener('click', function() {
+      var ocrState = ensureAdminOcrState();
+      ocrState.testVisible = true;
+      updateAdminOcrPanel();
       if (adminElements.ocrFileInput) {
         adminElements.ocrFileInput.click();
       }
@@ -12173,14 +12218,34 @@
 
     ocrBody.addEventListener('click', function(event) {
       var target = event.target && event.target.closest
-        ? event.target.closest('[data-ocr-action], [data-ocr-select]')
+        ? event.target.closest('[data-ocr-action], [data-ocr-select], [data-ocr-pick], [data-ocr-read], [data-ocr-view]')
         : null;
       if (!target || !ocrBody.contains(target)) {
         return;
       }
+      if (target.hasAttribute('data-ocr-read')) {
+        readAdminOcrText(target.getAttribute('data-ocr-read') || '').catch(function(error) {
+          docsLogger.warn('OCR text read failed:', error);
+        });
+        return;
+      }
+      if (target.hasAttribute('data-ocr-pick')) {
+        if (adminElements.ocrFileInput) {
+          adminElements.ocrFileInput.click();
+        }
+        return;
+      }
+      var monitorView = target.getAttribute('data-ocr-view') || '';
+      if (monitorView) {
+        ensureAdminOcrState().monitorView = monitorView;
+        updateAdminOcrPanel();
+        return;
+      }
       var action = target.getAttribute('data-ocr-action') || '';
       if (action) {
-        runAdminOcrAction(action).catch(function(error) {
+        runAdminOcrAction(action, {
+          signature: target.getAttribute('data-ocr-signature') || ''
+        }).catch(function(error) {
           docsLogger.warn('OCR action failed:', error);
         });
         return;
@@ -12980,6 +13045,21 @@
     if (!('monitoring' in state.admin.ocr)) {
       state.admin.ocr.monitoring = null;
     }
+    if (!('serverStatus' in state.admin.ocr)) {
+      state.admin.ocr.serverStatus = null;
+    }
+    if (!('workerStatus' in state.admin.ocr)) {
+      state.admin.ocr.workerStatus = null;
+    }
+    if (typeof state.admin.ocr.monitorView !== 'string') {
+      state.admin.ocr.monitorView = '';
+    }
+    if (!('testVisible' in state.admin.ocr)) {
+      state.admin.ocr.testVisible = false;
+    }
+    if (!('refreshTimer' in state.admin.ocr)) {
+      state.admin.ocr.refreshTimer = null;
+    }
     return state.admin.ocr;
   }
 
@@ -13033,6 +13113,7 @@
     ocrState.file = file;
     ocrState.fileName = file && file.name ? String(file.name) : 'document';
     ocrState.fileType = fileType;
+    ocrState.testVisible = true;
     ocrState.running = '';
     ocrState.results = {};
     ocrState.selectedResult = '';
@@ -13140,11 +13221,11 @@
     }
     formData.append('file', file, fileName || 'ocr-page.png');
     appendTelegramUserIdToFormData(formData);
-    return fetch(buildApiUrl('ocr_test', { organization: state.organization || '' }), {
+    return requestAdminOcrApi(buildApiUrl('ocr_test', { organization: state.organization || '' }), {
       method: 'POST',
       credentials: 'same-origin',
       body: formData
-    }).then(handleResponse);
+    }, 45000);
   }
 
   async function requestAdminServerOcr() {
@@ -13183,16 +13264,57 @@
     };
   }
 
+  function requestAdminOcrApi(url, options, timeoutMs) {
+    var controller = typeof AbortController === 'function' ? new AbortController() : null;
+    var requestOptions = Object.assign({}, options || {});
+    var timer = null;
+    if (controller) {
+      requestOptions.signal = controller.signal;
+      timer = window.setTimeout(function() {
+        controller.abort();
+      }, Math.max(1000, Number(timeoutMs) || 15000));
+    }
+
+    return fetch(url, requestOptions)
+      .then(handleResponse)
+      .catch(function(error) {
+        if (error && error.name === 'AbortError') {
+          throw new Error('Сервер OCR не ответил вовремя. Запрос остановлен, интерфейс не будет ждать бесконечно.');
+        }
+        throw error;
+      })
+      .finally(function() {
+        if (timer !== null) {
+          window.clearTimeout(timer);
+        }
+      });
+  }
+
   function requestAdminOcrStatus() {
     var formData = new FormData();
     formData.append('action', 'ocr_status');
     formData.append('organization', state.organization || '');
     appendTelegramUserIdToFormData(formData);
-    return fetch(buildApiUrl('ocr_status', { organization: state.organization || '' }), {
+    return requestAdminOcrApi(buildApiUrl('ocr_status', { organization: state.organization || '' }), {
       method: 'POST',
       credentials: 'same-origin',
       body: formData
-    }).then(handleResponse);
+    }, 20000);
+  }
+
+  function requestAdminOcrText(signature) {
+    var normalizedSignature = String(signature || '').trim();
+    if (!normalizedSignature) {
+      return Promise.reject(new Error('OCR signature не найден.'));
+    }
+    return requestAdminOcrApi(buildApiUrl('ocr_text', {
+      organization: state.organization || '',
+      signature: normalizedSignature
+    }), {
+      method: 'GET',
+      credentials: 'same-origin',
+      cache: 'no-store'
+    }, 20000);
   }
 
   function requestAdminOcrBackgroundRun() {
@@ -13202,48 +13324,112 @@
       limit: 1
     };
     mergeTelegramUserId(payload);
-    return fetch(buildApiUrl('ocr_background_run', { organization: state.organization || '' }), {
+    return requestAdminOcrApi(buildApiUrl('ocr_background_run', { organization: state.organization || '' }), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
       body: JSON.stringify(payload)
-    }).then(handleResponse);
+    }, 20000);
+  }
+
+  function requestAdminOcrControl(command, signature) {
+    var payload = {
+      action: 'ocr_control',
+      organization: state.organization || '',
+      command: command || ''
+    };
+    if (signature) {
+      payload.signature = String(signature);
+    }
+    mergeTelegramUserId(payload);
+    return requestAdminOcrApi(buildApiUrl('ocr_control', { organization: state.organization || '' }), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify(payload)
+    }, 20000);
+  }
+
+  function clearAdminOcrRefreshTimer() {
+    var ocrState = ensureAdminOcrState();
+    if (ocrState.refreshTimer !== null) {
+      window.clearTimeout(ocrState.refreshTimer);
+      ocrState.refreshTimer = null;
+    }
+  }
+
+  function scheduleAdminOcrRefresh(delayMs) {
+    var ocrState = ensureAdminOcrState();
+    clearAdminOcrRefreshTimer();
+    if (!ocrState.visible) {
+      return;
+    }
+    ocrState.refreshTimer = window.setTimeout(function() {
+      ocrState.refreshTimer = null;
+      if (!ocrState.visible || ocrState.running) {
+        return;
+      }
+      runAdminOcrAction('server-status', { silent: true }).catch(function(error) {
+        docsLogger.warn('Не удалось автоматически обновить OCR-мониторинг:', error);
+      });
+    }, Math.max(1000, Number(delayMs) || 5000));
   }
 
   function formatAdminOcrDependencyStatus(status) {
     status = status && typeof status === 'object' ? status : {};
+    if (status.runtimeGuard && status.runtimeGuard.reason === 'busy') {
+      return 'проверка зависимостей отложена: OCR сейчас занят';
+    }
     return [
       'tesseract: ' + (status.tesseractAvailable ? 'есть' : 'нет'),
       'pdftoppm: ' + (status.pdftoppmAvailable ? 'есть' : 'нет'),
+      'pdftotext: ' + (status.pdftotextAvailable ? 'есть' : 'нет'),
       'docx: ' + (status.zipArchiveAvailable && status.domDocumentAvailable ? 'есть' : 'нет')
     ].join(', ');
   }
 
-  function runAdminOcrAction(action) {
+  function runAdminOcrAction(action, options) {
     var ocrState = ensureAdminOcrState();
+    var actionOptions = options && typeof options === 'object' ? options : {};
     if (ocrState.running) {
+      return Promise.resolve();
+    }
+    if (action === 'toggle-test') {
+      ocrState.testVisible = !ocrState.testVisible;
+      updateAdminOcrPanel();
       return Promise.resolve();
     }
     if (action === 'server-status') {
       ocrState.running = action;
-      setAdminOcrStatus('Проверяю серверный OCR…', 'info');
+      if (!actionOptions.silent) {
+        setAdminOcrStatus('Проверяю серверный OCR…', 'info');
+      }
       updateAdminOcrPanel();
       return requestAdminOcrStatus().then(function(data) {
         ocrState.limits = data && data.limits && typeof data.limits === 'object' ? data.limits : ocrState.limits;
         ocrState.monitoring = data && data.monitoring && typeof data.monitoring === 'object' ? data.monitoring : ocrState.monitoring;
+        ocrState.serverStatus = data && data.status && typeof data.status === 'object' ? data.status : ocrState.serverStatus;
+        ocrState.workerStatus = data && data.worker && typeof data.worker === 'object' ? data.worker : ocrState.workerStatus;
         if (ocrState.limits && ocrState.limits.maxPdfPagesPerFile) {
           ADMIN_OCR_PDF_MAX_PAGES = Math.max(1, Number(ocrState.limits.maxPdfPagesPerFile) || ADMIN_OCR_PDF_MAX_PAGES);
         }
-        var status = data && data.status ? data.status : {};
-        var message = data && data.message ? String(data.message) : 'Проверка серверного OCR завершена.';
-        message += ' ' + formatAdminOcrDependencyStatus(status) + '.';
-        setAdminOcrStatus(message, data && data.ready ? 'success' : 'error');
+        if (!actionOptions.silent) {
+          var status = data && data.status ? data.status : {};
+          var message = data && data.message ? String(data.message) : 'Проверка серверного OCR завершена.';
+          message += ' ' + formatAdminOcrDependencyStatus(status) + '.';
+          var guardBusy = status.runtimeGuard && status.runtimeGuard.reason === 'busy';
+          setAdminOcrStatus(message, guardBusy ? 'info' : (data && data.ready && data.pdfReady ? 'success' : 'error'));
+        }
       }).catch(function(error) {
         setAdminOcrStatus(error && error.message ? error.message : 'Не удалось проверить серверный OCR.', 'error');
         throw error;
       }).finally(function() {
         ocrState.running = '';
         updateAdminOcrPanel();
+        var statuses = ocrState.monitoring && ocrState.monitoring.statuses ? ocrState.monitoring.statuses : {};
+        if (ocrState.visible && (Number(statuses.processing || 0) > 0 || (ocrState.workerStatus && ocrState.workerStatus.running))) {
+          scheduleAdminOcrRefresh(5000);
+        }
       });
     }
     if (action === 'background-run') {
@@ -13253,19 +13439,16 @@
       return requestAdminOcrBackgroundRun().then(function(data) {
         ocrState.monitoring = data && data.monitoring && typeof data.monitoring === 'object' ? data.monitoring : ocrState.monitoring;
         var accepted = Number(data && data.accepted) || 0;
+        var breaker = ocrState.monitoring && ocrState.monitoring.circuitBreaker && typeof ocrState.monitoring.circuitBreaker === 'object'
+          ? ocrState.monitoring.circuitBreaker
+          : (data && data.guard && data.guard.circuitBreaker && typeof data.guard.circuitBreaker === 'object' ? data.guard.circuitBreaker : null);
         setAdminOcrStatus(
           data && data.message ? String(data.message) : (accepted > 0 ? 'Фоновый OCR запущен.' : 'Нет файлов для фонового OCR.'),
-          accepted > 0 ? 'success' : 'info'
+          breaker && breaker.active ? 'error' : (accepted > 0 ? 'success' : 'info')
         );
-        window.setTimeout(function() {
-          requestAdminOcrStatus().then(function(statusData) {
-            ocrState.limits = statusData && statusData.limits && typeof statusData.limits === 'object' ? statusData.limits : ocrState.limits;
-            ocrState.monitoring = statusData && statusData.monitoring && typeof statusData.monitoring === 'object' ? statusData.monitoring : ocrState.monitoring;
-            updateAdminOcrPanel();
-          }).catch(function(error) {
-            docsLogger.warn('Не удалось обновить OCR-мониторинг:', error);
-          });
-        }, 5000);
+        if (accepted > 0) {
+          scheduleAdminOcrRefresh(2500);
+        }
       }).catch(function(error) {
         setAdminOcrStatus(error && error.message ? error.message : 'Не удалось запустить фоновый OCR.', 'error');
         throw error;
@@ -13273,6 +13456,30 @@
         ocrState.running = '';
         updateAdminOcrPanel();
       });
+    }
+    if (action === 'retry-errors' || action === 'retry-item' || action === 'reset-breaker' || action === 'recover-stale') {
+      var commandMap = {
+        'retry-errors': 'retry_errors',
+        'retry-item': 'retry_item',
+        'reset-breaker': 'reset_breaker',
+        'recover-stale': 'recover_stale'
+      };
+      ocrState.running = action;
+      setAdminOcrStatus('Выполняю команду управления OCR…', 'info');
+      updateAdminOcrPanel();
+      return requestAdminOcrControl(commandMap[action], actionOptions.signature || '')
+        .then(function(data) {
+          ocrState.monitoring = data && data.monitoring && typeof data.monitoring === 'object' ? data.monitoring : ocrState.monitoring;
+          setAdminOcrStatus(data && data.message ? String(data.message) : 'Команда OCR выполнена.', 'success');
+        })
+        .catch(function(error) {
+          setAdminOcrStatus(error && error.message ? error.message : 'Не удалось выполнить команду OCR.', 'error');
+          throw error;
+        })
+        .finally(function() {
+          ocrState.running = '';
+          updateAdminOcrPanel();
+        });
     }
     if (!ocrState.file) {
       setAdminOcrStatus('Сначала выберите файл.', 'error');
@@ -13347,13 +13554,41 @@
     if (adminElements.ocrCopyButton) {
       var selected = ocrState.selectedResult && ocrState.results[ocrState.selectedResult] ? ocrState.results[ocrState.selectedResult] : null;
       adminElements.ocrCopyButton.disabled = !selected || !selected.text;
+      adminElements.ocrCopyButton.hidden = !ocrState.testVisible;
+    }
+    if (adminElements.ocrChooseButton) {
+      adminElements.ocrChooseButton.textContent = ocrState.testVisible ? 'Другой файл' : 'Тест файла';
     }
     if (!adminElements.ocrBody) {
       return;
     }
     adminElements.ocrBody.innerHTML = '';
 
+    var monitorData = ocrState.monitoring && typeof ocrState.monitoring === 'object'
+      ? ocrState.monitoring
+      : {
+          message: ocrState.running === 'server-status' ? 'Загружаю OCR-мониторинг…' : 'OCR-мониторинг загрузится при открытии окна.',
+          statuses: {},
+          limits: ocrState.limits || {}
+        };
+    var monitorPanel = createAdminS3OcrMonitor(monitorData, {
+      interactive: true,
+      serverStatus: ocrState.serverStatus,
+      workerStatus: ocrState.workerStatus,
+      monitorView: ocrState.monitorView,
+      running: ocrState.running
+    });
+    monitorPanel.classList.add('documents-ocr-modal__monitor');
+
+    adminElements.ocrBody.appendChild(monitorPanel);
+    if (!ocrState.testVisible) {
+      setAdminOcrStatus(ocrState.status, ocrState.statusType);
+      return;
+    }
+
     var controls = createElement('section', 'documents-ocr-modal__controls');
+    var testGroup = createElement('div', 'documents-ocr-modal__group');
+    testGroup.appendChild(createElement('div', 'documents-ocr-modal__group-title', 'Ручной тест OCR своего файла'));
     var fileBox = createElement('div', 'documents-ocr-modal__file');
     fileBox.appendChild(createElement('div', 'documents-ocr-modal__file-name', ocrState.fileName || 'Файл не выбран'));
     var selectedTypeLabel = 'Изображение';
@@ -13366,18 +13601,16 @@
       ? (selectedTypeLabel + ' • ' + formatTemplateSize(ocrState.file.size || 0))
       : 'PDF, DOCX, PNG, JPG, WEBP, BMP, TIFF';
     fileBox.appendChild(createElement('div', 'documents-ocr-modal__file-meta', fileMeta));
-    controls.appendChild(fileBox);
-
-    var serverGroup = createElement('div', 'documents-ocr-modal__group');
-    serverGroup.appendChild(createElement('div', 'documents-ocr-modal__group-title', 'Текст из файла'));
-    serverGroup.appendChild(createAdminOcrActionButton('server-status', 'Обновить мониторинг', Boolean(ocrState.running)));
-    serverGroup.appendChild(createAdminOcrActionButton('background-run', 'Запустить фоновый OCR', Boolean(ocrState.running) || !state.organization));
-    serverGroup.appendChild(createAdminOcrActionButton('server-ocr', 'Распознать текст', !ocrState.file || Boolean(ocrState.running)));
-    controls.appendChild(serverGroup);
-
-    if (ocrState.monitoring && typeof ocrState.monitoring === 'object') {
-      controls.appendChild(createAdminS3OcrMonitor(ocrState.monitoring));
-    }
+    testGroup.appendChild(fileBox);
+    var testActions = createElement('div', 'documents-ocr-modal__inline-actions');
+    var pickButton = createElement('button', 'documents-ocr-modal__button documents-ocr-modal__button--primary', 'Выбрать свой файл');
+    pickButton.type = 'button';
+    pickButton.setAttribute('data-ocr-pick', '1');
+    testActions.appendChild(pickButton);
+    testActions.appendChild(createAdminOcrActionButton('server-ocr', 'Ручной тест OCR', !ocrState.file || Boolean(ocrState.running)));
+    testActions.appendChild(createAdminOcrActionButton('toggle-test', 'Скрыть тест', Boolean(ocrState.running)));
+    testGroup.appendChild(testActions);
+    controls.appendChild(testGroup);
 
     var resultList = createElement('div', 'documents-ocr-modal__result-list');
     var resultKeys = Object.keys(ocrState.results || {});
@@ -13508,42 +13741,441 @@
     return item;
   }
 
-  function createAdminS3OcrMonitor(ocr) {
+  function formatAdminOcrSource(source) {
+    var key = typeof source === 'string' ? source : '';
+    var labels = {
+      incoming: 'Входящие',
+      response: 'Ответы',
+      outgoing: 'Исходящие',
+      orders: 'Приказы',
+      directives: 'Распоряжения',
+      disciplinary: 'Взыскания',
+      upload: 'Загрузка',
+      mini_app_snapshot: 'Mini-app',
+      registry_backfill: 'Проверка реестра',
+      shared_cache: 'Старая очередь'
+    };
+    return labels[key] || key || '—';
+  }
+
+  function formatAdminOcrStatus(status) {
+    var key = typeof status === 'string' ? status : '';
+    var labels = {
+      queued: 'В очереди',
+      processing: 'В работе',
+      ready: 'Готово',
+      empty: 'Пусто',
+      unsupported: 'Не поддержан',
+      error: 'Ошибка',
+      dependency_missing: 'Нет зависимости',
+      skipped: 'Отложено',
+      not_started: 'Не запускалось',
+      unknown: 'Неизвестно'
+    };
+    return labels[key] || key || '—';
+  }
+
+  function formatAdminOcrTextChars(value) {
+    var chars = Number(value);
+    if (!isFinite(chars) || chars <= 0) {
+      return '—';
+    }
+    return String(Math.round(chars)) + ' симв.';
+  }
+
+  function appendAdminOcrCell(row, value) {
+    row.appendChild(createElement('td', '', value ? String(value) : '—'));
+  }
+
+  function createAdminS3OcrItemsTable(items, total, interactive) {
+    var list = Array.isArray(items) ? items : [];
+    var section = createElement('div', 'documents-s3-modal__ocr-section');
+    var head = createElement('div', 'documents-s3-modal__ocr-section-head');
+    head.appendChild(createElement('div', 'documents-s3-modal__ocr-section-title', 'Файлы'));
+    head.appendChild(createElement('div', 'documents-s3-modal__ocr-section-count', 'Показано ' + list.length + ' из ' + (Number(total) || list.length)));
+    section.appendChild(head);
+
+    if (!list.length) {
+      section.appendChild(createElement('div', 'documents-s3-modal__empty', 'Нет данных.'));
+      return section;
+    }
+
+    var wrap = createElement('div', 'documents-s3-modal__ocr-table-wrap');
+    var table = document.createElement('table');
+    table.className = 'documents-s3-modal__ocr-table';
+    var thead = document.createElement('thead');
+    var headRow = document.createElement('tr');
+    ['Статус', 'Файл', 'Источник', 'Текст', 'Обновлено', 'Действия'].forEach(function(label) {
+      headRow.appendChild(createElement('th', '', label));
+    });
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+
+    var tbody = document.createElement('tbody');
+    list.forEach(function(entry) {
+      entry = entry && typeof entry === 'object' ? entry : {};
+      var row = document.createElement('tr');
+      var statusCell = document.createElement('td');
+      var statusKey = String(entry.status || 'unknown').replace(/[^a-z_]/g, '');
+      var statusBadge = createElement('span', 'documents-s3-modal__ocr-badge documents-s3-modal__ocr-badge--' + statusKey, formatAdminOcrStatus(entry.status));
+      statusCell.appendChild(statusBadge);
+      if (entry.stale) {
+        statusCell.appendChild(createElement('span', 'documents-s3-modal__ocr-cell-meta', 'зависло'));
+      }
+      row.appendChild(statusCell);
+      var fileCell = document.createElement('td');
+      fileCell.appendChild(createElement('div', 'documents-s3-modal__ocr-file-name', entry.file || '—'));
+      var detailParts = [
+        entry.error || entry.method || '',
+        Number(entry.attempts || 0) ? 'попытка ' + Number(entry.attempts || 0) : '',
+        entry.nextAttemptAt ? 'следующая: ' + String(entry.nextAttemptAt) : ''
+      ].filter(Boolean);
+      if (detailParts.length) {
+        fileCell.appendChild(createElement('div', 'documents-s3-modal__ocr-cell-meta', detailParts.join(' · ')));
+      }
+      row.appendChild(fileCell);
+      var sourceParts = [formatAdminOcrSource(entry.source), entry.record || '', entry.organization || entry.folder || ''].filter(Boolean);
+      appendAdminOcrCell(row, sourceParts.join(' · '));
+      appendAdminOcrCell(row, formatAdminOcrTextChars(entry.textChars || 0));
+      appendAdminOcrCell(row, entry.updatedAt || '');
+      var actionCell = document.createElement('td');
+      var actions = createElement('div', 'documents-s3-modal__ocr-row-actions');
+      if (entry.hasText) {
+        var readButton = createElement('button', 'documents-s3-modal__mini-button', 'Текст');
+        readButton.type = 'button';
+        readButton.disabled = !entry.signature;
+        readButton.setAttribute('data-ocr-read', entry.signature || '');
+        actions.appendChild(readButton);
+      }
+      if (interactive && ['error', 'dependency_missing', 'skipped'].indexOf(entry.status) !== -1) {
+        var retryButton = createElement('button', 'documents-s3-modal__mini-button', 'Повторить');
+        retryButton.type = 'button';
+        retryButton.disabled = !entry.signature;
+        retryButton.setAttribute('data-ocr-action', 'retry-item');
+        retryButton.setAttribute('data-ocr-signature', entry.signature || '');
+        actions.appendChild(retryButton);
+      }
+      if (!actions.childNodes.length) {
+        actions.appendChild(createElement('span', 'documents-s3-modal__ocr-cell-meta', '—'));
+      }
+      actionCell.appendChild(actions);
+      row.appendChild(actionCell);
+      tbody.appendChild(row);
+    });
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    section.appendChild(wrap);
+
+    return section;
+  }
+
+  function formatAdminOcrBreakerDetails(details) {
+    if (!details || typeof details !== 'object') {
+      return '';
+    }
+    return Object.keys(details).slice(0, 8).map(function(key) {
+      var value = details[key];
+      if (value && typeof value === 'object') {
+        try {
+          value = JSON.stringify(value);
+        } catch (error) {
+          value = String(value);
+        }
+      }
+      value = String(value == null ? '' : value);
+      if (value.length > 240) {
+        value = value.slice(0, 240) + '...';
+      }
+      return key + ': ' + value;
+    }).filter(Boolean).join(' | ');
+  }
+
+  function createAdminS3OcrCircuitBreakerPanel(circuitBreaker) {
+    var breaker = circuitBreaker && typeof circuitBreaker === 'object' ? circuitBreaker : {};
+    if (!breaker.active && !breaker.reason && !breaker.message) {
+      return null;
+    }
+
+    var box = document.createElement('details');
+    box.className = 'documents-s3-modal__ocr-diagnostics';
+    if (breaker.active) {
+      box.open = true;
+    }
+    var parts = [];
+    parts.push(breaker.active ? 'Предохранитель OCR сработал' : 'Предохранитель OCR');
+    if (breaker.reason) {
+      parts.push('причина: ' + String(breaker.reason));
+    }
+    if (breaker.message) {
+      parts.push(String(breaker.message));
+    }
+    if (breaker.disabledUntil) {
+      parts.push('пауза до: ' + String(breaker.disabledUntil));
+    }
+    if (Number(breaker.secondsRemaining) > 0) {
+      parts.push('осталось: ' + String(Number(breaker.secondsRemaining)) + ' сек.');
+    }
+    var details = formatAdminOcrBreakerDetails(breaker.details);
+    box.appendChild(createElement('summary', 'documents-s3-modal__ocr-diagnostics-summary', parts.join(' · ')));
+    var content = createElement('div', 'documents-s3-modal__ocr-diagnostics-content');
+    if (details) {
+      content.appendChild(createElement('div', 'documents-s3-modal__ocr-error', details));
+    }
+
+    if (Array.isArray(breaker.events) && breaker.events.length) {
+      breaker.events.slice(-3).reverse().forEach(function(event) {
+        event = event && typeof event === 'object' ? event : {};
+        var eventParts = [
+          event.time ? String(event.time) : '',
+          event.reason ? String(event.reason) : '',
+          event.message ? String(event.message) : '',
+          formatAdminOcrBreakerDetails(event.details)
+        ].filter(Boolean);
+        content.appendChild(createElement('div', 'documents-s3-modal__ocr-error', eventParts.join(' · ')));
+      });
+    }
+    box.appendChild(content);
+
+    return box;
+  }
+
+  function createAdminOcrDependencyPanel(serverStatus) {
+    var status = serverStatus && typeof serverStatus === 'object' ? serverStatus : null;
+    if (!status) {
+      return null;
+    }
+    var panel = document.createElement('details');
+    panel.className = 'documents-s3-modal__ocr-diagnostics documents-s3-modal__ocr-dependencies';
+    var busy = status.runtimeGuard && status.runtimeGuard.reason === 'busy';
+    var summary = busy
+      ? 'Зависимости: проверка отложена, OCR занят'
+      : 'Зависимости: Tesseract ' + (status.tesseractAvailable ? 'готов' : 'недоступен')
+        + ', PDF-текст ' + (status.pdftotextAvailable ? 'готов' : 'недоступен')
+        + ', PDF-сканы ' + (status.tesseractAvailable && status.pdftoppmAvailable ? 'готовы' : 'недоступны')
+        + ', DOCX ' + (status.zipArchiveAvailable && status.domDocumentAvailable ? 'готов' : 'недоступен');
+    panel.appendChild(createElement('summary', 'documents-s3-modal__ocr-diagnostics-summary', summary));
+    var content = createElement('div', 'documents-s3-modal__ocr-diagnostics-content');
+    [
+      ['Tesseract', status.tesseractAvailable, status.tesseractPath, status.tesseractError],
+      ['pdftoppm', status.pdftoppmAvailable, status.pdftoppmPath, status.pdftoppmError],
+      ['pdftotext', status.pdftotextAvailable, status.pdftotextPath, status.pdftotextError],
+      ['DOCX', status.zipArchiveAvailable && status.domDocumentAvailable, '', 'ZipArchive + DOMDocument']
+    ].forEach(function(item) {
+      var parts = [item[0] + ': ' + (item[1] ? 'доступен' : 'недоступен'), item[2] || '', item[3] || ''].filter(Boolean);
+      content.appendChild(createElement('div', 'documents-s3-modal__ocr-cell-meta', parts.join(' · ')));
+    });
+    panel.appendChild(content);
+    return panel;
+  }
+
+  function createAdminS3OcrMonitor(ocr, options) {
     var data = ocr && typeof ocr === 'object' ? ocr : {};
+    var viewOptions = options && typeof options === 'object' ? options : {};
+    var interactive = Boolean(viewOptions.interactive);
     var statuses = data.statuses && typeof data.statuses === 'object' ? data.statuses : {};
-    var limits = data.limits && typeof data.limits === 'object' ? data.limits : {};
+    var circuitBreaker = data.circuitBreaker && typeof data.circuitBreaker === 'object' ? data.circuitBreaker : {};
+    var serverStatus = viewOptions.serverStatus && typeof viewOptions.serverStatus === 'object' ? viewOptions.serverStatus : null;
+    var workerStatus = viewOptions.workerStatus && typeof viewOptions.workerStatus === 'object' ? viewOptions.workerStatus : null;
     var panel = createElement('section', 'documents-s3-modal__ocr');
     var head = createElement('div', 'documents-s3-modal__ocr-head');
-    head.appendChild(createElement('div', 'documents-s3-modal__ocr-title', 'OCR мониторинг'));
-    head.appendChild(createElement('div', 'documents-s3-modal__ocr-message', data.message || 'Данных OCR пока нет.'));
+    var titleWrap = createElement('div', 'documents-s3-modal__ocr-title-wrap');
+    titleWrap.appendChild(createElement('div', 'documents-s3-modal__ocr-title', 'Состояние OCR'));
+    titleWrap.appendChild(createElement('div', 'documents-s3-modal__ocr-message', data.message || 'Данных OCR пока нет.'));
+    if (workerStatus) {
+      var workerQueue = workerStatus.queue && typeof workerStatus.queue === 'object' ? workerStatus.queue : {};
+      var workerParts = [
+        workerStatus.running ? 'Воркер сейчас обрабатывает файл' : 'Воркер ожидает следующий запуск',
+        Number(workerQueue.queued || 0) ? 'ожидают: ' + Number(workerQueue.queued || 0) : '',
+        Number(workerQueue.failed || 0) ? 'требуют внимания: ' + Number(workerQueue.failed || 0) : ''
+      ].filter(Boolean);
+      titleWrap.appendChild(createElement('div', 'documents-s3-modal__ocr-message', workerParts.join(' · ')));
+    }
+    head.appendChild(titleWrap);
+    var healthText = 'Проверяется';
+    var healthKind = 'pending';
+    if (circuitBreaker.active) {
+      healthText = 'Остановлен защитой';
+      healthKind = 'error';
+    } else if (serverStatus) {
+      if (serverStatus.runtimeGuard && serverStatus.runtimeGuard.reason === 'busy') {
+        healthText = 'OCR занят';
+        healthKind = 'warning';
+      } else if (serverStatus.pdftotextAvailable || (serverStatus.tesseractAvailable && serverStatus.pdftoppmAvailable)) {
+        healthText = 'Работает';
+        healthKind = 'ready';
+      } else if (serverStatus.tesseractAvailable || serverStatus.pdftotextAvailable) {
+        healthText = 'PDF недоступен';
+        healthKind = 'warning';
+      } else {
+        healthText = 'Нужна настройка';
+        healthKind = 'error';
+      }
+    }
+    head.appendChild(createElement('div', 'documents-s3-modal__ocr-health documents-s3-modal__ocr-health--' + healthKind, healthText));
     panel.appendChild(head);
 
     var grid = createElement('div', 'documents-s3-modal__ocr-grid');
-    grid.appendChild(createAdminS3OcrMetric('Файлов', String(data.totalFiles || 0)));
-    grid.appendChild(createAdminS3OcrMetric('Готово', String(statuses.ready || 0)));
-    grid.appendChild(createAdminS3OcrMetric('В очереди', String(statuses.queued || 0)));
-    grid.appendChild(createAdminS3OcrMetric('Не запускалось', String(statuses.not_started || 0)));
+    grid.appendChild(createAdminS3OcrMetric('Всего', String(data.totalFiles || 0)));
+    grid.appendChild(createAdminS3OcrMetric('С текстом', String(data.withText || statuses.ready || 0)));
+    grid.appendChild(createAdminS3OcrMetric('В очереди', String((statuses.queued || 0) + (statuses.processing || 0))));
     grid.appendChild(createAdminS3OcrMetric('Ошибки', String((statuses.error || 0) + (statuses.dependency_missing || 0))));
+    grid.appendChild(createAdminS3OcrMetric('Пропущено', String((statuses.skipped || 0) + (statuses.not_started || 0))));
     grid.appendChild(createAdminS3OcrMetric('Кэш OCR', String(data.cacheItems || 0)));
-    grid.appendChild(createAdminS3OcrMetric('Попадания кэша', String(data.cacheHits || 0)));
-    grid.appendChild(createAdminS3OcrMetric('Файлов за запрос', String(limits.backgroundFilesPerRequest || 1)));
-    grid.appendChild(createAdminS3OcrMetric('PDF страниц', String(limits.maxPdfPagesPerFile || ADMIN_OCR_PDF_MAX_PAGES)));
     panel.appendChild(grid);
 
-    if (Array.isArray(data.errors) && data.errors.length) {
-      var errors = createElement('div', 'documents-s3-modal__ocr-errors');
-      data.errors.slice(0, 4).forEach(function(entry) {
-        var parts = [
-          entry && entry.file ? String(entry.file) : 'Файл',
-          entry && entry.record ? String(entry.record) : '',
-          entry && entry.error ? String(entry.error) : ''
-        ].filter(Boolean);
-        errors.appendChild(createElement('div', 'documents-s3-modal__ocr-error', parts.join(' | ')));
+    if (interactive) {
+      var toolbar = createElement('div', 'documents-s3-modal__ocr-toolbar');
+      toolbar.appendChild(createAdminOcrActionButton('server-status', viewOptions.running === 'server-status' ? 'Обновляю…' : 'Обновить', Boolean(viewOptions.running)));
+      toolbar.appendChild(createAdminOcrActionButton('background-run', 'Обработать следующий', Boolean(viewOptions.running) || !Number(data.queueTotal || 0) || circuitBreaker.active));
+      toolbar.appendChild(createAdminOcrActionButton('retry-errors', 'Повторить ошибки', Boolean(viewOptions.running) || !Number(data.errorTotal || 0)));
+      toolbar.appendChild(createAdminOcrActionButton('recover-stale', 'Вернуть зависшие', Boolean(viewOptions.running) || !Number(data.staleProcessingFiles || 0)));
+      toolbar.appendChild(createAdminOcrActionButton('reset-breaker', 'Сбросить защиту', Boolean(viewOptions.running) || !circuitBreaker.active));
+      panel.appendChild(toolbar);
+      var dependencyPanel = createAdminOcrDependencyPanel(serverStatus);
+      if (dependencyPanel) {
+        panel.appendChild(dependencyPanel);
+      }
+    }
+
+    var breakerPanel = createAdminS3OcrCircuitBreakerPanel(circuitBreaker);
+    if (breakerPanel) {
+      panel.appendChild(breakerPanel);
+    }
+
+    if (interactive) {
+      var views = {
+        queue: { label: 'Очередь', items: data.queueItems, total: data.queueTotal },
+        errors: { label: 'Ошибки', items: data.errorItems, total: data.errorTotal },
+        skipped: { label: 'Пропущено', items: data.skippedItems, total: data.skippedTotal },
+        ready: {
+          label: 'Готово',
+          items: (Array.isArray(data.allItems) ? data.allItems : []).filter(function(entry) { return entry && entry.status === 'ready'; }),
+          total: Number(statuses.ready || 0)
+        },
+        all: { label: 'Все', items: data.allItems, total: data.allTotal }
+      };
+      var selectedView = views[viewOptions.monitorView] ? viewOptions.monitorView : '';
+      if (!selectedView) {
+        selectedView = Number(data.queueTotal || 0) > 0 ? 'queue' : (Number(data.errorTotal || 0) > 0 ? 'errors' : 'all');
+        ensureAdminOcrState().monitorView = selectedView;
+      }
+      var tabs = createElement('div', 'documents-s3-modal__ocr-tabs');
+      Object.keys(views).forEach(function(key) {
+        var view = views[key];
+        var tab = createElement('button', 'documents-s3-modal__ocr-tab', view.label + ' ' + (Number(view.total) || 0));
+        tab.type = 'button';
+        tab.setAttribute('data-ocr-view', key);
+        tab.classList.toggle('is-active', key === selectedView);
+        tabs.appendChild(tab);
       });
-      panel.appendChild(errors);
+      panel.appendChild(tabs);
+      panel.appendChild(createAdminS3OcrItemsTable(views[selectedView].items, views[selectedView].total, true));
     }
 
     return panel;
+  }
+
+  function closeAdminOcrTextReader(reader) {
+    if (!reader) {
+      return;
+    }
+    if (reader.parentNode) {
+      reader.parentNode.removeChild(reader);
+    }
+  }
+
+  function openAdminOcrTextReader(ocr) {
+    var entry = ocr && typeof ocr === 'object' ? ocr : {};
+    var titleText = entry.file ? String(entry.file) : 'OCR расшифровка';
+    var metaParts = [
+      entry.organization || state.organization || '',
+      formatAdminOcrSource(entry.source || ''),
+      entry.record || '',
+      formatAdminOcrStatus(entry.status || ''),
+      entry.updatedAt ? formatDateTime(entry.updatedAt) : '',
+      entry.method || ''
+    ].filter(Boolean);
+    var text = normalizeAdminOcrText(entry.text || '');
+    var reader = createElement('div', 'documents-s3-reader');
+    reader.setAttribute('role', 'dialog');
+    reader.setAttribute('aria-modal', 'true');
+    var panel = createElement('div', 'documents-s3-reader__panel');
+    var header = createElement('div', 'documents-s3-reader__header');
+    var titleWrap = createElement('div', '');
+    titleWrap.appendChild(createElement('h3', 'documents-s3-reader__title', titleText));
+    titleWrap.appendChild(createElement('div', 'documents-s3-reader__meta', metaParts.join(' • ') || 'OCR'));
+    var actions = createElement('div', 'documents-s3-reader__actions');
+    var copyButton = createElement('button', 'documents-s3-modal__mini-button', 'Копировать');
+    copyButton.type = 'button';
+    copyButton.disabled = !text;
+    var closeButton = createElement('button', 'documents-s3-modal__mini-button', 'Закрыть');
+    closeButton.type = 'button';
+    actions.appendChild(copyButton);
+    actions.appendChild(closeButton);
+    header.appendChild(titleWrap);
+    header.appendChild(actions);
+    var status = createElement('div', 'documents-s3-reader__status');
+    var body = createElement('div', 'documents-s3-reader__body');
+    body.appendChild(createElement('pre', 'documents-s3-reader__text', text || (entry.error || 'OCR-текст для этого файла пуст.')));
+    panel.appendChild(header);
+    panel.appendChild(status);
+    panel.appendChild(body);
+    reader.appendChild(panel);
+    document.body.appendChild(reader);
+
+    function setReaderStatus(message, isError) {
+      status.textContent = message || '';
+      status.classList.toggle('is-visible', Boolean(message));
+      status.classList.toggle('documents-s3-reader__status--error', Boolean(isError));
+    }
+
+    copyButton.addEventListener('click', function() {
+      if (!text) {
+        setReaderStatus('Текста для копирования нет.', true);
+        return;
+      }
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        navigator.clipboard.writeText(text).then(function() {
+          setReaderStatus('Расшифровка скопирована.', false);
+        }).catch(function() {
+          setReaderStatus('Не удалось скопировать автоматически.', true);
+        });
+      } else {
+        setReaderStatus('Автокопирование недоступно. Выделите текст вручную.', true);
+      }
+    });
+    closeButton.addEventListener('click', function() {
+      closeAdminOcrTextReader(reader);
+    });
+    reader.addEventListener('click', function(event) {
+      if (event.target === reader) {
+        closeAdminOcrTextReader(reader);
+      }
+    });
+  }
+
+  function readAdminOcrText(signature) {
+    var ocrState = ensureAdminOcrState();
+    if (ocrState.running) {
+      return Promise.resolve();
+    }
+    ocrState.running = 'read-text';
+    setAdminOcrStatus('Загружаю OCR-расшифровку…', 'info');
+    updateAdminOcrPanel();
+    return requestAdminOcrText(signature)
+      .then(function(data) {
+        var ocr = data && data.ocr && typeof data.ocr === 'object' ? data.ocr : {};
+        openAdminOcrTextReader(ocr);
+        setAdminOcrStatus(ocr.text ? 'Расшифровка открыта.' : 'OCR-текст пуст.', ocr.text ? 'success' : 'info');
+      })
+      .catch(function(error) {
+        setAdminOcrStatus(error && error.message ? error.message : 'Не удалось открыть OCR-текст.', 'error');
+        throw error;
+      })
+      .finally(function() {
+        ocrState.running = '';
+        updateAdminOcrPanel();
+      });
   }
 
   function normalizeAdminS3BrowserPath(value) {
@@ -14555,7 +15187,7 @@
       adminElements.ocrModal.setAttribute('aria-hidden', 'false');
     }
     if (!ocrState.status) {
-      setAdminOcrStatus('Выберите файл и запустите нужные варианты OCR.', 'info');
+      setAdminOcrStatus('Загружаю состояние OCR и очереди…', 'info');
     }
     updateAdminOcrPanel();
     if (!ocrState.monitoring && !ocrState.running) {
@@ -14569,6 +15201,7 @@
     ensureAdminModal();
     var ocrState = ensureAdminOcrState();
     ocrState.visible = false;
+    clearAdminOcrRefreshTimer();
     if (adminElements.ocrModal) {
       adminElements.ocrModal.classList.remove('is-visible');
       adminElements.ocrModal.setAttribute('aria-hidden', 'true');

@@ -176,19 +176,37 @@ const DOCS_AI_TASK_SEARCH_OCR_TRIMMED_TEXT_MAX_CHARS = 3500;
 const DOCS_OCR_TEST_MAX_FILE_SIZE = 26214400; // 25 МБ
 const DOCS_OCR_TEST_IMAGE_DPI = 300;
 const DOCS_OCR_TEST_TESSERACT_LANGUAGE = 'rus+eng';
-const DOCS_OCR_TEST_TESSERACT_PSM_MODES = ['6', '3', '4'];
+const DOCS_OCR_TEST_TESSERACT_PSM_MODES = ['6'];
 const DOCS_OCR_TEST_CONFIDENT_SCORE = 120;
 const DOCS_OCR_TEST_CONFIDENT_CHARS = 80;
 const DOCS_OCR_TEST_MAX_TEXT_CHARS = 120000;
 const DOCS_OCR_SNAPSHOT_FILE_TEXT_MAX_CHARS = 20000;
 const DOCS_OCR_SNAPSHOT_TOTAL_TEXT_MAX_CHARS = 120000;
-const DOCS_OCR_SHARED_CACHE_RELATIVE_PATH = 'documents/telegram-user-tasks/ocr-cache.json';
-const DOCS_OCR_BACKGROUND_MAX_JOBS_PER_REQUEST = 1; // OCR запускается по одному файлу, чтобы не забивать CPU.
-const DOCS_OCR_PDF_MAX_PAGES_PER_FILE = 8; // Один PDF обрабатывает только первые страницы в рамках фонового OCR.
+const DOCS_OCR_SEARCH_TOTAL_TEXT_MAX_CHARS = 1000000;
+const DOCS_OCR_SEARCH_TERMS_MAX_CHARS = 12000;
+const DOCS_OCR_SHARED_CACHE_RELATIVE_PATH = 'documents/telegram-user-tasks/ocr-cache/index.json';
+const DOCS_OCR_SHARED_CACHE_LEGACY_RELATIVE_PATH = 'documents/telegram-user-tasks/ocr-cache.json';
+const DOCS_OCR_CIRCUIT_BREAKER_RELATIVE_PATH = 'documents/telegram-user-tasks/ocr-cache/circuit-breaker.json';
+const DOCS_OCR_BACKGROUND_MAX_JOBS_PER_REQUEST = 1; // Ручной запуск из админки обрабатывает только один файл.
+const DOCS_OCR_PDF_MAX_PAGES_PER_FILE = 8; // Сканированный PDF читается постранично, одновременно в памяти находится одна страница.
+const DOCS_OCR_MAX_LOAD_AVERAGE = 8.0;
+const DOCS_OCR_COMMAND_TIMEOUT_SECONDS = 20;
+const DOCS_OCR_LOCK_FILENAME = 'docs_ocr_global.lock';
+const DOCS_OCR_QUEUE_LOCK_FILENAME = 'docs_ocr_queue.lock';
+const DOCS_OCR_WORKER_LOCK_FILENAME = 'docs_ocr_worker.lock';
+const DOCS_OCR_PROCESSING_STALE_SECONDS = 600; // Хватает на постраничный PDF; после десяти минут задание считается оборванным.
+const DOCS_OCR_WORKER_MAX_JOBS_PER_RUN = 3;
+const DOCS_OCR_WORKER_MAX_RUNTIME_SECONDS = 50;
+const DOCS_OCR_WORKER_MAX_ATTEMPTS = 8;
+const DOCS_OCR_WORKER_RETRY_BASE_SECONDS = 60;
+const DOCS_OCR_WORKER_BACKFILL_LIMIT = 50;
+const DOCS_OCR_SPOOL_DIRECTORY = DOCS_MAINADMIN_STORAGE_DIR . '/ocr-queue';
+const DOCS_OCR_SHARED_CACHE_MAX_ITEMS = 2000;
+const DOCS_OCR_SHARED_CACHE_MAX_QUEUED_ITEMS = 200;
+const DOCS_OCR_MONITOR_ITEMS_LIMIT = 100; // Админка получает только актуальную выборку, полные счётчики сохраняются.
+const DOCS_OCR_CIRCUIT_BREAKER_COOLDOWN_SECONDS = 900; // 15 минут: OCR сам включится после паузы.
+const DOCS_OCR_CIRCUIT_BREAKER_MAX_EVENTS = 20;
 const DOCS_S3_READ_MAX_BYTES = 1048576; // 1 МБ: админский предпросмотр читает только текстовые файлы.
-
-$GLOBALS['docs_ocr_background_jobs'] = [];
-$GLOBALS['docs_ocr_background_shutdown_registered'] = false;
 
 function sanitize_instruction(?string $value): string
 {
@@ -4567,7 +4585,8 @@ function docs_apply_cold_storage_metadata(
     string $folder,
     string $relativePath,
     string $localPath,
-    bool $warmOcrCache = true
+    bool $warmOcrCache = true,
+    array $ocrContext = []
 ): array
 {
     $upload = docs_upload_file_to_cold_storage($localPath, $folder, $relativePath);
@@ -4580,9 +4599,10 @@ function docs_apply_cold_storage_metadata(
         $upload
     );
 
-    if ($warmOcrCache && docs_ocr_enqueue_shared_cache_warm_for_stored_file($storedFile, $folder, $localPath)) {
+    if ($warmOcrCache && docs_ocr_enqueue_shared_cache_warm_for_stored_file($storedFile, $folder, $localPath, $ocrContext)) {
         $storedFile['ocrStatus'] = 'queued';
         $storedFile['ocrQueuedAt'] = date('c');
+        $storedFile['ocrSignature'] = docs_ocr_build_snapshot_file_signature($storedFile, $folder, [$localPath]);
     }
 
     return $storedFile;
@@ -7239,7 +7259,10 @@ function docs_attach_uploaded_outgoing_files_to_record(array &$record, string $f
             'uploadedByKey' => $privateFiles ? $authorKey : ($authorKey !== '' ? $authorKey : sanitize_text_field((string) ($record['updatedByKey'] ?? ($record['createdByKey'] ?? '')), 200)),
         ];
         $relativePath = ($privateFiles ? '.outgoing-private/' : '') . $storedName;
-        $record['files'][] = docs_apply_cold_storage_metadata($fileEntry, $folder, $relativePath, $target);
+        $record['files'][] = docs_apply_cold_storage_metadata($fileEntry, $folder, $relativePath, $target, true, [
+            'source' => 'outgoing',
+            'record' => sanitize_text_field((string) ($record['outgoingNumber'] ?? ($record['id'] ?? '')), 160),
+        ]);
     };
 
     if (is_array($names)) {
@@ -8701,6 +8724,7 @@ function docs_prepare_responses_for_record(array &$record, string $folder): void
             'storedName' => $storedName,
             'size' => isset($response['size']) ? (int) $response['size'] : 0,
             'uploadedAt' => isset($response['uploadedAt']) ? (string) $response['uploadedAt'] : '',
+            'url' => sanitize_text_field((string) ($response['url'] ?? ''), 500),
             'uploadedBy' => sanitize_text_field((string) ($response['uploadedBy'] ?? ''), 200),
             'uploadedByKey' => sanitize_text_field((string) ($response['uploadedByKey'] ?? ''), 200),
             'uploadedByName' => sanitize_text_field((string) ($response['uploadedByName'] ?? ($response['uploadedBy'] ?? '')), 200),
@@ -8708,6 +8732,14 @@ function docs_prepare_responses_for_record(array &$record, string $folder): void
             'uploadedById' => sanitize_text_field((string) ($response['uploadedById'] ?? ''), 120),
             'uploadedByLogin' => sanitize_text_field((string) ($response['uploadedByLogin'] ?? ''), 120),
         ];
+        $item = array_merge($item, docs_prepare_cold_storage_file_payload($response));
+
+        foreach (['ocrStatus', 'ocrSignature', 'ocrMethod', 'ocrUpdatedAt', 'ocrQueuedAt', 'ocrError'] as $ocrField) {
+            $value = sanitize_text_field((string) ($response[$ocrField] ?? ''), $ocrField === 'ocrError' ? 500 : 160);
+            if ($value !== '') {
+                $item[$ocrField] = $value;
+            }
+        }
 
         if ($documentId !== '') {
             if (empty($item['url'])) {
@@ -9015,33 +9047,32 @@ function docs_ocr_snapshot_file_display_name(array $file): string
 
 function docs_ocr_build_snapshot_file_signature(array $file, string $folder, array $pathCandidates): string
 {
-    $localStats = [];
-    foreach ($pathCandidates as $pathCandidate) {
-        if (!is_string($pathCandidate) || $pathCandidate === '' || !is_file($pathCandidate)) {
-            continue;
+    $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
+    $coldKey = docs_extract_cold_storage_key($file);
+    $size = max(0, (int) ($file['size'] ?? 0));
+    if ($size <= 0) {
+        foreach ($pathCandidates as $pathCandidate) {
+            if (is_string($pathCandidate) && $pathCandidate !== '' && is_file($pathCandidate)) {
+                $size = max(0, (int) (@filesize($pathCandidate) ?: 0));
+                if ($size > 0) {
+                    break;
+                }
+            }
         }
-
-        $localStats[] = [
-            'path' => $pathCandidate,
-            'size' => (int) (@filesize($pathCandidate) ?: 0),
-            'mtime' => (int) (@filemtime($pathCandidate) ?: 0),
-        ];
     }
 
-    $cold = isset($file['coldStorage']) && is_array($file['coldStorage']) ? $file['coldStorage'] : [];
+    // Загруженное имя генерируется сервером и остаётся неизменным при переносе
+    // между локальным диском и S3. Поэтому оно является главным идентификатором,
+    // а размер нужен только для старых записей без storedName.
+    $fileKey = $storedName !== '' ? $storedName : $coldKey;
     $parts = [
         'folder' => $folder,
-        'name' => docs_ocr_snapshot_file_display_name($file),
-        'storedName' => sanitize_text_field((string) ($file['storedName'] ?? ''), 255),
-        'url' => sanitize_text_field((string) ($file['url'] ?? ''), 500),
-        'size' => (int) ($file['size'] ?? 0),
-        'uploadedAt' => sanitize_text_field((string) ($file['uploadedAt'] ?? ($file['createdAt'] ?? '')), 80),
-        'storageProvider' => sanitize_text_field((string) ($file['storageProvider'] ?? ''), 80),
-        'coldKey' => docs_extract_cold_storage_key($file),
-        'coldStatus' => sanitize_text_field((string) ($cold['status'] ?? ''), 80),
-        'coldUpdatedAt' => sanitize_text_field((string) ($cold['updatedAt'] ?? ''), 80),
-        'localStats' => $localStats,
+        'fileKey' => $fileKey,
+        'name' => $fileKey !== '' ? $fileKey : docs_ocr_snapshot_file_display_name($file),
     ];
+    if ($storedName === '') {
+        $parts['size'] = $size;
+    }
 
     $encoded = json_encode($parts, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 
@@ -9162,6 +9193,7 @@ function docs_ocr_collect_snapshot_cache(array $snapshot): array
 
                 $cache[$signature] = array_filter([
                     'ocrText' => isset($file['ocrText']) ? docs_ocr_normalize_text((string) $file['ocrText']) : '',
+                    'ocrSearchTerms' => isset($file['ocrSearchTerms']) ? docs_ocr_build_search_terms((string) $file['ocrSearchTerms']) : '',
                     'ocrStatus' => $status,
                     'ocrMethod' => sanitize_text_field((string) ($file['ocrMethod'] ?? ''), 120),
                     'ocrUpdatedAt' => sanitize_text_field((string) ($file['ocrUpdatedAt'] ?? ''), 80),
@@ -9177,10 +9209,46 @@ function docs_ocr_collect_snapshot_cache(array $snapshot): array
     return $cache;
 }
 
+function docs_ocr_prepare_cache_file_metadata(array $file): array
+{
+    $metadata = array_filter([
+        'originalName' => sanitize_text_field((string) ($file['originalName'] ?? ''), 255),
+        'name' => sanitize_text_field((string) ($file['name'] ?? ''), 255),
+        'storedName' => sanitize_text_field((string) ($file['storedName'] ?? ''), 255),
+        'url' => sanitize_text_field((string) ($file['url'] ?? ''), 500),
+        'storageProvider' => sanitize_text_field((string) ($file['storageProvider'] ?? ''), 80),
+        'size' => isset($file['size']) ? max(0, (int) $file['size']) : 0,
+        'uploadedAt' => sanitize_text_field((string) ($file['uploadedAt'] ?? ($file['createdAt'] ?? '')), 80),
+        'ocrSignature' => sanitize_text_field((string) ($file['ocrSignature'] ?? ''), 120),
+    ], static function ($value) {
+        return $value !== '' && $value !== null && $value !== 0;
+    });
+
+    if (isset($file['coldStorage']) && is_array($file['coldStorage'])) {
+        $coldStorage = array_filter([
+            'provider' => sanitize_text_field((string) ($file['coldStorage']['provider'] ?? DOCS_COLD_STORAGE_PROVIDER), 80),
+            'remote' => sanitize_text_field((string) ($file['coldStorage']['remote'] ?? docs_rclone_remote()), 160),
+            'key' => sanitize_text_field((string) ($file['coldStorage']['key'] ?? ''), 1000),
+            'status' => sanitize_text_field((string) ($file['coldStorage']['status'] ?? ''), 80),
+            'updatedAt' => sanitize_text_field((string) ($file['coldStorage']['updatedAt'] ?? ''), 80),
+        ], static function ($value) {
+            return $value !== '' && $value !== null;
+        });
+        if (array_key_exists('localFallback', $file['coldStorage'])) {
+            $coldStorage['localFallback'] = !empty($file['coldStorage']['localFallback']);
+        }
+        if (!empty($coldStorage['key'])) {
+            $metadata['coldStorage'] = $coldStorage;
+        }
+    }
+
+    return $metadata;
+}
+
 function docs_ocr_normalize_cache_entry(array $entry, string $signature): array
 {
     $status = sanitize_text_field((string) ($entry['ocrStatus'] ?? ($entry['status'] ?? '')), 60);
-    if (!in_array($status, ['ready', 'empty', 'unsupported', 'error', 'dependency_missing'], true)) {
+    if (!in_array($status, ['queued', 'processing', 'ready', 'empty', 'unsupported', 'skipped', 'error', 'dependency_missing'], true)) {
         return [];
     }
 
@@ -9191,11 +9259,15 @@ function docs_ocr_normalize_cache_entry(array $entry, string $signature): array
     ];
 
     $text = docs_ocr_normalize_text((string) ($entry['ocrText'] ?? ($entry['text'] ?? '')));
+    $searchTerms = docs_ocr_build_search_terms((string) ($entry['ocrSearchTerms'] ?? $text));
     if ($status === 'ready' && $text !== '') {
         if (mb_strlen($text, 'UTF-8') > DOCS_OCR_SNAPSHOT_FILE_TEXT_MAX_CHARS) {
             $text = mb_substr($text, 0, DOCS_OCR_SNAPSHOT_FILE_TEXT_MAX_CHARS, 'UTF-8');
         }
         $normalized['ocrText'] = $text;
+        if ($searchTerms !== '') {
+            $normalized['ocrSearchTerms'] = $searchTerms;
+        }
     }
 
     $method = sanitize_text_field((string) ($entry['ocrMethod'] ?? ($entry['method'] ?? '')), 120);
@@ -9206,6 +9278,44 @@ function docs_ocr_normalize_cache_entry(array $entry, string $signature): array
     $error = sanitize_text_field((string) ($entry['ocrError'] ?? ($entry['error'] ?? '')), 500);
     if ($error !== '') {
         $normalized['ocrError'] = $error;
+    }
+
+    foreach (['ocrFolder', 'ocrOrganization', 'ocrSource', 'ocrRecord', 'ocrFileName', 'ocrStartedAt'] as $field) {
+        $value = sanitize_text_field((string) ($entry[$field] ?? ''), $field === 'ocrFileName' ? 255 : 160);
+        if ($value !== '') {
+            $normalized[$field] = $value;
+        }
+    }
+
+    if (isset($entry['ocrAttempts'])) {
+        $normalized['ocrAttempts'] = max(0, (int) $entry['ocrAttempts']);
+    }
+    if (isset($entry['ocrPages'])) {
+        $normalized['ocrPages'] = max(0, (int) $entry['ocrPages']);
+    }
+    $nextAttemptAt = sanitize_text_field((string) ($entry['ocrNextAttemptAt'] ?? ''), 80);
+    if ($nextAttemptAt !== '') {
+        $normalized['ocrNextAttemptAt'] = $nextAttemptAt;
+    }
+
+    if (isset($entry['ocrPathCandidates']) && is_array($entry['ocrPathCandidates'])) {
+        $paths = [];
+        foreach ($entry['ocrPathCandidates'] as $path) {
+            if (!is_string($path) || trim($path) === '') {
+                continue;
+            }
+            $paths[] = $path;
+        }
+        if (!empty($paths)) {
+            $normalized['ocrPathCandidates'] = array_values(array_unique($paths));
+        }
+    }
+
+    if (isset($entry['ocrFile']) && is_array($entry['ocrFile'])) {
+        $file = docs_ocr_prepare_cache_file_metadata($entry['ocrFile']);
+        if (!empty($file)) {
+            $normalized['ocrFile'] = $file;
+        }
     }
 
     return $normalized;
@@ -9219,10 +9329,23 @@ function docs_ocr_shared_cache_key(): string
     );
 }
 
+function docs_ocr_shared_cache_read_keys(): array
+{
+    $keys = [];
+    foreach ([DOCS_OCR_SHARED_CACHE_RELATIVE_PATH, DOCS_OCR_SHARED_CACHE_LEGACY_RELATIVE_PATH] as $relativePath) {
+        $key = docs_build_cold_storage_key(MINI_APP_USER_TASKS_SNAPSHOT_STORAGE_FOLDER, $relativePath);
+        if ($key !== '') {
+            $keys[$key] = true;
+        }
+    }
+
+    return array_keys($keys);
+}
+
 function docs_load_ocr_shared_cache(): array
 {
-    $key = docs_ocr_shared_cache_key();
-    if ($key === '') {
+    $keys = docs_ocr_shared_cache_read_keys();
+    if (empty($keys)) {
         return [];
     }
 
@@ -9231,13 +9354,20 @@ function docs_load_ocr_shared_cache(): array
         return [];
     }
 
-    $download = docs_run_rclone_command(['copyto', docs_cold_storage_remote_path($key), $tempPath], 15);
-    if (empty($download['ok'])) {
-        @unlink($tempPath);
-        return [];
+    $decoded = null;
+    foreach ($keys as $key) {
+        $download = docs_run_rclone_command(['copyto', docs_cold_storage_remote_path($key), $tempPath], 15);
+        if (empty($download['ok'])) {
+            continue;
+        }
+
+        $candidate = docs_read_mini_app_user_tasks_snapshot_json($tempPath);
+        if (is_array($candidate)) {
+            $decoded = $candidate;
+            break;
+        }
     }
 
-    $decoded = docs_read_mini_app_user_tasks_snapshot_json($tempPath);
     @unlink($tempPath);
     if (!is_array($decoded)) {
         return [];
@@ -9264,11 +9394,87 @@ function docs_load_ocr_shared_cache(): array
     return $cache;
 }
 
-function docs_save_ocr_shared_cache(array $cache): void
+function docs_prune_ocr_shared_cache_items(array $items): array
+{
+    if (empty($items)) {
+        return [];
+    }
+
+    uasort($items, static function (array $left, array $right): int {
+        $leftStatus = sanitize_text_field((string) ($left['ocrStatus'] ?? ''), 60);
+        $rightStatus = sanitize_text_field((string) ($right['ocrStatus'] ?? ''), 60);
+        $priority = [
+            'ready' => 5,
+            'empty' => 4,
+            'unsupported' => 3,
+            'skipped' => 3,
+            'error' => 2,
+            'dependency_missing' => 2,
+            'processing' => 1,
+            'queued' => 1,
+        ];
+        $leftPriority = $priority[$leftStatus] ?? 0;
+        $rightPriority = $priority[$rightStatus] ?? 0;
+        if ($leftPriority !== $rightPriority) {
+            return $rightPriority <=> $leftPriority;
+        }
+
+        if (($leftStatus === 'queued' || $leftStatus === 'processing') && $leftStatus === $rightStatus) {
+            return strcmp(
+                sanitize_text_field((string) ($left['ocrUpdatedAt'] ?? ''), 80),
+                sanitize_text_field((string) ($right['ocrUpdatedAt'] ?? ''), 80)
+            );
+        }
+
+        return strcmp(
+            sanitize_text_field((string) ($right['ocrUpdatedAt'] ?? ''), 80),
+            sanitize_text_field((string) ($left['ocrUpdatedAt'] ?? ''), 80)
+        );
+    });
+
+    $pruned = [];
+    $queuedCount = 0;
+    foreach ($items as $signature => $entry) {
+        if (count($pruned) >= DOCS_OCR_SHARED_CACHE_MAX_ITEMS) {
+            break;
+        }
+
+        $status = sanitize_text_field((string) ($entry['ocrStatus'] ?? ''), 60);
+        if ($status === 'queued' || $status === 'processing') {
+            if ($queuedCount >= DOCS_OCR_SHARED_CACHE_MAX_QUEUED_ITEMS) {
+                continue;
+            }
+            $queuedCount++;
+        }
+
+        $pruned[$signature] = $entry;
+    }
+
+    return $pruned;
+}
+
+function docs_ocr_count_pending_cache_items(array $cache): int
+{
+    $count = 0;
+    foreach ($cache as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+
+        $status = sanitize_text_field((string) ($entry['ocrStatus'] ?? ''), 60);
+        if ($status === 'queued' || $status === 'processing') {
+            $count++;
+        }
+    }
+
+    return $count;
+}
+
+function docs_save_ocr_shared_cache(array $cache): bool
 {
     $key = docs_ocr_shared_cache_key();
     if ($key === '' || empty($cache)) {
-        return;
+        return false;
     }
 
     $items = [];
@@ -9289,8 +9495,10 @@ function docs_save_ocr_shared_cache(array $cache): void
     }
 
     if (empty($items)) {
-        return;
+        return false;
     }
+
+    $items = docs_prune_ocr_shared_cache_items($items);
 
     $payload = [
         'version' => 1,
@@ -9302,107 +9510,706 @@ function docs_save_ocr_shared_cache(array $cache): void
 
     $encoded = json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     if ($encoded === false) {
-        return;
+        return false;
     }
 
     $tempPath = tempnam(sys_get_temp_dir(), 'docs_ocr_cache_');
     if (!is_string($tempPath) || $tempPath === '') {
-        return;
+        return false;
     }
 
     $written = @file_put_contents($tempPath, $encoded . PHP_EOL, LOCK_EX);
     if ($written === false) {
         @unlink($tempPath);
-        return;
+        return false;
     }
 
-    docs_run_rclone_command(['copyto', $tempPath, docs_cold_storage_remote_path($key)], 20);
+    $upload = docs_run_rclone_command(['copyto', $tempPath, docs_cold_storage_remote_path($key)], 20);
     @unlink($tempPath);
+
+    return !empty($upload['ok']);
 }
 
-function docs_ocr_run_background_jobs(): void
+function docs_ocr_circuit_breaker_key(): string
 {
-    $jobs = isset($GLOBALS['docs_ocr_background_jobs']) && is_array($GLOBALS['docs_ocr_background_jobs'])
-        ? $GLOBALS['docs_ocr_background_jobs']
-        : [];
-    $GLOBALS['docs_ocr_background_jobs'] = [];
+    return docs_build_cold_storage_key(
+        MINI_APP_USER_TASKS_SNAPSHOT_STORAGE_FOLDER,
+        DOCS_OCR_CIRCUIT_BREAKER_RELATIVE_PATH
+    );
+}
 
-    if (empty($jobs)) {
+function docs_ocr_default_circuit_breaker_state(): array
+{
+    return [
+        'version' => 1,
+        'state' => 'closed',
+        'active' => false,
+        'reason' => '',
+        'message' => '',
+        'trippedAt' => '',
+        'disabledUntil' => '',
+        'updatedAt' => date('c'),
+        'cooldownSeconds' => DOCS_OCR_CIRCUIT_BREAKER_COOLDOWN_SECONDS,
+        'details' => [],
+        'events' => [],
+    ];
+}
+
+function docs_ocr_normalize_circuit_breaker_event(array $event): array
+{
+    $normalized = [
+        'time' => sanitize_text_field((string) ($event['time'] ?? date('c')), 80),
+        'reason' => sanitize_text_field((string) ($event['reason'] ?? ''), 120),
+        'message' => sanitize_text_field((string) ($event['message'] ?? ''), 500),
+    ];
+
+    if (isset($event['details']) && is_array($event['details'])) {
+        $normalized['details'] = docs_normalize_debug_details($event['details']);
+    }
+
+    return array_filter($normalized, static function ($value) {
+        return $value !== '' && $value !== null && $value !== [];
+    });
+}
+
+function docs_ocr_normalize_circuit_breaker_state($state): array
+{
+    $base = docs_ocr_default_circuit_breaker_state();
+    if (!is_array($state)) {
+        return $base;
+    }
+
+    $status = sanitize_text_field((string) ($state['state'] ?? 'closed'), 40);
+    if (!in_array($status, ['open', 'closed'], true)) {
+        $status = 'closed';
+    }
+
+    $disabledUntil = sanitize_text_field((string) ($state['disabledUntil'] ?? ''), 80);
+    $disabledUntilTimestamp = $disabledUntil !== '' ? strtotime($disabledUntil) : false;
+    $active = $status === 'open' && $disabledUntilTimestamp !== false && $disabledUntilTimestamp > time();
+
+    $events = [];
+    if (isset($state['events']) && is_array($state['events'])) {
+        foreach (array_slice(array_values($state['events']), -DOCS_OCR_CIRCUIT_BREAKER_MAX_EVENTS) as $event) {
+            if (is_array($event)) {
+                $events[] = docs_ocr_normalize_circuit_breaker_event($event);
+            }
+        }
+    }
+
+    return [
+        'version' => 1,
+        'state' => $status,
+        'active' => $active,
+        'reason' => sanitize_text_field((string) ($state['reason'] ?? ''), 120),
+        'message' => sanitize_text_field((string) ($state['message'] ?? ''), 500),
+        'trippedAt' => sanitize_text_field((string) ($state['trippedAt'] ?? ''), 80),
+        'disabledUntil' => $disabledUntil,
+        'updatedAt' => sanitize_text_field((string) ($state['updatedAt'] ?? date('c')), 80),
+        'cooldownSeconds' => DOCS_OCR_CIRCUIT_BREAKER_COOLDOWN_SECONDS,
+        'details' => isset($state['details']) && is_array($state['details'])
+            ? docs_normalize_debug_details($state['details'])
+            : [],
+        'events' => $events,
+    ];
+}
+
+function docs_load_ocr_circuit_breaker_state(): array
+{
+    if (isset($GLOBALS['docs_ocr_circuit_breaker_state_cache'])
+        && is_array($GLOBALS['docs_ocr_circuit_breaker_state_cache'])) {
+        return $GLOBALS['docs_ocr_circuit_breaker_state_cache'];
+    }
+
+    $key = docs_ocr_circuit_breaker_key();
+    if ($key === '') {
+        $GLOBALS['docs_ocr_circuit_breaker_state_cache'] = docs_ocr_default_circuit_breaker_state();
+        return $GLOBALS['docs_ocr_circuit_breaker_state_cache'];
+    }
+
+    $tempPath = tempnam(sys_get_temp_dir(), 'docs_ocr_breaker_');
+    if (!is_string($tempPath) || $tempPath === '') {
+        $GLOBALS['docs_ocr_circuit_breaker_state_cache'] = docs_ocr_default_circuit_breaker_state();
+        return $GLOBALS['docs_ocr_circuit_breaker_state_cache'];
+    }
+
+    $download = docs_run_rclone_command(['copyto', docs_cold_storage_remote_path($key), $tempPath], 10);
+    if (empty($download['ok'])) {
+        @unlink($tempPath);
+        $GLOBALS['docs_ocr_circuit_breaker_state_cache'] = docs_ocr_default_circuit_breaker_state();
+        return $GLOBALS['docs_ocr_circuit_breaker_state_cache'];
+    }
+
+    $decoded = docs_read_mini_app_user_tasks_snapshot_json($tempPath);
+    @unlink($tempPath);
+    $GLOBALS['docs_ocr_circuit_breaker_state_cache'] = docs_ocr_normalize_circuit_breaker_state($decoded);
+
+    return $GLOBALS['docs_ocr_circuit_breaker_state_cache'];
+}
+
+function docs_save_ocr_circuit_breaker_state(array $state): void
+{
+    $key = docs_ocr_circuit_breaker_key();
+    if ($key === '') {
         return;
     }
 
-    if (!function_exists('fastcgi_finish_request')) {
+    $state = docs_ocr_normalize_circuit_breaker_state($state);
+    $state['updatedAt'] = date('c');
+    $encoded = json_encode($state, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if ($encoded === false) {
         return;
     }
 
-    @ignore_user_abort(true);
-    @set_time_limit(0);
-    @fastcgi_finish_request();
+    $tempPath = tempnam(sys_get_temp_dir(), 'docs_ocr_breaker_');
+    if (!is_string($tempPath) || $tempPath === '') {
+        return;
+    }
 
-    $processed = 0;
-    foreach ($jobs as $job) {
-        if ($processed >= DOCS_OCR_BACKGROUND_MAX_JOBS_PER_REQUEST) {
+    $written = @file_put_contents($tempPath, $encoded . PHP_EOL, LOCK_EX);
+    if ($written !== false) {
+        docs_run_rclone_command(['copyto', $tempPath, docs_cold_storage_remote_path($key)], 15);
+    }
+    @unlink($tempPath);
+
+    $GLOBALS['docs_ocr_circuit_breaker_state_cache'] = $state;
+}
+
+function docs_ocr_circuit_breaker_status(): array
+{
+    $state = docs_load_ocr_circuit_breaker_state();
+    $state['checkedAt'] = date('c');
+    $state['path'] = DOCS_OCR_CIRCUIT_BREAKER_RELATIVE_PATH;
+
+    if (!empty($state['active'])) {
+        $until = strtotime((string) ($state['disabledUntil'] ?? ''));
+        $state['secondsRemaining'] = $until !== false ? max(0, $until - time()) : 0;
+        return $state;
+    }
+
+    if (($state['state'] ?? '') === 'open') {
+        $state['message'] = 'Предохранитель OCR уже остыл, следующий запрос попробует OCR снова.';
+    }
+    $state['secondsRemaining'] = 0;
+
+    return $state;
+}
+
+function docs_ocr_trip_circuit_breaker(string $reason, string $message, array $details = []): array
+{
+    $now = time();
+    $event = docs_ocr_normalize_circuit_breaker_event([
+        'time' => date('c', $now),
+        'reason' => $reason,
+        'message' => $message,
+        'details' => $details,
+    ]);
+
+    $state = docs_load_ocr_circuit_breaker_state();
+    $events = isset($state['events']) && is_array($state['events']) ? $state['events'] : [];
+    $events[] = $event;
+    $events = array_slice($events, -DOCS_OCR_CIRCUIT_BREAKER_MAX_EVENTS);
+
+    $state = [
+        'version' => 1,
+        'state' => 'open',
+        'active' => true,
+        'reason' => sanitize_text_field($reason, 120),
+        'message' => sanitize_text_field($message, 500),
+        'trippedAt' => date('c', $now),
+        'disabledUntil' => date('c', $now + DOCS_OCR_CIRCUIT_BREAKER_COOLDOWN_SECONDS),
+        'updatedAt' => date('c', $now),
+        'cooldownSeconds' => DOCS_OCR_CIRCUIT_BREAKER_COOLDOWN_SECONDS,
+        'details' => docs_normalize_debug_details($details),
+        'events' => $events,
+    ];
+
+    docs_save_ocr_circuit_breaker_state($state);
+    docs_write_response_log('OCR предохранитель отключил запуск', [
+        'reason' => $reason,
+        'message' => $message,
+        'details' => $details,
+        'disabledUntil' => $state['disabledUntil'],
+    ]);
+
+    return docs_ocr_normalize_circuit_breaker_state($state);
+}
+
+function docs_ocr_reset_circuit_breaker(): array
+{
+    $previous = docs_load_ocr_circuit_breaker_state();
+    $events = isset($previous['events']) && is_array($previous['events']) ? $previous['events'] : [];
+    $events[] = docs_ocr_normalize_circuit_breaker_event([
+        'time' => date('c'),
+        'reason' => 'manual_reset',
+        'message' => 'Предохранитель OCR сброшен администратором.',
+    ]);
+
+    $state = docs_ocr_default_circuit_breaker_state();
+    $state['message'] = 'Предохранитель OCR сброшен администратором.';
+    $state['events'] = array_slice($events, -DOCS_OCR_CIRCUIT_BREAKER_MAX_EVENTS);
+    docs_save_ocr_circuit_breaker_state($state);
+
+    return docs_ocr_circuit_breaker_status();
+}
+
+function docs_ocr_effective_load_limit(): float
+{
+    $configured = getenv('BIMMAX_DOCS_OCR_MAX_LOAD');
+    if (is_string($configured) && is_numeric($configured) && (float) $configured > 0) {
+        return max(0.5, min(64.0, (float) $configured));
+    }
+
+    $cpuCount = 0;
+    $cpuInfo = '/proc/cpuinfo';
+    if (is_file($cpuInfo) && is_readable($cpuInfo)) {
+        $content = @file_get_contents($cpuInfo);
+        if (is_string($content)) {
+            $matched = preg_match_all('/^processor\s*:/m', $content);
+            $cpuCount = $matched !== false ? (int) $matched : 0;
+        }
+    }
+
+    if ($cpuCount < 1) {
+        return min(2.0, DOCS_OCR_MAX_LOAD_AVERAGE);
+    }
+
+    return max(1.0, min(DOCS_OCR_MAX_LOAD_AVERAGE, $cpuCount * 0.75));
+}
+
+function docs_ocr_runtime_guard_status(): array
+{
+    $breaker = docs_ocr_circuit_breaker_status();
+    if (!empty($breaker['active'])) {
+        return [
+            'ok' => false,
+            'reason' => 'circuit_breaker_open',
+            'message' => 'OCR временно отключён предохранителем: ' . (string) ($breaker['message'] ?? 'подробности в мониторинге.'),
+            'circuitBreaker' => $breaker,
+        ];
+    }
+
+    $loadAverage = null;
+    if (function_exists('sys_getloadavg')) {
+        $values = @sys_getloadavg();
+        if (is_array($values) && isset($values[0]) && is_numeric($values[0])) {
+            $loadAverage = (float) $values[0];
+        }
+    }
+
+    $loadLimit = docs_ocr_effective_load_limit();
+    if ($loadAverage !== null && $loadAverage > $loadLimit) {
+        $breaker = docs_ocr_trip_circuit_breaker('high_load', 'OCR отключён предохранителем: сервер перегружен.', [
+            'loadAverage' => $loadAverage,
+            'loadLimit' => $loadLimit,
+        ]);
+
+        return [
+            'ok' => false,
+            'reason' => 'high_load',
+            'loadAverage' => $loadAverage,
+            'loadLimit' => $loadLimit,
+            'message' => 'OCR временно не запускается: сервер перегружен.',
+            'circuitBreaker' => $breaker,
+        ];
+    }
+
+    return [
+        'ok' => true,
+        'reason' => '',
+        'loadAverage' => $loadAverage,
+        'loadLimit' => $loadLimit,
+        'circuitBreaker' => $breaker,
+        'message' => '',
+    ];
+}
+
+function docs_ocr_lock_path(): string
+{
+    return rtrim(sys_get_temp_dir(), '/\\') . '/' . DOCS_OCR_LOCK_FILENAME;
+}
+
+function docs_ocr_queue_lock_path(): string
+{
+    return rtrim(sys_get_temp_dir(), '/\\') . '/' . DOCS_OCR_QUEUE_LOCK_FILENAME;
+}
+
+function docs_ocr_worker_lock_path(): string
+{
+    return rtrim(sys_get_temp_dir(), '/\\') . '/' . DOCS_OCR_WORKER_LOCK_FILENAME;
+}
+
+function docs_ocr_acquire_global_lock()
+{
+    $handle = @fopen(docs_ocr_lock_path(), 'c');
+    if (!is_resource($handle)) {
+        return null;
+    }
+
+    if (!@flock($handle, LOCK_EX | LOCK_NB)) {
+        @fclose($handle);
+        return null;
+    }
+
+    return $handle;
+}
+
+function docs_ocr_acquire_queue_lock()
+{
+    $handle = @fopen(docs_ocr_queue_lock_path(), 'c');
+    if (!is_resource($handle)) {
+        return null;
+    }
+
+    if (!@flock($handle, LOCK_EX | LOCK_NB)) {
+        @fclose($handle);
+        return null;
+    }
+
+    return $handle;
+}
+
+function docs_ocr_acquire_worker_lock()
+{
+    $handle = @fopen(docs_ocr_worker_lock_path(), 'c');
+    if (!is_resource($handle)) {
+        return null;
+    }
+
+    if (!@flock($handle, LOCK_EX | LOCK_NB)) {
+        @fclose($handle);
+        return null;
+    }
+
+    return $handle;
+}
+
+function docs_ocr_worker_is_running(): bool
+{
+    $lock = docs_ocr_acquire_worker_lock();
+    if (!is_resource($lock)) {
+        return true;
+    }
+
+    docs_ocr_release_global_lock($lock);
+
+    return false;
+}
+
+function docs_ocr_release_global_lock($handle): void
+{
+    if (!is_resource($handle)) {
+        return;
+    }
+
+    @flock($handle, LOCK_UN);
+    @fclose($handle);
+}
+
+function docs_ocr_release_queue_lock($handle): void
+{
+    docs_ocr_release_global_lock($handle);
+}
+
+function docs_ocr_spool_directory(): string
+{
+    static $resolvedDirectory = '';
+    if ($resolvedDirectory !== '') {
+        return $resolvedDirectory;
+    }
+
+    $candidates = [
+        DOCS_OCR_SPOOL_DIRECTORY,
+        rtrim(DOCUMENTS_ROOT, '/\\') . '/.ocr-queue',
+    ];
+    $directory = DOCS_OCR_SPOOL_DIRECTORY;
+    foreach ($candidates as $candidate) {
+        if (!is_string($candidate) || trim($candidate) === '') {
+            continue;
+        }
+        if (!is_dir($candidate)) {
+            @mkdir($candidate, 0770, true);
+        }
+        if (is_dir($candidate) && is_writable($candidate)) {
+            $directory = $candidate;
             break;
         }
-        if (!is_array($job)) {
-            continue;
-        }
-
-        $file = isset($job['file']) && is_array($job['file']) ? $job['file'] : [];
-        $folder = sanitize_folder_name((string) ($job['folder'] ?? ''));
-        $localPath = (string) ($job['localPath'] ?? '');
-        if (empty($file) || $folder === '' || $localPath === '') {
-            continue;
-        }
-
-        try {
-            docs_ocr_warm_shared_cache_for_stored_file($file, $folder, $localPath);
-        } catch (\Throwable $error) {
-            // OCR не должен влиять на сохранение задачи или ответ пользователю.
-        }
-        $processed++;
     }
+
+    if (is_dir($directory)) {
+        $htaccessPath = rtrim($directory, '/\\') . '/.htaccess';
+        if (!is_file($htaccessPath)) {
+            @file_put_contents($htaccessPath, "Require all denied\nDeny from all\n", LOCK_EX);
+            @chmod($htaccessPath, 0640);
+        }
+        $indexPath = rtrim($directory, '/\\') . '/index.html';
+        if (!is_file($indexPath)) {
+            @file_put_contents($indexPath, '', LOCK_EX);
+            @chmod($indexPath, 0640);
+        }
+    }
+
+    $resolvedDirectory = $directory;
+
+    return $directory;
 }
 
-function docs_ocr_register_background_shutdown(): void
+function docs_ocr_spool_signature_is_valid(string $signature): bool
 {
-    if (!empty($GLOBALS['docs_ocr_background_shutdown_registered'])) {
-        return;
-    }
-    $GLOBALS['docs_ocr_background_shutdown_registered'] = true;
-    register_shutdown_function('docs_ocr_run_background_jobs');
+    return preg_match('/^[a-f0-9]{40}$/', $signature) === 1;
 }
 
-function docs_ocr_enqueue_shared_cache_warm_for_stored_file(array $file, string $folder, string $localPath): bool
+function docs_ocr_spool_job_path(string $signature, string $state = 'queued'): string
+{
+    $signature = strtolower(trim($signature));
+    if (!docs_ocr_spool_signature_is_valid($signature)) {
+        return '';
+    }
+
+    $suffix = '';
+    if ($state === 'processing') {
+        $suffix = '.processing';
+    } elseif ($state === 'failed') {
+        $suffix = '.failed';
+    }
+
+    return rtrim(docs_ocr_spool_directory(), '/\\') . '/' . $signature . $suffix . '.json';
+}
+
+function docs_ocr_spool_normalize_paths($value): array
+{
+    if (!is_array($value)) {
+        return [];
+    }
+
+    $paths = [];
+    foreach ($value as $path) {
+        if (!is_string($path) || trim($path) === '') {
+            continue;
+        }
+        $path = trim($path);
+        if (strlen($path) > 2000) {
+            continue;
+        }
+        $paths[$path] = true;
+        if (count($paths) >= 20) {
+            break;
+        }
+    }
+
+    return array_keys($paths);
+}
+
+function docs_ocr_spool_normalize_job(array $job): array
+{
+    $signature = strtolower(sanitize_text_field((string) ($job['signature'] ?? ''), 120));
+    $folder = sanitize_folder_name((string) ($job['folder'] ?? ''));
+    $file = isset($job['file']) && is_array($job['file'])
+        ? docs_ocr_prepare_cache_file_metadata($job['file'])
+        : [];
+    $pathCandidates = docs_ocr_spool_normalize_paths($job['pathCandidates'] ?? []);
+    if (!docs_ocr_spool_signature_is_valid($signature) || $folder === '' || empty($file) || empty($pathCandidates)) {
+        return [];
+    }
+
+    $context = isset($job['context']) && is_array($job['context']) ? $job['context'] : [];
+    $queuedAt = sanitize_text_field((string) ($job['queuedAt'] ?? ''), 80);
+    if ($queuedAt === '') {
+        $queuedAt = date('c');
+    }
+
+    return [
+        'version' => 1,
+        'signature' => $signature,
+        'folder' => $folder,
+        'file' => $file,
+        'pathCandidates' => $pathCandidates,
+        'context' => [
+            'organization' => sanitize_text_field((string) ($context['organization'] ?? $folder), 160),
+            'source' => sanitize_text_field((string) ($context['source'] ?? 'upload'), 80),
+            'record' => sanitize_text_field((string) ($context['record'] ?? ''), 160),
+            'bucket' => sanitize_text_field((string) ($context['bucket'] ?? ''), 80),
+        ],
+        'status' => sanitize_text_field((string) ($job['status'] ?? 'queued'), 40),
+        'queuedAt' => $queuedAt,
+        'updatedAt' => date('c'),
+        'attempts' => max(0, (int) ($job['attempts'] ?? 0)),
+        'nextAttemptAt' => sanitize_text_field((string) ($job['nextAttemptAt'] ?? ''), 80),
+        'lastError' => sanitize_text_field((string) ($job['lastError'] ?? ''), 500),
+    ];
+}
+
+function docs_ocr_spool_read_job(string $path): array
+{
+    if ($path === '' || !is_file($path) || !is_readable($path)) {
+        return [];
+    }
+
+    $raw = @file_get_contents($path);
+    if (!is_string($raw) || trim($raw) === '') {
+        return [];
+    }
+
+    $decoded = json_decode($raw, true);
+
+    return is_array($decoded) ? docs_ocr_spool_normalize_job($decoded) : [];
+}
+
+function docs_ocr_spool_write_job(array $job, string $state = 'queued'): bool
+{
+    $job = docs_ocr_spool_normalize_job($job);
+    if (empty($job)) {
+        return false;
+    }
+
+    $job['status'] = $state;
+    $job['updatedAt'] = date('c');
+    $path = docs_ocr_spool_job_path((string) $job['signature'], $state);
+    if ($path === '') {
+        return false;
+    }
+
+    $encoded = json_encode($job, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if ($encoded === false) {
+        return false;
+    }
+
+    $directory = dirname($path);
+    $tempPath = @tempnam($directory, 'ocr_job_');
+    if (!is_string($tempPath) || $tempPath === '') {
+        return false;
+    }
+
+    $written = @file_put_contents($tempPath, $encoded . PHP_EOL, LOCK_EX);
+    if ($written === false) {
+        @unlink($tempPath);
+        return false;
+    }
+    @chmod($tempPath, 0640);
+
+    if (!@rename($tempPath, $path)) {
+        @unlink($tempPath);
+        return false;
+    }
+
+    return true;
+}
+
+function docs_ocr_spool_enqueue_job(array $job): bool
+{
+    $job = docs_ocr_spool_normalize_job($job);
+    if (empty($job)) {
+        return false;
+    }
+
+    $signature = (string) $job['signature'];
+    $queuedPath = docs_ocr_spool_job_path($signature, 'queued');
+    $processingPath = docs_ocr_spool_job_path($signature, 'processing');
+    if (is_file($queuedPath) || is_file($processingPath)) {
+        return true;
+    }
+
+    $failedPath = docs_ocr_spool_job_path($signature, 'failed');
+    if (is_file($failedPath)) {
+        $failedJob = docs_ocr_spool_read_job($failedPath);
+        if (!empty($failedJob)) {
+            $job = array_merge($failedJob, $job, [
+                'attempts' => 0,
+                'nextAttemptAt' => '',
+                'lastError' => '',
+                'queuedAt' => date('c'),
+            ]);
+        }
+    }
+
+    $written = docs_ocr_spool_write_job($job, 'queued');
+    if ($written && is_file($failedPath)) {
+        @unlink($failedPath);
+    }
+
+    return $written;
+}
+
+function docs_ocr_enqueue_shared_cache_warm_for_stored_file(
+    array $file,
+    string $folder,
+    string $localPath,
+    array $context = []
+): bool
 {
     $folder = sanitize_folder_name($folder);
     if ($folder === '' || $localPath === '' || !is_file($localPath) || !is_readable($localPath)) {
         return false;
     }
 
-    if (!isset($GLOBALS['docs_ocr_background_jobs']) || !is_array($GLOBALS['docs_ocr_background_jobs'])) {
-        $GLOBALS['docs_ocr_background_jobs'] = [];
+    if (!isset($context['source']) || !is_string($context['source']) || trim($context['source']) === '') {
+        $context['source'] = 'upload';
     }
 
-    $jobKey = sha1($folder . "\n" . $localPath);
-    foreach ($GLOBALS['docs_ocr_background_jobs'] as $job) {
-        if (is_array($job) && isset($job['jobKey']) && $job['jobKey'] === $jobKey) {
-            return true;
-        }
-    }
-
-    $GLOBALS['docs_ocr_background_jobs'][] = [
-        'jobKey' => $jobKey,
-        'file' => $file,
-        'folder' => $folder,
-        'localPath' => $localPath,
-    ];
-    docs_ocr_register_background_shutdown();
-
-    return true;
+    return docs_ocr_enqueue_shared_cache_warm_candidate($file, $folder, [$localPath], $context);
 }
 
-function docs_ocr_warm_shared_cache_for_stored_file(array $file, string $folder, string $localPath): array
+function docs_ocr_build_cache_monitoring_metadata(
+    array $file,
+    string $folder,
+    string $signature,
+    array $pathCandidates,
+    array $context
+): array {
+    $organization = sanitize_text_field((string) ($context['organization'] ?? $folder), 160);
+    if ($organization === '') {
+        $organization = $folder;
+    }
+
+    return [
+        'ocrSignature' => $signature,
+        'ocrFolder' => sanitize_text_field($folder, 160),
+        'ocrOrganization' => $organization,
+        'ocrSource' => sanitize_text_field((string) ($context['source'] ?? 'upload'), 80),
+        'ocrRecord' => sanitize_text_field((string) ($context['record'] ?? ''), 160),
+        'ocrFileName' => docs_ocr_snapshot_file_display_name($file),
+        'ocrFile' => docs_ocr_prepare_cache_file_metadata($file),
+        'ocrPathCandidates' => $pathCandidates,
+    ];
+}
+
+function docs_ocr_enqueue_shared_cache_warm_candidate(
+    array $file,
+    string $folder,
+    array $pathCandidates,
+    array $context = []
+): bool {
+    $folder = sanitize_folder_name($folder);
+    $pathCandidates = array_values(array_unique(array_filter($pathCandidates, static function ($path): bool {
+        return is_string($path) && $path !== '';
+    })));
+    if ($folder === '' || empty($file) || empty($pathCandidates)) {
+        return false;
+    }
+
+    $signature = docs_ocr_build_snapshot_file_signature($file, $folder, $pathCandidates);
+    if ($signature === '') {
+        return false;
+    }
+
+    return docs_ocr_spool_enqueue_job([
+        'signature' => $signature,
+        'file' => $file,
+        'folder' => $folder,
+        'pathCandidates' => $pathCandidates,
+        'context' => $context,
+        'queuedAt' => date('c'),
+    ]);
+}
+
+function docs_ocr_warm_shared_cache_for_stored_file(
+    array $file,
+    string $folder,
+    string $localPath,
+    ?array $pathCandidates = null,
+    bool $requeueOnThrottle = false,
+    string $expectedSignature = ''
+): array
 {
     if ($folder === '' || $localPath === '' || !is_file($localPath) || !is_readable($localPath)) {
         return [
@@ -9412,8 +10219,15 @@ function docs_ocr_warm_shared_cache_for_stored_file(array $file, string $folder,
         ];
     }
 
-    $pathCandidates = [$localPath];
-    $signature = docs_ocr_build_snapshot_file_signature($file, $folder, $pathCandidates);
+    $pathCandidates = is_array($pathCandidates) ? $pathCandidates : [$localPath];
+    $pathCandidates[] = $localPath;
+    $pathCandidates = array_values(array_unique(array_filter($pathCandidates, static function ($path): bool {
+        return is_string($path) && $path !== '';
+    })));
+    $expectedSignature = strtolower(sanitize_text_field($expectedSignature, 120));
+    $signature = docs_ocr_spool_signature_is_valid($expectedSignature)
+        ? $expectedSignature
+        : docs_ocr_build_snapshot_file_signature($file, $folder, $pathCandidates);
     if ($signature === '') {
         return [
             'status' => 'skipped',
@@ -9438,13 +10252,35 @@ function docs_ocr_warm_shared_cache_for_stored_file(array $file, string $folder,
     $result = docs_ocr_extract_text_for_file_path($localPath, docs_ocr_snapshot_file_display_name($file), $diagnostics);
     $elapsedMs = (int) max(0, round((microtime(true) - $startedAt) * 1000));
     $status = sanitize_text_field((string) ($result['status'] ?? 'error'), 60);
-    if (!in_array($status, ['ready', 'empty', 'unsupported', 'error', 'dependency_missing'], true)) {
+    if (!in_array($status, ['ready', 'empty', 'unsupported', 'error', 'dependency_missing', 'throttled'], true)) {
         $status = 'error';
+    }
+
+    if ($status === 'throttled') {
+        $nextStatus = $requeueOnThrottle ? 'queued' : 'skipped';
+        $nextMethod = $requeueOnThrottle ? 'background:queued' : ($result['method'] ?? 'runtime_guard');
+        docs_ocr_store_cache_result($signature, [
+            'ocrStatus' => $nextStatus,
+            'ocrError' => $result['error'] ?? '',
+            'ocrMethod' => $nextMethod,
+            'ocrStartedAt' => '',
+            'ocrUpdatedAt' => date('c'),
+        ]);
+
+        return [
+            'status' => 'skipped',
+            'reason' => 'throttled',
+            'message' => docs_ocr_result_status_message($status, (string) ($result['error'] ?? '')),
+            'method' => sanitize_text_field((string) ($result['method'] ?? ''), 120),
+            'textChars' => 0,
+            'elapsedMs' => $elapsedMs,
+        ];
     }
 
     $normalized = docs_ocr_normalize_cache_entry([
         'ocrStatus' => $status,
         'ocrText' => $result['text'] ?? '',
+        'ocrSearchTerms' => docs_ocr_build_search_terms((string) ($result['text'] ?? '')),
         'ocrError' => $result['error'] ?? '',
         'ocrMethod' => $result['method'] ?? '',
         'ocrUpdatedAt' => date('c'),
@@ -9459,8 +10295,28 @@ function docs_ocr_warm_shared_cache_for_stored_file(array $file, string $folder,
         ];
     }
 
-    $cache[$signature] = $normalized;
-    docs_save_ocr_shared_cache($cache);
+    $stored = docs_ocr_store_cache_result($signature, [
+        'ocrStatus' => $status,
+        'ocrText' => $result['text'] ?? '',
+        'ocrSearchTerms' => docs_ocr_build_search_terms((string) ($result['text'] ?? '')),
+        'ocrError' => $result['error'] ?? '',
+        'ocrMethod' => $result['method'] ?? '',
+        'ocrPages' => max(0, (int) ($result['pagesProcessed'] ?? 0)),
+        'ocrStartedAt' => '',
+        'ocrNextAttemptAt' => '',
+        'ocrUpdatedAt' => date('c'),
+    ]);
+    if (!$stored) {
+        return [
+            'status' => 'failed',
+            'reason' => 'cache_write_failed',
+            'message' => 'OCR выполнен, но результат не удалось сохранить в общий кэш.',
+            'method' => sanitize_text_field((string) ($result['method'] ?? ''), 120),
+            'textChars' => isset($result['text']) ? mb_strlen((string) $result['text'], 'UTF-8') : 0,
+            'pagesProcessed' => max(0, (int) ($result['pagesProcessed'] ?? 0)),
+            'elapsedMs' => $elapsedMs,
+        ];
+    }
 
     return [
         'status' => in_array($status, ['ready', 'empty', 'unsupported'], true) ? 'computed' : 'failed',
@@ -9468,6 +10324,7 @@ function docs_ocr_warm_shared_cache_for_stored_file(array $file, string $folder,
         'message' => docs_ocr_result_status_message($status, (string) ($result['error'] ?? '')),
         'method' => sanitize_text_field((string) ($result['method'] ?? ''), 120),
         'textChars' => isset($result['text']) ? mb_strlen((string) $result['text'], 'UTF-8') : 0,
+        'pagesProcessed' => max(0, (int) ($result['pagesProcessed'] ?? 0)),
         'elapsedMs' => $elapsedMs,
     ];
 }
@@ -9483,8 +10340,14 @@ function docs_ocr_result_status_message(string $status, string $error = ''): str
     if ($status === 'unsupported') {
         return 'Формат файла не поддержан для OCR.';
     }
+    if ($status === 'skipped') {
+        return $error !== '' ? sanitize_text_field($error, 500) : 'OCR не выполнялся, чтобы не перегружать сервер.';
+    }
     if ($status === 'dependency_missing') {
         return $error !== '' ? sanitize_text_field($error, 500) : 'OCR-зависимость недоступна серверу.';
+    }
+    if ($status === 'throttled') {
+        return $error !== '' ? sanitize_text_field($error, 500) : 'OCR временно отложен защитой нагрузки.';
     }
 
     return $error !== '' ? sanitize_text_field($error, 500) : 'OCR завершился с ошибкой.';
@@ -9501,81 +10364,185 @@ function docs_ocr_init_monitoring_summary(?string $requestedOrganization = null)
         'withText' => 0,
         'cacheItems' => 0,
         'cacheHits' => 0,
+        'processedFiles' => 0,
+        'queuedFiles' => 0,
+        'errorFiles' => 0,
+        'skippedFiles' => 0,
+        'staleProcessingFiles' => 0,
+        'queueTotal' => 0,
+        'errorTotal' => 0,
+        'skippedTotal' => 0,
+        'allTotal' => 0,
+        'queueItems' => [],
+        'errorItems' => [],
+        'skippedItems' => [],
+        'allItems' => [],
         'statuses' => [
             'ready' => 0,
             'empty' => 0,
             'unsupported' => 0,
+            'skipped' => 0,
             'queued' => 0,
+            'processing' => 0,
             'error' => 0,
             'dependency_missing' => 0,
+            'throttled' => 0,
             'not_started' => 0,
             'unknown' => 0,
         ],
         'errors' => [],
         'limits' => [
             'backgroundFilesPerRequest' => DOCS_OCR_BACKGROUND_MAX_JOBS_PER_REQUEST,
+            'workerFilesPerRun' => DOCS_OCR_WORKER_MAX_JOBS_PER_RUN,
+            'workerRuntimeSeconds' => DOCS_OCR_WORKER_MAX_RUNTIME_SECONDS,
+            'workerMaxAttempts' => DOCS_OCR_WORKER_MAX_ATTEMPTS,
+            'maxQueuedCacheItems' => DOCS_OCR_SHARED_CACHE_MAX_QUEUED_ITEMS,
+            'maxCacheItems' => DOCS_OCR_SHARED_CACHE_MAX_ITEMS,
+            'processingStaleSeconds' => DOCS_OCR_PROCESSING_STALE_SECONDS,
+            'monitorItemsLimit' => DOCS_OCR_MONITOR_ITEMS_LIMIT,
             'maxUploadBytes' => DOCS_OCR_TEST_MAX_FILE_SIZE,
             'maxUploadLabel' => docs_format_file_size(DOCS_OCR_TEST_MAX_FILE_SIZE),
             'maxPdfPagesPerFile' => DOCS_OCR_PDF_MAX_PAGES_PER_FILE,
             'maxTextCharsPerFile' => DOCS_OCR_SNAPSHOT_FILE_TEXT_MAX_CHARS,
             'maxTextCharsTotal' => DOCS_OCR_SNAPSHOT_TOTAL_TEXT_MAX_CHARS,
+            'searchTextCharsTotal' => DOCS_OCR_SEARCH_TOTAL_TEXT_MAX_CHARS,
+            'loadAverageLimit' => docs_ocr_effective_load_limit(),
         ],
         'cachePath' => DOCS_OCR_SHARED_CACHE_RELATIVE_PATH,
         'message' => '',
     ];
 }
 
-function docs_ocr_monitoring_record_file(
-    array &$summary,
+function docs_ocr_monitoring_build_file_item(
     array $file,
     string $folder,
-    array $pathCandidates,
-    array $cache,
-    array $context
-): void {
-    $summary['totalFiles']++;
-
-    $signature = sanitize_text_field((string) ($file['ocrSignature'] ?? ''), 120);
-    if ($signature === '') {
-        $signature = docs_ocr_build_snapshot_file_signature($file, $folder, $pathCandidates);
+    string $signature,
+    string $status,
+    ?array $cacheEntry,
+    array $context,
+    string $error = ''
+): array {
+    $updatedAt = '';
+    if ($cacheEntry !== null) {
+        $updatedAt = sanitize_text_field((string) ($cacheEntry['ocrUpdatedAt'] ?? ''), 80);
+    }
+    if ($updatedAt === '') {
+        $updatedAt = sanitize_text_field((string) ($file['ocrUpdatedAt'] ?? ($file['ocrQueuedAt'] ?? '')), 80);
     }
 
-    $cacheEntry = $signature !== '' && isset($cache[$signature]) && is_array($cache[$signature])
-        ? $cache[$signature]
-        : null;
+    $method = '';
     if ($cacheEntry !== null) {
+        $method = sanitize_text_field((string) ($cacheEntry['ocrMethod'] ?? ''), 120);
+    }
+    if ($method === '') {
+        $method = sanitize_text_field((string) ($file['ocrMethod'] ?? ''), 120);
+    }
+
+    $text = $cacheEntry !== null ? docs_ocr_normalize_text((string) ($cacheEntry['ocrText'] ?? '')) : '';
+
+    $isStale = $status === 'processing' && docs_ocr_processing_entry_is_stale($cacheEntry ?? []);
+
+    return array_filter([
+        'organization' => sanitize_text_field((string) ($context['organization'] ?? $folder), 160),
+        'folder' => sanitize_text_field($folder, 160),
+        'source' => sanitize_text_field((string) ($context['source'] ?? ''), 80),
+        'record' => sanitize_text_field((string) ($context['record'] ?? ''), 160),
+        'file' => docs_ocr_snapshot_file_display_name($file),
+        'status' => sanitize_text_field($status, 60),
+        'updatedAt' => $updatedAt,
+        'method' => $method,
+        'signature' => sanitize_text_field($signature, 120),
+        'hasText' => $text !== '',
+        'textChars' => $text !== '' ? mb_strlen($text, 'UTF-8') : 0,
+        'error' => sanitize_text_field($error, 500),
+        'attempts' => $cacheEntry !== null ? max(0, (int) ($cacheEntry['ocrAttempts'] ?? 0)) : 0,
+        'nextAttemptAt' => $cacheEntry !== null
+            ? sanitize_text_field((string) ($cacheEntry['ocrNextAttemptAt'] ?? ''), 80)
+            : '',
+        'stale' => $isStale,
+    ], static function ($value) {
+        return $value !== '' && $value !== null && $value !== false;
+    });
+}
+
+function docs_ocr_monitoring_record_cache_entry(array &$summary, string $signature, array $entry, bool $cacheHit = true): void
+{
+    $fileName = sanitize_text_field((string) ($entry['ocrFileName'] ?? ''), 255);
+    $file = isset($entry['ocrFile']) && is_array($entry['ocrFile']) ? $entry['ocrFile'] : [];
+    if ($fileName === '' && empty($file)) {
+        return;
+    }
+    if ($fileName !== '' && empty($file)) {
+        $file = ['originalName' => $fileName];
+    }
+
+    $folder = sanitize_folder_name((string) ($entry['ocrFolder'] ?? ''));
+    if ($folder === '') {
+        return;
+    }
+
+    $summary['totalFiles']++;
+    if ($cacheHit) {
         $summary['cacheHits']++;
     }
 
-    $status = sanitize_text_field((string) (
-        $cacheEntry['ocrStatus']
-        ?? $file['ocrStatus']
-        ?? ''
-    ), 60);
+    $status = sanitize_text_field((string) ($entry['ocrStatus'] ?? ''), 60);
     if ($status === '') {
-        $status = 'not_started';
+        $status = 'unknown';
     }
     if (!isset($summary['statuses'][$status])) {
         $status = 'unknown';
     }
     $summary['statuses'][$status]++;
+    if (in_array($status, ['ready', 'empty', 'unsupported'], true)) {
+        $summary['processedFiles']++;
+    } elseif ($status === 'queued' || $status === 'processing') {
+        $summary['queuedFiles']++;
+        if ($status === 'processing' && docs_ocr_processing_entry_is_stale($entry)) {
+            $summary['staleProcessingFiles']++;
+        }
+    } elseif ($status === 'skipped') {
+        $summary['skippedFiles']++;
+    } elseif ($status === 'error' || $status === 'dependency_missing') {
+        $summary['errorFiles']++;
+    }
 
-    $text = (string) ($cacheEntry['ocrText'] ?? ($file['ocrText'] ?? ''));
+    $text = (string) ($entry['ocrText'] ?? '');
     if (trim($text) !== '') {
         $summary['withText']++;
     }
 
-    $error = sanitize_text_field((string) ($cacheEntry['ocrError'] ?? ($file['ocrError'] ?? '')), 500);
-    if ($error !== '' && count($summary['errors']) < 8) {
-        $summary['errors'][] = array_filter([
-            'file' => docs_ocr_snapshot_file_display_name($file),
-            'status' => $status,
-            'error' => $error,
-            'source' => sanitize_text_field((string) ($context['source'] ?? ''), 80),
-            'record' => sanitize_text_field((string) ($context['record'] ?? ''), 160),
-        ], static function ($value) {
-            return $value !== '' && $value !== null;
-        });
+    $context = [
+        'organization' => sanitize_text_field((string) ($entry['ocrOrganization'] ?? $folder), 160),
+        'source' => sanitize_text_field((string) ($entry['ocrSource'] ?? ''), 80),
+        'record' => sanitize_text_field((string) ($entry['ocrRecord'] ?? ''), 160),
+    ];
+    $error = sanitize_text_field((string) ($entry['ocrError'] ?? ''), 500);
+    $item = docs_ocr_monitoring_build_file_item(
+        $file,
+        $folder,
+        $signature,
+        $status,
+        $entry,
+        $context,
+        $error
+    );
+
+    $summary['allTotal']++;
+    $summary['allItems'][] = $item;
+
+    if ($status === 'queued' || $status === 'processing') {
+        $summary['queueTotal']++;
+        $summary['queueItems'][] = $item;
+    } elseif ($status === 'skipped') {
+        $summary['skippedTotal']++;
+        $summary['skippedItems'][] = $item;
+    } elseif ($status === 'error' || $status === 'dependency_missing') {
+        $summary['errorTotal']++;
+        $summary['errorItems'][] = $item;
+        if ($error !== '' && count($summary['errors']) < 8) {
+            $summary['errors'][] = $item;
+        }
     }
 }
 
@@ -9586,100 +10553,102 @@ function docs_collect_ocr_monitoring_summary(?string $requestedOrganization = nu
         $folder = sanitize_folder_name($requestedOrganization);
     }
 
-    $folders = [];
-    if ($folder !== '') {
-        $folders[] = $folder;
-    } else {
-        foreach (load_organizations() as $organization) {
-            $candidate = sanitize_folder_name((string) $organization);
-            if ($candidate !== '') {
-                $folders[$candidate] = $candidate;
-            }
-        }
-        $folders = array_values($folders);
-    }
-
     $summary = docs_ocr_init_monitoring_summary($requestedOrganization);
+    $summary['circuitBreaker'] = docs_ocr_circuit_breaker_status();
     $cache = docs_load_ocr_shared_cache();
     $summary['cacheItems'] = count($cache);
-
-    foreach ($folders as $currentFolder) {
-        foreach (load_registry($currentFolder) as $record) {
-            if (!is_array($record)) {
-                continue;
-            }
-            $recordKey = sanitize_text_field((string) ($record['registryNumber'] ?? ($record['id'] ?? '')), 160);
-            foreach (($record['files'] ?? []) as $file) {
-                if (is_array($file)) {
-                    docs_ocr_monitoring_record_file(
-                        $summary,
-                        $file,
-                        $currentFolder,
-                        docs_get_document_file_path_candidates($currentFolder, $file),
-                        $cache,
-                        ['source' => 'incoming', 'record' => $recordKey]
-                    );
-                }
-            }
-            foreach (($record['responses'] ?? []) as $file) {
-                if (is_array($file)) {
-                    docs_ocr_monitoring_record_file(
-                        $summary,
-                        $file,
-                        $currentFolder,
-                        docs_ocr_response_file_path_candidates($record, $currentFolder, $file),
-                        $cache,
-                        ['source' => 'response', 'record' => $recordKey]
-                    );
-                }
-            }
-        }
-
-        foreach (docs_load_outgoing_registry($currentFolder) as $record) {
-            if (!is_array($record)) {
-                continue;
-            }
-            $recordKey = sanitize_text_field((string) ($record['outgoingNumber'] ?? ($record['id'] ?? '')), 160);
-            foreach (($record['files'] ?? []) as $file) {
-                if (is_array($file)) {
-                    docs_ocr_monitoring_record_file(
-                        $summary,
-                        $file,
-                        $currentFolder,
-                        docs_get_outgoing_file_path_candidates($currentFolder, $file),
-                        $cache,
-                        ['source' => 'outgoing', 'record' => $recordKey]
-                    );
-                }
-            }
-        }
-
-        foreach (['orders', 'directives', 'disciplinary'] as $journalType) {
-            foreach (docs_load_orders_registry($currentFolder, $journalType) as $record) {
-                if (!is_array($record)) {
-                    continue;
-                }
-                $recordKey = sanitize_text_field((string) ($record['orderNumber'] ?? ($record['id'] ?? '')), 160);
-                foreach (($record['files'] ?? []) as $file) {
-                    if (is_array($file)) {
-                        docs_ocr_monitoring_record_file(
-                            $summary,
-                            $file,
-                            $currentFolder,
-                            docs_get_order_file_path_candidates($currentFolder, $file, $journalType),
-                            $cache,
-                            ['source' => $journalType, 'record' => $recordKey]
-                        );
-                    }
-                }
-            }
+    $spoolJobs = docs_ocr_spool_list_jobs($requestedOrganization);
+    $spoolBySignature = [];
+    foreach ($spoolJobs as $spoolJob) {
+        $signature = sanitize_text_field((string) ($spoolJob['signature'] ?? ''), 120);
+        if ($signature !== '') {
+            $spoolBySignature[$signature] = $spoolJob;
         }
     }
 
-    $queued = (int) ($summary['statuses']['queued'] ?? 0);
-    $ready = (int) ($summary['statuses']['ready'] ?? 0);
-    $errors = (int) ($summary['statuses']['error'] ?? 0) + (int) ($summary['statuses']['dependency_missing'] ?? 0);
-    $summary['message'] = 'OCR: готово ' . $ready . ', в очереди ' . $queued . ', ошибок ' . $errors . '.';
+    foreach ($cache as $signature => $entry) {
+        if (!is_string($signature) || !is_array($entry)) {
+            continue;
+        }
+        $entryFolder = sanitize_folder_name((string) ($entry['ocrFolder'] ?? ''));
+        if ($folder !== '' && $entryFolder !== $folder) {
+            continue;
+        }
+        $status = sanitize_text_field((string) ($entry['ocrStatus'] ?? ''), 60);
+        if (isset($spoolBySignature[$signature]) && !in_array($status, ['ready', 'empty', 'unsupported'], true)) {
+            continue;
+        }
+        docs_ocr_monitoring_record_cache_entry($summary, $signature, $entry);
+    }
+
+    $spoolCounts = [
+        'queued' => 0,
+        'processing' => 0,
+        'failed' => 0,
+    ];
+    foreach ($spoolBySignature as $signature => $job) {
+        $cachedStatus = isset($cache[$signature]) && is_array($cache[$signature])
+            ? sanitize_text_field((string) ($cache[$signature]['ocrStatus'] ?? ''), 60)
+            : '';
+        if (in_array($cachedStatus, ['ready', 'empty', 'unsupported'], true)) {
+            continue;
+        }
+
+        $state = sanitize_text_field((string) ($job['_state'] ?? 'queued'), 40);
+        if (!isset($spoolCounts[$state])) {
+            $state = 'queued';
+        }
+        $spoolCounts[$state]++;
+        $file = isset($job['file']) && is_array($job['file']) ? $job['file'] : [];
+        $paths = isset($job['pathCandidates']) && is_array($job['pathCandidates']) ? $job['pathCandidates'] : [];
+        $context = isset($job['context']) && is_array($job['context']) ? $job['context'] : [];
+        $status = $state === 'failed' ? 'error' : $state;
+        $entry = docs_ocr_build_cache_monitoring_metadata(
+            $file,
+            sanitize_folder_name((string) ($job['folder'] ?? '')),
+            $signature,
+            $paths,
+            $context
+        ) + [
+            'ocrStatus' => $status,
+            'ocrMethod' => $state === 'failed' ? 'worker:failed' : ($state === 'processing' ? 'worker:processing' : 'worker:queued'),
+            'ocrUpdatedAt' => sanitize_text_field((string) ($job['updatedAt'] ?? ($job['queuedAt'] ?? '')), 80),
+            'ocrStartedAt' => $state === 'processing' ? sanitize_text_field((string) ($job['updatedAt'] ?? ''), 80) : '',
+            'ocrAttempts' => max(0, (int) ($job['attempts'] ?? 0)),
+            'ocrNextAttemptAt' => sanitize_text_field((string) ($job['nextAttemptAt'] ?? ''), 80),
+            'ocrError' => sanitize_text_field((string) ($job['lastError'] ?? ''), 500),
+        ];
+        docs_ocr_monitoring_record_cache_entry($summary, $signature, $entry, false);
+    }
+    $summary['spool'] = $spoolCounts + [
+        'storage' => 'local_durable',
+    ];
+
+    $sortNewestFirst = static function (array $left, array $right): int {
+        return strcmp((string) ($right['updatedAt'] ?? ''), (string) ($left['updatedAt'] ?? ''));
+    };
+    $sortOldestFirst = static function (array $left, array $right): int {
+        return strcmp((string) ($left['updatedAt'] ?? ''), (string) ($right['updatedAt'] ?? ''));
+    };
+    usort($summary['allItems'], $sortNewestFirst);
+    usort($summary['errorItems'], $sortNewestFirst);
+    usort($summary['skippedItems'], $sortNewestFirst);
+    usort($summary['queueItems'], $sortOldestFirst);
+    foreach (['allItems', 'queueItems', 'errorItems', 'skippedItems'] as $itemsKey) {
+        $summary[$itemsKey] = array_slice($summary[$itemsKey], 0, DOCS_OCR_MONITOR_ITEMS_LIMIT);
+    }
+
+    $queued = (int) ($summary['queuedFiles'] ?? 0);
+    $processed = (int) ($summary['processedFiles'] ?? 0);
+    $withText = (int) ($summary['withText'] ?? 0);
+    $errors = (int) ($summary['errorFiles'] ?? 0);
+    $skipped = (int) ($summary['skippedFiles'] ?? 0);
+    $summary['message'] = 'OCR новых файлов: обработано ' . $processed . ', с текстом ' . $withText . ', в очереди ' . $queued . ', не запускалось ' . $skipped . ', ошибок ' . $errors . '.';
+    if (!empty($summary['circuitBreaker']['active'])) {
+        $summary['message'] = 'OCR временно отключён предохранителем. '
+            . (string) ($summary['circuitBreaker']['message'] ?? 'Подробности доступны в мониторинге.')
+            . ' ' . $summary['message'];
+    }
 
     return $summary;
 }
@@ -9692,7 +10661,166 @@ function docs_ocr_cache_entry_is_terminal($entry): bool
 
     $status = sanitize_text_field((string) ($entry['ocrStatus'] ?? ($entry['status'] ?? '')), 60);
 
-    return in_array($status, ['ready', 'empty', 'unsupported'], true);
+    return in_array($status, ['ready', 'empty', 'unsupported', 'skipped', 'error', 'dependency_missing'], true);
+}
+
+function docs_ocr_processing_entry_is_stale(array $entry, ?int $now = null): bool
+{
+    $status = sanitize_text_field((string) ($entry['ocrStatus'] ?? ''), 60);
+    if ($status !== 'processing') {
+        return false;
+    }
+
+    $startedAt = sanitize_text_field((string) ($entry['ocrStartedAt'] ?? ($entry['ocrUpdatedAt'] ?? '')), 80);
+    $startedAtTimestamp = $startedAt !== '' ? strtotime($startedAt) : false;
+    if ($startedAtTimestamp === false) {
+        return true;
+    }
+
+    $now = $now ?? time();
+
+    return ($now - $startedAtTimestamp) >= DOCS_OCR_PROCESSING_STALE_SECONDS;
+}
+
+function docs_ocr_recover_stale_processing_entries(?string $organization = null): array
+{
+    $folder = is_string($organization) && trim($organization) !== ''
+        ? sanitize_folder_name($organization)
+        : '';
+    $result = [
+        'recovered' => 0,
+        'checked' => 0,
+    ];
+    $lock = docs_ocr_acquire_queue_lock();
+    if (!is_resource($lock)) {
+        $result['error'] = 'Не удалось получить блокировку очереди OCR.';
+        return $result;
+    }
+
+    try {
+        $cache = docs_load_ocr_shared_cache();
+        $now = time();
+        foreach ($cache as $signature => $entry) {
+            if (!is_string($signature) || !is_array($entry)) {
+                continue;
+            }
+            $entryFolder = sanitize_folder_name((string) ($entry['ocrFolder'] ?? ''));
+            if ($folder !== '' && $entryFolder !== $folder) {
+                continue;
+            }
+            if (sanitize_text_field((string) ($entry['ocrStatus'] ?? ''), 60) !== 'processing') {
+                continue;
+            }
+
+            $result['checked']++;
+            if (!docs_ocr_processing_entry_is_stale($entry, $now)) {
+                continue;
+            }
+
+            $recovered = docs_ocr_normalize_cache_entry(array_merge($entry, [
+                'ocrStatus' => 'queued',
+                'ocrMethod' => 'background:recovered',
+                'ocrStartedAt' => '',
+                'ocrError' => 'Предыдущее выполнение оборвалось; файл автоматически возвращён в очередь.',
+                'ocrUpdatedAt' => date('c', $now),
+            ]), $signature);
+            if (empty($recovered)) {
+                continue;
+            }
+
+            $cache[$signature] = $recovered;
+            $result['recovered']++;
+        }
+
+        if ($result['recovered'] > 0) {
+            if (!docs_save_ocr_shared_cache($cache)) {
+                $result['error'] = 'Не удалось сохранить восстановленную OCR-очередь.';
+                $result['recovered'] = 0;
+            }
+        }
+    } finally {
+        docs_ocr_release_queue_lock($lock);
+    }
+
+    return $result;
+}
+
+function docs_ocr_requeue_failed_entries(string $organization, string $onlySignature = ''): array
+{
+    $folder = sanitize_folder_name($organization);
+    $onlySignature = sanitize_text_field($onlySignature, 120);
+    $result = [
+        'requeued' => 0,
+        'skipped' => 0,
+        'queueFull' => false,
+    ];
+    if ($folder === '') {
+        $result['error'] = 'Организация не выбрана.';
+        return $result;
+    }
+
+    $lock = docs_ocr_acquire_queue_lock();
+    if (!is_resource($lock)) {
+        $result['error'] = 'Не удалось получить блокировку очереди OCR.';
+        return $result;
+    }
+
+    try {
+        $cache = docs_load_ocr_shared_cache();
+        $pending = docs_ocr_count_pending_cache_items($cache);
+        foreach ($cache as $signature => $entry) {
+            if (!is_string($signature) || !is_array($entry)) {
+                continue;
+            }
+            if ($onlySignature !== '' && !hash_equals($onlySignature, $signature)) {
+                continue;
+            }
+            if (sanitize_folder_name((string) ($entry['ocrFolder'] ?? '')) !== $folder) {
+                continue;
+            }
+
+            $status = sanitize_text_field((string) ($entry['ocrStatus'] ?? ''), 60);
+            if (!in_array($status, ['error', 'dependency_missing', 'skipped'], true)) {
+                $result['skipped']++;
+                continue;
+            }
+            if (empty($entry['ocrFile']) || empty($entry['ocrPathCandidates']) || !is_array($entry['ocrPathCandidates'])) {
+                $result['skipped']++;
+                continue;
+            }
+            if ($pending >= DOCS_OCR_SHARED_CACHE_MAX_QUEUED_ITEMS) {
+                $result['queueFull'] = true;
+                break;
+            }
+
+            $queued = docs_ocr_normalize_cache_entry(array_merge($entry, [
+                'ocrStatus' => 'queued',
+                'ocrMethod' => 'background:manual_retry',
+                'ocrStartedAt' => '',
+                'ocrError' => '',
+                'ocrUpdatedAt' => date('c'),
+            ]), $signature);
+            if (empty($queued)) {
+                $result['skipped']++;
+                continue;
+            }
+
+            $cache[$signature] = $queued;
+            $pending++;
+            $result['requeued']++;
+        }
+
+        if ($result['requeued'] > 0) {
+            if (!docs_save_ocr_shared_cache($cache)) {
+                $result['error'] = 'Не удалось сохранить повторную OCR-очередь.';
+                $result['requeued'] = 0;
+            }
+        }
+    } finally {
+        docs_ocr_release_queue_lock($lock);
+    }
+
+    return $result;
 }
 
 function docs_ocr_store_cache_result(string $signature, array $entry): bool
@@ -9707,142 +10835,201 @@ function docs_ocr_store_cache_result(string $signature, array $entry): bool
         return false;
     }
 
-    $cache = docs_load_ocr_shared_cache();
-    $cache[$signature] = $normalized;
-    docs_save_ocr_shared_cache($cache);
+    $lock = docs_ocr_acquire_queue_lock();
+    if (!is_resource($lock)) {
+        return false;
+    }
+
+    try {
+        $cache = docs_load_ocr_shared_cache();
+        if (isset($cache[$signature]) && is_array($cache[$signature])) {
+            $normalized = docs_ocr_normalize_cache_entry(array_merge($cache[$signature], $entry), $signature);
+            if (empty($normalized)) {
+                return false;
+            }
+        }
+
+        $cache[$signature] = $normalized;
+        if (!docs_save_ocr_shared_cache($cache)) {
+            return false;
+        }
+    } finally {
+        docs_ocr_release_queue_lock($lock);
+    }
 
     return true;
 }
 
-function docs_ocr_push_background_candidate(
-    array &$jobs,
-    array &$seen,
-    array $cache,
-    array $file,
-    string $folder,
-    array $pathCandidates,
-    array $context,
-    int $limit
-): void {
-    if (count($jobs) >= $limit || $folder === '' || empty($file)) {
-        return;
+function docs_ocr_claim_queued_cache_entry(string $signature): array
+{
+    $signature = sanitize_text_field($signature, 120);
+    if ($signature === '') {
+        return [
+            'ok' => false,
+            'reason' => 'signature_empty',
+            'status' => '',
+        ];
     }
 
-    $signature = docs_ocr_build_snapshot_file_signature($file, $folder, $pathCandidates);
-    if ($signature === '' || isset($seen[$signature]) || docs_ocr_cache_entry_is_terminal($cache[$signature] ?? null)) {
-        return;
+    $lock = docs_ocr_acquire_queue_lock();
+    if (!is_resource($lock)) {
+        return [
+            'ok' => false,
+            'reason' => 'queue_lock_unavailable',
+            'status' => '',
+        ];
     }
 
-    $seen[$signature] = true;
-    $jobs[] = [
-        'signature' => $signature,
-        'file' => $file,
+    try {
+        $cache = docs_load_ocr_shared_cache();
+        $entry = isset($cache[$signature]) && is_array($cache[$signature]) ? $cache[$signature] : [];
+        $status = sanitize_text_field((string) ($entry['ocrStatus'] ?? ''), 60);
+
+        if (empty($entry)) {
+            return [
+                'ok' => false,
+                'reason' => 'cache_entry_missing',
+                'status' => '',
+            ];
+        }
+
+        if (docs_ocr_cache_entry_is_terminal($entry)) {
+            return [
+                'ok' => false,
+                'reason' => 'terminal',
+                'status' => $status,
+            ];
+        }
+
+        if ($status !== 'queued') {
+            return [
+                'ok' => false,
+                'reason' => $status === 'processing' ? 'already_processing' : 'not_queued',
+                'status' => $status,
+            ];
+        }
+
+        $claimed = docs_ocr_normalize_cache_entry(array_merge($entry, [
+            'ocrStatus' => 'processing',
+            'ocrMethod' => 'background:processing',
+            'ocrStartedAt' => date('c'),
+            'ocrNextAttemptAt' => '',
+            'ocrError' => '',
+            'ocrUpdatedAt' => date('c'),
+        ]), $signature);
+        if (empty($claimed)) {
+            return [
+                'ok' => false,
+                'reason' => 'claim_normalization_failed',
+                'status' => $status,
+            ];
+        }
+
+        $cache[$signature] = $claimed;
+        if (!docs_save_ocr_shared_cache($cache)) {
+            return [
+                'ok' => false,
+                'reason' => 'cache_write_failed',
+                'status' => $status,
+            ];
+        }
+
+        return [
+            'ok' => true,
+            'reason' => 'claimed',
+            'status' => 'processing',
+        ];
+    } finally {
+        docs_ocr_release_queue_lock($lock);
+    }
+}
+
+function docs_ocr_process_background_job(array $job, bool $claimSharedCache = true): array
+{
+    $file = isset($job['file']) && is_array($job['file']) ? $job['file'] : [];
+    $folder = sanitize_folder_name((string) ($job['folder'] ?? ''));
+    $signature = sanitize_text_field((string) ($job['signature'] ?? ''), 120);
+    $localPath = (string) ($job['localPath'] ?? '');
+    $pathCandidates = isset($job['pathCandidates']) && is_array($job['pathCandidates'])
+        ? $job['pathCandidates']
+        : [];
+    $context = isset($job['context']) && is_array($job['context']) ? $job['context'] : [];
+    if ($localPath !== '') {
+        $pathCandidates[] = $localPath;
+    }
+    $pathCandidates = array_values(array_unique(array_filter($pathCandidates, static function ($path): bool {
+        return is_string($path) && $path !== '';
+    })));
+
+    $baseResult = $context + [
+        'file' => !empty($file) ? docs_ocr_snapshot_file_display_name($file) : '',
         'folder' => $folder,
-        'pathCandidates' => $pathCandidates,
-        'context' => $context,
+        'signature' => $signature,
     ];
-}
 
-function docs_ocr_collect_background_candidates(string $organization, int $limit): array
-{
-    $folder = sanitize_folder_name($organization);
-    $limit = max(1, min(10, $limit));
-    if ($folder === '') {
-        return [];
+    if (empty($file) || $folder === '' || empty($pathCandidates)) {
+        return $baseResult + [
+            'status' => 'skipped',
+            'reason' => 'invalid_job',
+        ];
     }
 
-    $cache = docs_load_ocr_shared_cache();
-    $jobs = [];
-    $seen = [];
-
-    foreach (load_registry($folder) as $record) {
-        if (count($jobs) >= $limit) {
-            break;
-        }
-        if (!is_array($record)) {
-            continue;
-        }
-        $recordKey = sanitize_text_field((string) ($record['registryNumber'] ?? ($record['id'] ?? '')), 160);
-        foreach (($record['files'] ?? []) as $file) {
-            if (is_array($file)) {
-                docs_ocr_push_background_candidate($jobs, $seen, $cache, $file, $folder, docs_get_document_file_path_candidates($folder, $file), [
-                    'source' => 'incoming',
-                    'record' => $recordKey,
-                ], $limit);
-            }
-        }
-        foreach (($record['responses'] ?? []) as $file) {
-            if (is_array($file)) {
-                docs_ocr_push_background_candidate($jobs, $seen, $cache, $file, $folder, docs_ocr_response_file_path_candidates($record, $folder, $file), [
-                    'source' => 'response',
-                    'record' => $recordKey,
-                ], $limit);
-            }
-        }
+    if ($signature === '') {
+        $signature = docs_ocr_build_snapshot_file_signature($file, $folder, $pathCandidates);
+        $baseResult['signature'] = $signature;
     }
 
-    foreach (docs_load_outgoing_registry($folder) as $record) {
-        if (count($jobs) >= $limit) {
-            break;
-        }
-        if (!is_array($record)) {
-            continue;
-        }
-        $recordKey = sanitize_text_field((string) ($record['outgoingNumber'] ?? ($record['id'] ?? '')), 160);
-        foreach (($record['files'] ?? []) as $file) {
-            if (is_array($file)) {
-                docs_ocr_push_background_candidate($jobs, $seen, $cache, $file, $folder, docs_get_outgoing_file_path_candidates($folder, $file), [
-                    'source' => 'outgoing',
-                    'record' => $recordKey,
-                ], $limit);
-            }
-        }
+    if ($signature === '') {
+        return $baseResult + [
+            'status' => 'skipped',
+            'reason' => 'signature_empty',
+        ];
     }
 
-    foreach (['orders', 'directives', 'disciplinary'] as $journalType) {
-        foreach (docs_load_orders_registry($folder, $journalType) as $record) {
-            if (count($jobs) >= $limit) {
-                break 2;
-            }
-            if (!is_array($record)) {
-                continue;
-            }
-            $recordKey = sanitize_text_field((string) ($record['orderNumber'] ?? ($record['id'] ?? '')), 160);
-            foreach (($record['files'] ?? []) as $file) {
-                if (is_array($file)) {
-                    docs_ocr_push_background_candidate($jobs, $seen, $cache, $file, $folder, docs_get_order_file_path_candidates($folder, $file, $journalType), [
-                        'source' => $journalType,
-                        'record' => $recordKey,
-                    ], $limit);
-                }
-            }
+    if ($claimSharedCache) {
+        $claim = docs_ocr_claim_queued_cache_entry($signature);
+        if (empty($claim['ok'])) {
+            return $baseResult + [
+                'status' => 'skipped',
+                'reason' => sanitize_text_field((string) ($claim['reason'] ?? 'not_claimed'), 120),
+                'cacheStatus' => sanitize_text_field((string) ($claim['status'] ?? ''), 60),
+            ];
+        }
+    } else {
+        $cache = docs_load_ocr_shared_cache();
+        $existing = isset($cache[$signature]) && is_array($cache[$signature]) ? $cache[$signature] : [];
+        $existingStatus = sanitize_text_field((string) ($existing['ocrStatus'] ?? ''), 60);
+        if (in_array($existingStatus, ['ready', 'empty', 'unsupported'], true)) {
+            return $baseResult + [
+                'status' => 'cached',
+                'reason' => 'cache_hit',
+                'cacheStatus' => $existingStatus,
+                'method' => sanitize_text_field((string) ($existing['ocrMethod'] ?? ''), 120),
+                'textChars' => isset($existing['ocrText']) ? mb_strlen((string) $existing['ocrText'], 'UTF-8') : 0,
+            ];
+        }
+
+        $metadata = docs_ocr_build_cache_monitoring_metadata($file, $folder, $signature, $pathCandidates, $context);
+        $stored = docs_ocr_store_cache_result($signature, $metadata + [
+            'ocrStatus' => 'processing',
+            'ocrMethod' => 'worker:processing',
+            'ocrStartedAt' => date('c'),
+            'ocrError' => '',
+            'ocrUpdatedAt' => date('c'),
+        ]);
+        if (!$stored) {
+            return $baseResult + [
+                'status' => 'skipped',
+                'reason' => 'cache_lock_unavailable',
+            ];
         }
     }
 
-    return $jobs;
-}
-
-function docs_ocr_process_background_candidates(array $jobs): array
-{
-    @ignore_user_abort(true);
-    @set_time_limit(0);
-
-    $results = [];
-    foreach ($jobs as $job) {
-        if (!is_array($job)) {
-            continue;
+    try {
+        if ($localPath === '' || !is_file($localPath) || !is_readable($localPath)) {
+            $localPath = docs_resolve_file_path_with_cold_storage($folder, $file, $pathCandidates);
         }
 
-        $file = isset($job['file']) && is_array($job['file']) ? $job['file'] : [];
-        $folder = sanitize_folder_name((string) ($job['folder'] ?? ''));
-        $signature = sanitize_text_field((string) ($job['signature'] ?? ''), 120);
-        $pathCandidates = isset($job['pathCandidates']) && is_array($job['pathCandidates']) ? $job['pathCandidates'] : [];
-        $context = isset($job['context']) && is_array($job['context']) ? $job['context'] : [];
-        if (empty($file) || $folder === '' || $signature === '') {
-            continue;
-        }
-
-        $localPath = docs_resolve_file_path_with_cold_storage($folder, $file, $pathCandidates);
         if ($localPath === '' || !is_file($localPath) || !is_readable($localPath)) {
             docs_ocr_store_cache_result($signature, [
                 'ocrStatus' => 'error',
@@ -9850,26 +11037,548 @@ function docs_ocr_process_background_candidates(array $jobs): array
                 'ocrMethod' => 'background:file',
                 'ocrUpdatedAt' => date('c'),
             ]);
-            $results[] = $context + [
-                'file' => docs_ocr_snapshot_file_display_name($file),
+
+            return $baseResult + [
                 'status' => 'failed',
                 'reason' => 'file_unavailable',
+                'error' => 'Файл недоступен для фонового OCR.',
             ];
-            continue;
         }
 
-        $result = docs_ocr_warm_shared_cache_for_stored_file($file, $folder, $localPath);
-        $results[] = $context + [
-            'file' => docs_ocr_snapshot_file_display_name($file),
+        $result = docs_ocr_warm_shared_cache_for_stored_file(
+            $file,
+            $folder,
+            $localPath,
+            $pathCandidates,
+            true,
+            $signature
+        );
+
+        return $baseResult + [
             'status' => sanitize_text_field((string) ($result['status'] ?? ''), 60),
             'reason' => sanitize_text_field((string) ($result['reason'] ?? ''), 120),
             'method' => sanitize_text_field((string) ($result['method'] ?? ''), 120),
             'textChars' => max(0, (int) ($result['textChars'] ?? 0)),
+            'pagesProcessed' => max(0, (int) ($result['pagesProcessed'] ?? 0)),
             'elapsedMs' => max(0, (int) ($result['elapsedMs'] ?? 0)),
+        ];
+    } catch (\Throwable $error) {
+        $message = sanitize_text_field($error->getMessage(), 500);
+        if ($message === '') {
+            $message = 'Фоновый OCR завершился с ошибкой.';
+        }
+
+        docs_ocr_trip_circuit_breaker('background_exception', 'OCR отключён предохранителем: фоновая обработка завершилась исключением.', [
+            'exception' => get_class($error),
+            'message' => $message,
+            'file' => $error->getFile(),
+            'line' => $error->getLine(),
+            'signature' => $signature,
+            'folder' => $folder,
+        ]);
+
+        docs_ocr_store_cache_result($signature, [
+            'ocrStatus' => 'error',
+            'ocrError' => $message,
+            'ocrMethod' => 'background:exception',
+            'ocrUpdatedAt' => date('c'),
+        ]);
+
+        return $baseResult + [
+            'status' => 'failed',
+            'reason' => 'exception',
+            'error' => $message,
+        ];
+    }
+}
+
+function docs_ocr_spool_list_jobs(?string $organization = null): array
+{
+    $folderFilter = is_string($organization) && trim($organization) !== ''
+        ? sanitize_folder_name($organization)
+        : '';
+    $directory = docs_ocr_spool_directory();
+    $paths = [];
+    foreach (['*.json', '*.processing.json', '*.failed.json'] as $pattern) {
+        $matched = glob(rtrim($directory, '/\\') . '/' . $pattern);
+        if (is_array($matched)) {
+            foreach ($matched as $path) {
+                if (is_string($path)) {
+                    $paths[$path] = true;
+                }
+            }
+        }
+    }
+
+    $jobs = [];
+    foreach (array_keys($paths) as $path) {
+        $basename = basename($path);
+        if ($basename === 'index.html' || $basename[0] === '.') {
+            continue;
+        }
+
+        $state = 'queued';
+        if (substr($basename, -16) === '.processing.json') {
+            $state = 'processing';
+        } elseif (substr($basename, -12) === '.failed.json') {
+            $state = 'failed';
+        } elseif (substr($basename, -5) !== '.json') {
+            continue;
+        }
+
+        $job = docs_ocr_spool_read_job($path);
+        if (empty($job)) {
+            continue;
+        }
+        if ($folderFilter !== '' && sanitize_folder_name((string) ($job['folder'] ?? '')) !== $folderFilter) {
+            continue;
+        }
+
+        $job['_path'] = $path;
+        $job['_state'] = $state;
+        $job['_mtime'] = max(0, (int) (@filemtime($path) ?: 0));
+        $jobs[] = $job;
+    }
+
+    usort($jobs, static function (array $left, array $right): int {
+        return strcmp((string) ($left['queuedAt'] ?? ''), (string) ($right['queuedAt'] ?? ''));
+    });
+
+    return $jobs;
+}
+
+function docs_ocr_spool_recover_stale_processing(?string $organization = null, bool $workerLockHeld = false): array
+{
+    $lock = null;
+    if (!$workerLockHeld) {
+        $lock = docs_ocr_acquire_worker_lock();
+        if (!is_resource($lock)) {
+            return [
+                'recovered' => 0,
+                'checked' => 0,
+                'busy' => true,
+            ];
+        }
+    }
+
+    $result = [
+        'recovered' => 0,
+        'checked' => 0,
+        'busy' => false,
+    ];
+    try {
+        $now = time();
+        foreach (docs_ocr_spool_list_jobs($organization) as $job) {
+            if (($job['_state'] ?? '') !== 'processing') {
+                continue;
+            }
+            $result['checked']++;
+            $mtime = max(0, (int) ($job['_mtime'] ?? 0));
+            if ($mtime > 0 && ($now - $mtime) < DOCS_OCR_PROCESSING_STALE_SECONDS) {
+                continue;
+            }
+
+            $processingPath = (string) ($job['_path'] ?? '');
+            unset($job['_path'], $job['_state'], $job['_mtime']);
+            $job['nextAttemptAt'] = date('c', $now);
+            $job['lastError'] = 'Предыдущее выполнение оборвалось; задание автоматически возвращено в очередь.';
+            if (docs_ocr_spool_write_job($job, 'queued')) {
+                @unlink($processingPath);
+                $result['recovered']++;
+            }
+        }
+    } finally {
+        if (is_resource($lock)) {
+            docs_ocr_release_global_lock($lock);
+        }
+    }
+
+    return $result;
+}
+
+function docs_ocr_spool_claim_next(?string $organization = null): array
+{
+    $now = time();
+    foreach (docs_ocr_spool_list_jobs($organization) as $job) {
+        if (($job['_state'] ?? '') !== 'queued') {
+            continue;
+        }
+
+        $nextAttemptAt = sanitize_text_field((string) ($job['nextAttemptAt'] ?? ''), 80);
+        $nextAttemptTimestamp = $nextAttemptAt !== '' ? strtotime($nextAttemptAt) : false;
+        if ($nextAttemptTimestamp !== false && $nextAttemptTimestamp > $now) {
+            continue;
+        }
+
+        $queuedPath = (string) ($job['_path'] ?? '');
+        $processingPath = docs_ocr_spool_job_path((string) ($job['signature'] ?? ''), 'processing');
+        if ($queuedPath === '' || $processingPath === '' || !@rename($queuedPath, $processingPath)) {
+            continue;
+        }
+
+        unset($job['_path'], $job['_state'], $job['_mtime']);
+        $job['attempts'] = max(0, (int) ($job['attempts'] ?? 0)) + 1;
+        $job['nextAttemptAt'] = '';
+        $job['lastError'] = '';
+        if (!docs_ocr_spool_write_job($job, 'processing')) {
+            @rename($processingPath, $queuedPath);
+            continue;
+        }
+
+        $job['_path'] = $processingPath;
+        $job['_state'] = 'processing';
+
+        return $job;
+    }
+
+    return [];
+}
+
+function docs_ocr_spool_finish_job(array $job): void
+{
+    $processingPath = (string) ($job['_path'] ?? docs_ocr_spool_job_path((string) ($job['signature'] ?? ''), 'processing'));
+    if ($processingPath !== '') {
+        @unlink($processingPath);
+    }
+}
+
+function docs_ocr_spool_retry_job(array $job, array $processResult): array
+{
+    $attempts = max(1, (int) ($job['attempts'] ?? 1));
+    $error = sanitize_text_field((string) (
+        $processResult['error']
+        ?? $processResult['message']
+        ?? $processResult['reason']
+        ?? 'OCR завершился с ошибкой.'
+    ), 500);
+    $processingPath = (string) ($job['_path'] ?? '');
+    unset($job['_path'], $job['_state'], $job['_mtime']);
+    $job['lastError'] = $error;
+
+    if ($attempts >= DOCS_OCR_WORKER_MAX_ATTEMPTS) {
+        $job['nextAttemptAt'] = '';
+        $saved = docs_ocr_spool_write_job($job, 'failed');
+        if ($saved && $processingPath !== '') {
+            @unlink($processingPath);
+        }
+
+        return [
+            'requeued' => false,
+            'failed' => $saved,
+            'attempts' => $attempts,
+            'nextAttemptAt' => '',
+            'error' => $error,
         ];
     }
 
-    return $results;
+    $power = min(6, max(0, $attempts - 1));
+    $delay = min(3600, DOCS_OCR_WORKER_RETRY_BASE_SECONDS * (2 ** $power));
+    $nextAttemptAt = date('c', time() + $delay);
+    $job['nextAttemptAt'] = $nextAttemptAt;
+    $saved = docs_ocr_spool_write_job($job, 'queued');
+    if ($saved && $processingPath !== '') {
+        @unlink($processingPath);
+    }
+
+    $signature = sanitize_text_field((string) ($job['signature'] ?? ''), 120);
+    if ($signature !== '') {
+        $file = isset($job['file']) && is_array($job['file']) ? $job['file'] : [];
+        $folder = sanitize_folder_name((string) ($job['folder'] ?? ''));
+        $paths = isset($job['pathCandidates']) && is_array($job['pathCandidates']) ? $job['pathCandidates'] : [];
+        $context = isset($job['context']) && is_array($job['context']) ? $job['context'] : [];
+        docs_ocr_store_cache_result($signature, docs_ocr_build_cache_monitoring_metadata(
+            $file,
+            $folder,
+            $signature,
+            $paths,
+            $context
+        ) + [
+            'ocrStatus' => 'queued',
+            'ocrMethod' => 'worker:retry_wait',
+            'ocrAttempts' => $attempts,
+            'ocrNextAttemptAt' => $nextAttemptAt,
+            'ocrError' => $error,
+            'ocrStartedAt' => '',
+            'ocrUpdatedAt' => date('c'),
+        ]);
+    }
+
+    return [
+        'requeued' => $saved,
+        'failed' => false,
+        'attempts' => $attempts,
+        'nextAttemptAt' => $nextAttemptAt,
+        'error' => $error,
+    ];
+}
+
+function docs_ocr_spool_requeue_failed(?string $organization = null, string $onlySignature = ''): array
+{
+    $onlySignature = strtolower(sanitize_text_field($onlySignature, 120));
+    $result = [
+        'requeued' => 0,
+        'skipped' => 0,
+    ];
+
+    foreach (docs_ocr_spool_list_jobs($organization) as $job) {
+        if (($job['_state'] ?? '') !== 'failed') {
+            continue;
+        }
+        $signature = sanitize_text_field((string) ($job['signature'] ?? ''), 120);
+        if ($onlySignature !== '' && !hash_equals($onlySignature, $signature)) {
+            continue;
+        }
+
+        $failedPath = (string) ($job['_path'] ?? '');
+        unset($job['_path'], $job['_state'], $job['_mtime']);
+        $job['attempts'] = 0;
+        $job['nextAttemptAt'] = '';
+        $job['lastError'] = '';
+        $job['queuedAt'] = date('c');
+        if (!docs_ocr_spool_write_job($job, 'queued')) {
+            $result['skipped']++;
+            continue;
+        }
+
+        if ($failedPath !== '') {
+            @unlink($failedPath);
+        }
+        $result['requeued']++;
+    }
+
+    return $result;
+}
+
+function docs_ocr_import_shared_queue_to_spool(array $cache, ?string $organization = null, int $limit = 50): int
+{
+    $folderFilter = is_string($organization) && trim($organization) !== ''
+        ? sanitize_folder_name($organization)
+        : '';
+    $limit = max(1, min(500, $limit));
+    $imported = 0;
+    foreach ($cache as $signature => $entry) {
+        if ($imported >= $limit || !is_string($signature) || !is_array($entry)) {
+            break;
+        }
+        if (sanitize_text_field((string) ($entry['ocrStatus'] ?? ''), 60) !== 'queued') {
+            continue;
+        }
+
+        $folder = sanitize_folder_name((string) ($entry['ocrFolder'] ?? ''));
+        if ($folder === '' || ($folderFilter !== '' && $folder !== $folderFilter)) {
+            continue;
+        }
+        $file = isset($entry['ocrFile']) && is_array($entry['ocrFile']) ? $entry['ocrFile'] : [];
+        $paths = isset($entry['ocrPathCandidates']) && is_array($entry['ocrPathCandidates']) ? $entry['ocrPathCandidates'] : [];
+        if (empty($file) || empty($paths)) {
+            continue;
+        }
+
+        $queuedPath = docs_ocr_spool_job_path($signature, 'queued');
+        $processingPath = docs_ocr_spool_job_path($signature, 'processing');
+        if (is_file($queuedPath) || is_file($processingPath)) {
+            continue;
+        }
+
+        if (docs_ocr_spool_enqueue_job([
+            'signature' => $signature,
+            'file' => $file,
+            'folder' => $folder,
+            'pathCandidates' => $paths,
+            'context' => [
+                'organization' => $entry['ocrOrganization'] ?? $folder,
+                'source' => $entry['ocrSource'] ?? 'shared_cache',
+                'record' => $entry['ocrRecord'] ?? '',
+            ],
+            'queuedAt' => $entry['ocrUpdatedAt'] ?? date('c'),
+        ])) {
+            $imported++;
+        }
+    }
+
+    return $imported;
+}
+
+function docs_ocr_backfill_registry_queue(?string $organization = null, int $limit = DOCS_OCR_WORKER_BACKFILL_LIMIT, ?array $cache = null): array
+{
+    $limit = max(1, min(500, $limit));
+    $requestedOrganization = is_string($organization) ? docs_normalize_organization_candidate($organization) : '';
+    $organizations = $requestedOrganization !== '' ? [$requestedOrganization] : load_organizations();
+    $cache = is_array($cache) ? $cache : docs_load_ocr_shared_cache();
+    $result = [
+        'checked' => 0,
+        'queued' => 0,
+        'cached' => 0,
+    ];
+
+    foreach ($organizations as $organizationName) {
+        if ($result['queued'] >= $limit || !is_string($organizationName) || trim($organizationName) === '') {
+            break;
+        }
+        $folder = sanitize_folder_name($organizationName);
+        if ($folder === '') {
+            continue;
+        }
+
+        foreach (load_registry($folder) as $record) {
+            if ($result['queued'] >= $limit || !is_array($record)) {
+                break;
+            }
+            foreach (['files', 'responses'] as $bucket) {
+                $files = isset($record[$bucket]) && is_array($record[$bucket]) ? $record[$bucket] : [];
+                foreach ($files as $file) {
+                    if ($result['queued'] >= $limit || !is_array($file)) {
+                        break;
+                    }
+                    $result['checked']++;
+                    $paths = $bucket === 'responses'
+                        ? docs_ocr_response_file_path_candidates($record, $folder, $file)
+                        : docs_get_document_file_path_candidates($folder, $file);
+                    if (empty($paths)) {
+                        continue;
+                    }
+                    $signature = docs_ocr_build_snapshot_file_signature($file, $folder, $paths);
+                    if ($signature === '') {
+                        continue;
+                    }
+                    $cacheStatus = isset($cache[$signature]) && is_array($cache[$signature])
+                        ? sanitize_text_field((string) ($cache[$signature]['ocrStatus'] ?? ''), 60)
+                        : '';
+                    if (in_array($cacheStatus, ['ready', 'empty', 'unsupported'], true)) {
+                        $result['cached']++;
+                        continue;
+                    }
+                    if (is_file(docs_ocr_spool_job_path($signature, 'failed'))) {
+                        continue;
+                    }
+
+                    $alreadyQueued = is_file(docs_ocr_spool_job_path($signature, 'queued'))
+                        || is_file(docs_ocr_spool_job_path($signature, 'processing'));
+                    if (docs_ocr_spool_enqueue_job([
+                        'signature' => $signature,
+                        'file' => $file,
+                        'folder' => $folder,
+                        'pathCandidates' => $paths,
+                        'context' => [
+                            'organization' => $organizationName,
+                            'source' => 'registry_backfill',
+                            'record' => sanitize_text_field((string) ($record['registryNumber'] ?? ($record['id'] ?? '')), 160),
+                            'bucket' => $bucket,
+                        ],
+                    ]) && !$alreadyQueued) {
+                        $result['queued']++;
+                    }
+                }
+            }
+        }
+    }
+
+    return $result;
+}
+
+function docs_run_ocr_worker(
+    int $maxJobs = DOCS_OCR_WORKER_MAX_JOBS_PER_RUN,
+    int $maxRuntimeSeconds = DOCS_OCR_WORKER_MAX_RUNTIME_SECONDS,
+    ?string $organization = null
+): array {
+    $maxJobs = max(1, min(10, $maxJobs));
+    $maxRuntimeSeconds = max(5, min(300, $maxRuntimeSeconds));
+    $startedAt = microtime(true);
+    $summary = [
+        'startedAt' => date('c'),
+        'organization' => is_string($organization) && trim($organization) !== '' ? $organization : null,
+        'maxJobs' => $maxJobs,
+        'maxRuntimeSeconds' => $maxRuntimeSeconds,
+        'busy' => false,
+        'processed' => 0,
+        'completed' => 0,
+        'requeued' => 0,
+        'failed' => 0,
+        'results' => [],
+    ];
+
+    $workerLock = docs_ocr_acquire_worker_lock();
+    if (!is_resource($workerLock)) {
+        $summary['busy'] = true;
+        $summary['message'] = 'Другой OCR-воркер уже работает.';
+        return $summary;
+    }
+
+    try {
+        if (function_exists('proc_nice')) {
+            @proc_nice(10);
+        }
+        @ignore_user_abort(true);
+        @set_time_limit(0);
+
+        $summary['recovery'] = docs_ocr_spool_recover_stale_processing($organization, true);
+        $cache = docs_load_ocr_shared_cache();
+        $summary['importedFromSharedCache'] = docs_ocr_import_shared_queue_to_spool($cache, $organization, $maxJobs * 5);
+
+        $hasQueued = false;
+        foreach (docs_ocr_spool_list_jobs($organization) as $queuedJob) {
+            if (($queuedJob['_state'] ?? '') === 'queued') {
+                $hasQueued = true;
+                break;
+            }
+        }
+        if (!$hasQueued) {
+            $summary['backfill'] = docs_ocr_backfill_registry_queue($organization, DOCS_OCR_WORKER_BACKFILL_LIMIT, $cache);
+        }
+
+        while ($summary['processed'] < $maxJobs) {
+            if ((microtime(true) - $startedAt) >= $maxRuntimeSeconds) {
+                $summary['stoppedByRuntimeLimit'] = true;
+                break;
+            }
+
+            $guard = docs_ocr_runtime_guard_status();
+            if (empty($guard['ok'])) {
+                $summary['guard'] = $guard;
+                break;
+            }
+
+            $job = docs_ocr_spool_claim_next($organization);
+            if (empty($job)) {
+                break;
+            }
+
+            $processResult = docs_ocr_process_background_job($job, false);
+            $summary['processed']++;
+            $status = sanitize_text_field((string) ($processResult['status'] ?? ''), 60);
+            if ($status === 'computed' || $status === 'cached') {
+                docs_ocr_spool_finish_job($job);
+                $summary['completed']++;
+                $summary['results'][] = $processResult;
+                continue;
+            }
+
+            $retry = docs_ocr_spool_retry_job($job, $processResult);
+            if (!empty($retry['requeued'])) {
+                $summary['requeued']++;
+            }
+            if (!empty($retry['failed'])) {
+                $summary['failed']++;
+            }
+            $summary['results'][] = $processResult + ['retry' => $retry];
+        }
+    } finally {
+        docs_ocr_release_global_lock($workerLock);
+    }
+
+    $summary['finishedAt'] = date('c');
+    $summary['durationMs'] = (int) max(0, round((microtime(true) - $startedAt) * 1000));
+    $queue = docs_ocr_spool_list_jobs($organization);
+    $summary['queue'] = [
+        'queued' => count(array_filter($queue, static fn(array $job): bool => ($job['_state'] ?? '') === 'queued')),
+        'processing' => count(array_filter($queue, static fn(array $job): bool => ($job['_state'] ?? '') === 'processing')),
+        'failed' => count(array_filter($queue, static fn(array $job): bool => ($job['_state'] ?? '') === 'failed')),
+    ];
+    $summary['message'] = $summary['processed'] > 0
+        ? 'OCR-воркер последовательно обработал файлов: ' . $summary['processed'] . '.'
+        : 'Готовых к запуску OCR-заданий нет.';
+
+    return $summary;
 }
 
 function docs_handle_ocr_background_run(string $method): void
@@ -9894,10 +11603,32 @@ function docs_handle_ocr_background_run(string $method): void
         respond_error('Организация не выбрана.', 400);
     }
 
+    $recovery = docs_ocr_recover_stale_processing_entries($organization);
+
+    $guard = docs_ocr_runtime_guard_status();
+    if (empty($guard['ok'])) {
+        $monitoring = docs_collect_ocr_monitoring_summary($organization);
+        respond_success([
+            'organization' => $organization,
+            'accepted' => 0,
+            'processedInBackground' => false,
+            'monitoring' => $monitoring,
+            'guard' => $guard,
+            'recovery' => $recovery,
+            'message' => (string) ($guard['message'] ?? 'Фоновый OCR временно отложен защитой нагрузки.'),
+        ]);
+    }
+
     $limit = max(1, min(DOCS_OCR_BACKGROUND_MAX_JOBS_PER_REQUEST, (int) ($payload['limit'] ?? DOCS_OCR_BACKGROUND_MAX_JOBS_PER_REQUEST)));
-    $jobs = docs_ocr_collect_background_candidates($organization, $limit);
-    $accepted = count($jobs);
+    $queuedJobs = array_values(array_filter(
+        docs_ocr_spool_list_jobs($organization),
+        static fn(array $job): bool => ($job['_state'] ?? '') === 'queued'
+    ));
+    $accepted = min($limit, count($queuedJobs));
     $monitoring = docs_collect_ocr_monitoring_summary($organization);
+    if ($accepted < 1 && (int) ($monitoring['queueTotal'] ?? 0) > 0) {
+        $accepted = 1;
+    }
 
     if ($accepted < 1) {
         respond_success([
@@ -9905,6 +11636,7 @@ function docs_handle_ocr_background_run(string $method): void
             'accepted' => 0,
             'processedInBackground' => false,
             'monitoring' => $monitoring,
+            'recovery' => $recovery,
             'message' => 'Нет файлов, которым сейчас нужен фоновый OCR.',
         ]);
     }
@@ -9914,22 +11646,135 @@ function docs_handle_ocr_background_run(string $method): void
         'accepted' => $accepted,
         'processedInBackground' => true,
         'monitoring' => $monitoring,
+        'recovery' => $recovery,
         'message' => 'Фоновый OCR запущен. Обновите мониторинг через несколько секунд.',
     ]);
 
-    $results = docs_ocr_process_background_candidates($jobs);
-    docs_write_response_log('Фоновый OCR обработал пакет файлов', [
+    $worker = docs_run_ocr_worker($limit, DOCS_OCR_WORKER_MAX_RUNTIME_SECONDS, $organization);
+    docs_write_response_log('Ручной запуск передан последовательному OCR-воркеру', [
         'organization' => $organization,
         'accepted' => $accepted,
-        'results' => $results,
+        'worker' => $worker,
     ]);
     exit;
+}
+
+function docs_handle_ocr_worker_cli(): void
+{
+    if (PHP_SAPI !== 'cli' || !defined('DOCS_OCR_CLI_BOOTSTRAP') || DOCS_OCR_CLI_BOOTSTRAP !== true) {
+        respond_error('OCR worker доступен только из локального CLI.', 404);
+    }
+
+    $maxJobs = isset($_REQUEST['max_jobs']) ? (int) $_REQUEST['max_jobs'] : DOCS_OCR_WORKER_MAX_JOBS_PER_RUN;
+    $maxRuntime = isset($_REQUEST['max_runtime']) ? (int) $_REQUEST['max_runtime'] : DOCS_OCR_WORKER_MAX_RUNTIME_SECONDS;
+    $organization = isset($_REQUEST['organization']) && is_string($_REQUEST['organization'])
+        ? docs_normalize_organization_candidate($_REQUEST['organization'])
+        : '';
+
+    $result = docs_run_ocr_worker(
+        $maxJobs,
+        $maxRuntime,
+        $organization !== '' ? $organization : null
+    );
+    respond_success(['worker' => $result]);
+}
+
+function docs_handle_ocr_control(string $method): void
+{
+    if ($method !== 'POST') {
+        respond_error('Некорректный метод запроса.', 405, ['allowedMethod' => 'POST']);
+    }
+
+    $payload = load_json_payload();
+    if (!is_array($payload) || empty($payload)) {
+        $payload = $_POST;
+    }
+    if (!is_array($payload)) {
+        $payload = [];
+    }
+
+    $requestedOrganization = docs_normalize_organization_candidate((string) ($payload['organization'] ?? ($_REQUEST['organization'] ?? '')));
+    $accessContext = docs_resolve_access_context($requestedOrganization !== '' ? $requestedOrganization : null, true);
+    docs_require_admin_session($accessContext);
+    $organization = is_string($accessContext['active'] ?? null) ? $accessContext['active'] : $requestedOrganization;
+    if ($organization === '') {
+        respond_error('Организация не выбрана.', 400);
+    }
+
+    $command = sanitize_text_field((string) ($payload['command'] ?? ''), 60);
+    $result = [];
+    $message = '';
+
+    if ($command === 'recover_stale') {
+        $sharedRecovery = docs_ocr_recover_stale_processing_entries($organization);
+        $spoolRecovery = docs_ocr_spool_recover_stale_processing($organization);
+        $result = [
+            'sharedCache' => $sharedRecovery,
+            'spool' => $spoolRecovery,
+            'recovered' => (int) ($sharedRecovery['recovered'] ?? 0) + (int) ($spoolRecovery['recovered'] ?? 0),
+        ];
+        $message = !empty($result['recovered'])
+            ? 'Зависшие задания возвращены в очередь: ' . (int) $result['recovered'] . '.'
+            : 'Зависших OCR-заданий не найдено.';
+    } elseif ($command === 'retry_errors' || $command === 'retry_item') {
+        $signature = $command === 'retry_item'
+            ? sanitize_text_field((string) ($payload['signature'] ?? ''), 120)
+            : '';
+        if ($command === 'retry_item' && $signature === '') {
+            respond_error('Не указана OCR signature.', 400);
+        }
+        $sharedRetry = docs_ocr_requeue_failed_entries($organization, $signature);
+        $spoolRetry = docs_ocr_spool_requeue_failed($organization, $signature);
+        $result = [
+            'sharedCache' => $sharedRetry,
+            'spool' => $spoolRetry,
+            'requeued' => (int) ($sharedRetry['requeued'] ?? 0) + (int) ($spoolRetry['requeued'] ?? 0),
+            'skipped' => (int) ($sharedRetry['skipped'] ?? 0) + (int) ($spoolRetry['skipped'] ?? 0),
+            'queueFull' => !empty($sharedRetry['queueFull']),
+            'error' => $sharedRetry['error'] ?? null,
+        ];
+        $message = !empty($result['requeued'])
+            ? 'Возвращено в OCR-очередь: ' . (int) $result['requeued'] . '.'
+            : (!empty($result['queueFull'])
+                ? 'Очередь OCR заполнена, повторный запуск отложен.'
+                : 'Подходящих OCR-ошибок для повтора не найдено.');
+    } elseif ($command === 'reset_breaker') {
+        $result = docs_ocr_reset_circuit_breaker();
+        $message = 'Предохранитель OCR сброшен. Следующий запуск снова проверит сервер.';
+    } else {
+        respond_error('Неизвестная команда управления OCR.', 400);
+    }
+
+    if (!empty($result['error'])) {
+        respond_error((string) $result['error'], 409, [
+            'organization' => $organization,
+            'command' => $command,
+            'monitoring' => docs_collect_ocr_monitoring_summary($organization),
+        ]);
+    }
+
+    docs_write_response_log('Выполнена команда управления OCR', [
+        'organization' => $organization,
+        'command' => $command,
+        'result' => $result,
+    ]);
+
+    respond_success([
+        'organization' => $organization,
+        'command' => $command,
+        'result' => $result,
+        'monitoring' => docs_collect_ocr_monitoring_summary($organization),
+        'message' => $message,
+    ]);
 }
 
 function docs_ocr_apply_snapshot_result(array $file, array $result, string $signature, int &$remainingTextChars): array
 {
     $status = sanitize_text_field((string) ($result['ocrStatus'] ?? ($result['status'] ?? 'error')), 60);
-    if (!in_array($status, ['ready', 'empty', 'error', 'unsupported', 'dependency_missing'], true)) {
+    if ($status === 'throttled') {
+        $status = 'skipped';
+    }
+    if (!in_array($status, ['ready', 'empty', 'error', 'unsupported', 'skipped', 'dependency_missing'], true)) {
         $status = 'error';
     }
 
@@ -9950,6 +11795,7 @@ function docs_ocr_apply_snapshot_result(array $file, array $result, string $sign
     }
 
     $text = docs_ocr_normalize_text((string) ($result['ocrText'] ?? ($result['text'] ?? '')));
+    $searchTerms = docs_ocr_build_search_terms((string) ($result['ocrSearchTerms'] ?? $text));
     if ($status === 'ready' && $text !== '' && $remainingTextChars > 0) {
         $limit = min(DOCS_OCR_SNAPSHOT_FILE_TEXT_MAX_CHARS, $remainingTextChars);
         if (mb_strlen($text, 'UTF-8') > $limit) {
@@ -9957,8 +11803,19 @@ function docs_ocr_apply_snapshot_result(array $file, array $result, string $sign
         }
         $file['ocrText'] = $text;
         $remainingTextChars -= mb_strlen($text, 'UTF-8');
+        if ($searchTerms !== '' && $remainingTextChars > 0) {
+            $termLimit = min(DOCS_OCR_SEARCH_TERMS_MAX_CHARS, $remainingTextChars);
+            if (mb_strlen($searchTerms, 'UTF-8') > $termLimit) {
+                $searchTerms = mb_substr($searchTerms, 0, $termLimit, 'UTF-8');
+            }
+            $file['ocrSearchTerms'] = $searchTerms;
+            $remainingTextChars -= mb_strlen($searchTerms, 'UTF-8');
+        } else {
+            unset($file['ocrSearchTerms']);
+        }
     } else {
         unset($file['ocrText']);
+        unset($file['ocrSearchTerms']);
     }
 
     return $file;
@@ -10005,6 +11862,7 @@ function docs_ocr_enrich_snapshot_file(
     array &$cache,
     int &$remainingTextChars,
     bool $allowExtraction,
+    bool $queueMissing,
     bool &$cacheDirty
 ): array {
     $pathCandidates = docs_ocr_snapshot_file_path_candidates($task, $folder, $file, $bucket);
@@ -10015,6 +11873,16 @@ function docs_ocr_enrich_snapshot_file(
     }
 
     if (!$allowExtraction) {
+        if ($queueMissing && $folder !== '' && !empty($pathCandidates)) {
+            docs_ocr_enqueue_shared_cache_warm_candidate($file, $folder, $pathCandidates, [
+                'source' => 'mini_app_snapshot',
+                'bucket' => $bucket,
+                'record' => sanitize_text_field((string) ($task['registryNumber'] ?? ($task['id'] ?? '')), 160),
+            ]);
+            $file['ocrStatus'] = 'queued';
+            $file['ocrSignature'] = $signature;
+            $file['ocrQueuedAt'] = date('c');
+        }
         return $file;
     }
 
@@ -10046,7 +11914,10 @@ function docs_ocr_enrich_snapshot_file(
     }
 
     $status = sanitize_text_field((string) ($result['status'] ?? 'error'), 60);
-    if (in_array($status, ['ready', 'empty', 'unsupported'], true)) {
+    if ($status === 'throttled') {
+        $status = 'skipped';
+    }
+    if (in_array($status, ['ready', 'empty', 'unsupported', 'skipped', 'error', 'dependency_missing'], true)) {
         $normalizedCacheEntry = docs_ocr_normalize_cache_entry([
             'ocrStatus' => $status,
             'ocrText' => $result['text'] ?? '',
@@ -10068,7 +11939,12 @@ function docs_ocr_enrich_snapshot_file(
     ], $signature, $remainingTextChars);
 }
 
-function docs_enrich_mini_app_user_tasks_snapshot_ocr(string $telegramUserId, array $tasks): array
+function docs_enrich_mini_app_user_tasks_snapshot_ocr(
+    string $telegramUserId,
+    array $tasks,
+    bool $queueMissing = false,
+    int $totalTextCharsLimit = DOCS_OCR_SNAPSHOT_TOTAL_TEXT_MAX_CHARS
+): array
 {
     $previousSnapshotResult = docs_load_mini_app_user_tasks_snapshot($telegramUserId);
     $previousSnapshot = !empty($previousSnapshotResult['ok']) && isset($previousSnapshotResult['snapshot']) && is_array($previousSnapshotResult['snapshot'])
@@ -10081,7 +11957,7 @@ function docs_enrich_mini_app_user_tasks_snapshot_ocr(string $telegramUserId, ar
             $cache[$signature] = $entry;
         }
     }
-    $remainingTextChars = DOCS_OCR_SNAPSHOT_TOTAL_TEXT_MAX_CHARS;
+    $remainingTextChars = max(0, $totalTextCharsLimit);
     $cacheDirty = false;
 
     foreach ($tasks as &$task) {
@@ -10112,6 +11988,7 @@ function docs_enrich_mini_app_user_tasks_snapshot_ocr(string $telegramUserId, ar
                     $cache,
                     $remainingTextChars,
                     false,
+                    $queueMissing,
                     $cacheDirty
                 );
             }
@@ -10917,12 +12794,16 @@ function docs_ai_task_search_collect_ocr_texts_from_task(array $task, array &$pa
     foreach (['files', 'attachments', 'fileList', 'taskFiles', 'responses', 'answers', 'executorResponses'] as $field) {
         $entries = isset($task[$field]) && is_array($task[$field]) ? $task[$field] : [];
         foreach ($entries as $entry) {
-            if (!is_array($entry) || !isset($entry['ocrText'])) {
+            if (!is_array($entry)) {
                 continue;
             }
-            $text = trim((string) $entry['ocrText']);
+            $text = trim((string) ($entry['ocrText'] ?? ''));
             if ($text !== '') {
                 $parts[] = $text;
+            }
+            $searchTerms = trim((string) ($entry['ocrSearchTerms'] ?? ''));
+            if ($searchTerms !== '') {
+                $parts[] = $searchTerms;
             }
         }
     }
@@ -21736,9 +23617,96 @@ function docs_handle_mini_app_upload_pdf(string $method): void
     ]);
 }
 
+function docs_ocr_resolve_binary_path(string $binary): string
+{
+    static $resolved = [];
+
+    $binary = basename(trim($binary));
+    $allowed = ['tesseract', 'pdftoppm', 'pdftotext'];
+    if (!in_array($binary, $allowed, true)) {
+        return '';
+    }
+    if (array_key_exists($binary, $resolved)) {
+        return $resolved[$binary];
+    }
+
+    $environmentKeys = [
+        'tesseract' => 'BIMMAX_DOCS_TESSERACT_BINARY',
+        'pdftoppm' => 'BIMMAX_DOCS_PDFTOPPM_BINARY',
+        'pdftotext' => 'BIMMAX_DOCS_PDFTOTEXT_BINARY',
+    ];
+    $candidates = [];
+    $configured = getenv($environmentKeys[$binary]);
+    if (is_string($configured) && trim($configured) !== '') {
+        $candidates[] = trim($configured);
+    }
+
+    $pathValue = getenv('PATH');
+    if (is_string($pathValue) && $pathValue !== '') {
+        foreach (explode(PATH_SEPARATOR, $pathValue) as $directory) {
+            $directory = rtrim(trim($directory), '/\\');
+            if ($directory !== '') {
+                $candidates[] = $directory . DIRECTORY_SEPARATOR . $binary;
+            }
+        }
+    }
+
+    foreach (['/usr/bin', '/usr/local/bin', '/opt/homebrew/bin', '/bin'] as $directory) {
+        $candidates[] = $directory . '/' . $binary;
+    }
+
+    foreach (array_values(array_unique($candidates)) as $candidate) {
+        if (!is_string($candidate) || $candidate === '' || !is_file($candidate) || !is_executable($candidate)) {
+            continue;
+        }
+
+        $realPath = realpath($candidate);
+        $resolved[$binary] = is_string($realPath) && $realPath !== '' ? $realPath : $candidate;
+        return $resolved[$binary];
+    }
+
+    $resolved[$binary] = '';
+
+    return '';
+}
+
 function docs_run_ocr_command(array $args, int $timeoutSeconds = 30): array
 {
+    $binary = isset($args[0]) ? basename((string) $args[0]) : '';
+    $isOcrExternalCommand = in_array($binary, ['tesseract', 'pdftoppm', 'pdftotext'], true);
+    if ($isOcrExternalCommand) {
+        $guard = docs_ocr_runtime_guard_status();
+        if (empty($guard['ok'])) {
+            return [
+                'ok' => false,
+                'exitCode' => 429,
+                'output' => '',
+                'error' => sanitize_text_field((string) ($guard['message'] ?? 'OCR-команда заблокирована защитой стабильности.'), 500),
+                'guard' => $guard,
+            ];
+        }
+
+        $resolvedBinary = docs_ocr_resolve_binary_path($binary);
+        if ($resolvedBinary === '') {
+            return [
+                'ok' => false,
+                'exitCode' => 127,
+                'output' => '',
+                'error' => 'Исполняемый файл ' . $binary . ' не найден или у PHP-пользователя нет права запуска.',
+                'binary' => $binary,
+            ];
+        }
+        $args[0] = $resolvedBinary;
+    }
+
     if (!function_exists('proc_open')) {
+        if ($isOcrExternalCommand) {
+            docs_ocr_trip_circuit_breaker('proc_open_unavailable', 'OCR отключён предохранителем: PHP не может запускать OCR-процессы.', [
+                'binary' => $binary,
+                'args' => $args,
+            ]);
+        }
+
         return [
             'ok' => false,
             'exitCode' => 127,
@@ -21757,20 +23725,31 @@ function docs_run_ocr_command(array $args, int $timeoutSeconds = 30): array
     }
 
     $timeoutSeconds = max(2, min($timeoutSeconds, 120));
-    $commandParts = [];
-    foreach ($args as $arg) {
-        $commandParts[] = escapeshellarg((string) $arg);
+    $command = array_map('strval', $args);
+    if (PHP_VERSION_ID < 70400) {
+        $command = 'exec ' . implode(' ', array_map('escapeshellarg', $command));
     }
 
-    $process = @proc_open(
-        implode(' ', $commandParts),
-        [
-            1 => ['pipe', 'w'],
-            2 => ['pipe', 'w'],
-        ],
-        $pipes
-    );
+    try {
+        $process = @proc_open(
+            $command,
+            [
+                1 => ['pipe', 'w'],
+                2 => ['pipe', 'w'],
+            ],
+            $pipes
+        );
+    } catch (Throwable $error) {
+        $process = false;
+    }
     if (!is_resource($process)) {
+        if ($isOcrExternalCommand) {
+            docs_ocr_trip_circuit_breaker('process_start_failed', 'OCR отключён предохранителем: не удалось запустить OCR-команду.', [
+                'binary' => $binary,
+                'args' => $args,
+            ]);
+        }
+
         return [
             'ok' => false,
             'exitCode' => 127,
@@ -21800,6 +23779,11 @@ function docs_run_ocr_command(array $args, int $timeoutSeconds = 30): array
         if (microtime(true) >= $deadline) {
             $timedOut = true;
             proc_terminate($process);
+            usleep(200000);
+            $statusAfterTerminate = proc_get_status($process);
+            if (is_array($statusAfterTerminate) && !empty($statusAfterTerminate['running'])) {
+                @proc_terminate($process, 9);
+            }
             break;
         }
         usleep(100000);
@@ -21816,6 +23800,16 @@ function docs_run_ocr_command(array $args, int $timeoutSeconds = 30): array
     }
 
     if ($timedOut) {
+        if ($isOcrExternalCommand) {
+            docs_ocr_trip_circuit_breaker('command_timeout', 'OCR отключён предохранителем: команда зависла и была остановлена по таймауту.', [
+                'binary' => $binary,
+                'args' => $args,
+                'timeoutSeconds' => $timeoutSeconds,
+                'outputSample' => mb_substr(trim($output), 0, 500, 'UTF-8'),
+                'errorSample' => mb_substr(trim($error), 0, 500, 'UTF-8'),
+            ]);
+        }
+
         return [
             'ok' => false,
             'exitCode' => 124,
@@ -21829,57 +23823,139 @@ function docs_run_ocr_command(array $args, int $timeoutSeconds = 30): array
         'exitCode' => $exitCode,
         'output' => trim($output),
         'error' => trim($error),
+        'binary' => $binary,
+        'binaryPath' => $isOcrExternalCommand ? (string) $args[0] : '',
+    ];
+}
+
+function docs_ocr_probe_command(string $binary, array $versionArgs): array
+{
+    $binary = basename(trim($binary));
+    $path = docs_ocr_resolve_binary_path($binary);
+    if ($path === '') {
+        return [
+            'available' => false,
+            'path' => '',
+            'error' => 'Исполняемый файл не найден или недоступен для запуска PHP-пользователю.',
+        ];
+    }
+
+    $result = docs_run_ocr_command(array_merge([$binary], $versionArgs), 4);
+    $error = trim((string) ($result['error'] ?? ''));
+    if ($error === '' && empty($result['ok'])) {
+        $error = trim((string) ($result['output'] ?? ''));
+    }
+
+    return [
+        'available' => !empty($result['ok']),
+        'path' => $path,
+        'error' => !empty($result['ok']) ? '' : sanitize_text_field($error !== '' ? $error : 'Проверка запуска завершилась ошибкой.', 500),
+        'exitCode' => isset($result['exitCode']) ? (int) $result['exitCode'] : 127,
     ];
 }
 
 function docs_ocr_command_available(string $binary): bool
 {
-    $binary = trim($binary);
-    if ($binary === '') {
-        return false;
+    static $availability = [];
+
+    $binary = basename(trim($binary));
+    if (array_key_exists($binary, $availability)) {
+        return $availability[$binary];
     }
 
-    $result = docs_run_ocr_command([$binary, '--version'], 4);
-    if (!empty($result['ok'])) {
-        return true;
-    }
+    $probe = docs_ocr_probe_command($binary, ['--version']);
+    $availability[$binary] = !empty($probe['available']);
 
-    $error = strtolower((string) ($result['error'] ?? ''));
-    $output = strtolower((string) ($result['output'] ?? ''));
-
-    return strpos($error . ' ' . $output, 'not found') === false
-        && strpos($error . ' ' . $output, 'no such file') === false
-        && (int) ($result['exitCode'] ?? 127) !== 127;
+    return $availability[$binary];
 }
 
 function docs_ocr_pdftoppm_available(): bool
 {
-    $result = docs_run_ocr_command(['pdftoppm', '-h'], 4);
-    if (!empty($result['ok'])) {
-        return true;
+    static $available = null;
+    if ($available !== null) {
+        return $available;
     }
 
-    $text = strtolower((string) ($result['output'] ?? '') . ' ' . (string) ($result['error'] ?? ''));
+    $probe = docs_ocr_probe_command('pdftoppm', ['-v']);
+    $available = !empty($probe['available']);
 
-    return strpos($text, 'pdftoppm') !== false
-        && strpos($text, 'not found') === false
-        && strpos($text, 'no such file') === false
-        && (int) ($result['exitCode'] ?? 127) !== 127;
+    return $available;
+}
+
+function docs_ocr_pdftotext_available(): bool
+{
+    static $available = null;
+    if ($available !== null) {
+        return $available;
+    }
+
+    $probe = docs_ocr_probe_command('pdftotext', ['-v']);
+    $available = !empty($probe['available']);
+
+    return $available;
 }
 
 function docs_ocr_collect_dependency_status(): array
 {
-    return [
-        'tesseractAvailable' => docs_ocr_command_available('tesseract'),
-        'pdftoppmAvailable' => docs_ocr_pdftoppm_available(),
-        'zipArchiveAvailable' => class_exists('ZipArchive'),
-        'domDocumentAvailable' => class_exists('DOMDocument'),
-    ];
+    $guard = docs_ocr_runtime_guard_status();
+    if (empty($guard['ok'])) {
+        return [
+            'tesseractAvailable' => false,
+            'pdftoppmAvailable' => false,
+            'pdftotextAvailable' => false,
+            'zipArchiveAvailable' => class_exists('ZipArchive'),
+            'domDocumentAvailable' => class_exists('DOMDocument'),
+            'runtimeGuard' => $guard,
+        ];
+    }
+
+    $lock = docs_ocr_acquire_global_lock();
+    if (!is_resource($lock)) {
+        return [
+            'tesseractAvailable' => false,
+            'pdftoppmAvailable' => false,
+            'pdftotextAvailable' => false,
+            'zipArchiveAvailable' => class_exists('ZipArchive'),
+            'domDocumentAvailable' => class_exists('DOMDocument'),
+            'runtimeGuard' => [
+                'ok' => false,
+                'reason' => 'busy',
+                'message' => 'OCR-зависимости не проверялись: уже выполняется другой OCR-процесс.',
+            ],
+        ];
+    }
+
+    try {
+        $tesseract = docs_ocr_probe_command('tesseract', ['--version']);
+        $pdftoppm = docs_ocr_probe_command('pdftoppm', ['-v']);
+        $pdftotext = docs_ocr_probe_command('pdftotext', ['-v']);
+
+        return [
+            'tesseractAvailable' => !empty($tesseract['available']),
+            'tesseractPath' => sanitize_text_field((string) ($tesseract['path'] ?? ''), 500),
+            'tesseractError' => sanitize_text_field((string) ($tesseract['error'] ?? ''), 500),
+            'pdftoppmAvailable' => !empty($pdftoppm['available']),
+            'pdftoppmPath' => sanitize_text_field((string) ($pdftoppm['path'] ?? ''), 500),
+            'pdftoppmError' => sanitize_text_field((string) ($pdftoppm['error'] ?? ''), 500),
+            'pdftotextAvailable' => !empty($pdftotext['available']),
+            'pdftotextPath' => sanitize_text_field((string) ($pdftotext['path'] ?? ''), 500),
+            'pdftotextError' => sanitize_text_field((string) ($pdftotext['error'] ?? ''), 500),
+            'zipArchiveAvailable' => class_exists('ZipArchive'),
+            'domDocumentAvailable' => class_exists('DOMDocument'),
+        ];
+    } finally {
+        docs_ocr_release_global_lock($lock);
+    }
 }
 
 function docs_ocr_dependencies_ready(array $status): bool
 {
+    if (isset($status['runtimeGuard']) && is_array($status['runtimeGuard']) && empty($status['runtimeGuard']['ok'])) {
+        return false;
+    }
+
     return !empty($status['tesseractAvailable'])
+        || !empty($status['pdftotextAvailable'])
         || (!empty($status['zipArchiveAvailable']) && !empty($status['domDocumentAvailable']));
 }
 
@@ -21894,14 +23970,33 @@ function docs_handle_ocr_status(string $method): void
     docs_require_admin_session($accessContext);
     $organization = is_string($accessContext['active'] ?? null) ? $accessContext['active'] : $requestedOrganization;
 
+    $recovery = docs_ocr_recover_stale_processing_entries($organization !== '' ? $organization : null);
+    $spoolRecovery = docs_ocr_spool_recover_stale_processing($organization !== '' ? $organization : null);
+
     $status = docs_ocr_collect_dependency_status();
     $imageReady = !empty($status['tesseractAvailable']);
-    $pdfReady = $imageReady && !empty($status['pdftoppmAvailable']);
+    $pdfReady = !empty($status['pdftotextAvailable'])
+        || ($imageReady && !empty($status['pdftoppmAvailable']));
     $docxReady = !empty($status['zipArchiveAvailable']) && !empty($status['domDocumentAvailable']);
+    $monitoring = $organization !== '' ? docs_collect_ocr_monitoring_summary($organization) : docs_collect_ocr_monitoring_summary(null);
+    $circuitBreaker = $monitoring['circuitBreaker'] ?? docs_ocr_circuit_breaker_status();
+    $ready = docs_ocr_dependencies_ready($status);
 
     respond_success([
         'status' => $status,
-        'ready' => docs_ocr_dependencies_ready($status),
+        'ready' => $ready,
+        'enabled' => empty($circuitBreaker['active']),
+        'circuitBreaker' => $circuitBreaker,
+        'maintenance' => [
+            'staleRecovery' => $recovery,
+            'spoolRecovery' => $spoolRecovery,
+        ],
+        'worker' => [
+            'running' => docs_ocr_worker_is_running(),
+            'queue' => $monitoring['spool'] ?? [],
+            'command' => 'php ocr-worker.php --max-jobs=' . DOCS_OCR_WORKER_MAX_JOBS_PER_RUN
+                . ' --max-runtime=' . DOCS_OCR_WORKER_MAX_RUNTIME_SECONDS,
+        ],
         'imageReady' => $imageReady,
         'pdfReady' => $pdfReady,
         'docxReady' => $docxReady,
@@ -21913,11 +24008,79 @@ function docs_handle_ocr_status(string $method): void
             'maxTextChars' => DOCS_OCR_TEST_MAX_TEXT_CHARS,
             'snapshotFileTextChars' => DOCS_OCR_SNAPSHOT_FILE_TEXT_MAX_CHARS,
             'snapshotTotalTextChars' => DOCS_OCR_SNAPSHOT_TOTAL_TEXT_MAX_CHARS,
+            'searchTotalTextChars' => DOCS_OCR_SEARCH_TOTAL_TEXT_MAX_CHARS,
+            'workerFilesPerRun' => DOCS_OCR_WORKER_MAX_JOBS_PER_RUN,
+            'workerRuntimeSeconds' => DOCS_OCR_WORKER_MAX_RUNTIME_SECONDS,
+            'workerMaxAttempts' => DOCS_OCR_WORKER_MAX_ATTEMPTS,
+            'loadAverageLimit' => docs_ocr_effective_load_limit(),
         ],
-        'monitoring' => $organization !== '' ? docs_collect_ocr_monitoring_summary($organization) : docs_collect_ocr_monitoring_summary(null),
-        'message' => ($imageReady || $docxReady)
+        'monitoring' => $monitoring,
+        'allItems' => $monitoring['allItems'] ?? [],
+        'queueItems' => $monitoring['queueItems'] ?? [],
+        'errorItems' => $monitoring['errorItems'] ?? [],
+        'skippedItems' => $monitoring['skippedItems'] ?? [],
+        'allTotal' => (int) ($monitoring['allTotal'] ?? 0),
+        'queueTotal' => (int) ($monitoring['queueTotal'] ?? 0),
+        'errorTotal' => (int) ($monitoring['errorTotal'] ?? 0),
+        'skippedTotal' => (int) ($monitoring['skippedTotal'] ?? 0),
+        'message' => !empty($circuitBreaker['active'])
+            ? 'OCR временно отключён предохранителем: ' . (string) ($circuitBreaker['message'] ?? 'подробности в мониторинге.')
+            : (($imageReady || $docxReady)
             ? 'Сервер готов получать текст из доступных форматов.'
-            : 'OCR-зависимости недоступны PHP-пользователю. Проверьте tesseract, PATH и права запуска.',
+            : 'OCR-зависимости недоступны PHP-пользователю. Проверьте tesseract, PATH и права запуска.'),
+    ]);
+}
+
+function docs_handle_ocr_text(string $method): void
+{
+    if ($method !== 'GET' && $method !== 'POST') {
+        respond_error('Некорректный метод запроса.', 405, ['allowedMethod' => 'GET']);
+    }
+
+    $requestedOrganization = docs_normalize_organization_candidate((string) ($_REQUEST['organization'] ?? ''));
+    $accessContext = docs_resolve_access_context($requestedOrganization !== '' ? $requestedOrganization : null, true);
+    docs_require_admin_session($accessContext);
+    $organization = is_string($accessContext['active'] ?? null) ? $accessContext['active'] : $requestedOrganization;
+    $folder = $organization !== '' ? sanitize_folder_name($organization) : '';
+
+    $signature = sanitize_text_field((string) ($_REQUEST['signature'] ?? ''), 120);
+    if ($signature === '') {
+        respond_error('Не указан OCR signature.', 400);
+    }
+
+    $cache = docs_load_ocr_shared_cache();
+    if (!isset($cache[$signature]) || !is_array($cache[$signature])) {
+        respond_error('OCR-запись не найдена.', 404);
+    }
+
+    $entry = docs_ocr_normalize_cache_entry($cache[$signature], $signature);
+    $entryFolder = sanitize_folder_name((string) ($entry['ocrFolder'] ?? ''));
+    if ($folder !== '' && $entryFolder !== $folder) {
+        respond_error('OCR-запись не относится к выбранной организации.', 403);
+    }
+
+    $status = sanitize_text_field((string) ($entry['ocrStatus'] ?? ''), 60);
+    $text = docs_ocr_normalize_text((string) ($entry['ocrText'] ?? ''));
+    $fileName = sanitize_text_field((string) ($entry['ocrFileName'] ?? ''), 255);
+    if ($fileName === '' && isset($entry['ocrFile']) && is_array($entry['ocrFile'])) {
+        $fileName = docs_ocr_snapshot_file_display_name($entry['ocrFile']);
+    }
+
+    respond_success([
+        'ocr' => [
+            'signature' => $signature,
+            'organization' => sanitize_text_field((string) ($entry['ocrOrganization'] ?? $organization), 160),
+            'folder' => $entryFolder,
+            'source' => sanitize_text_field((string) ($entry['ocrSource'] ?? ''), 80),
+            'record' => sanitize_text_field((string) ($entry['ocrRecord'] ?? ''), 160),
+            'file' => $fileName,
+            'status' => $status !== '' ? $status : 'unknown',
+            'method' => sanitize_text_field((string) ($entry['ocrMethod'] ?? ''), 120),
+            'updatedAt' => sanitize_text_field((string) ($entry['ocrUpdatedAt'] ?? ''), 80),
+            'error' => sanitize_text_field((string) ($entry['ocrError'] ?? ''), 500),
+            'text' => $text,
+            'textChars' => $text !== '' ? mb_strlen($text, 'UTF-8') : 0,
+        ],
     ]);
 }
 
@@ -21958,6 +24121,39 @@ function docs_ocr_normalize_text(string $text): string
     }
 
     return $text;
+}
+
+function docs_ocr_build_search_terms(string $text): string
+{
+    $text = docs_ocr_normalize_text($text);
+    if ($text === '') {
+        return '';
+    }
+
+    $normalized = mb_strtolower($text, 'UTF-8');
+    $matched = preg_match_all('/[\p{L}\p{N}][\p{L}\p{N}_-]*/u', $normalized, $matches);
+    if ($matched === false || empty($matches[0])) {
+        return '';
+    }
+
+    $terms = [];
+    $length = 0;
+    foreach ($matches[0] as $term) {
+        $term = trim((string) $term);
+        if (mb_strlen($term, 'UTF-8') < 2 || isset($terms[$term])) {
+            continue;
+        }
+
+        $nextLength = $length + ($length > 0 ? 1 : 0) + mb_strlen($term, 'UTF-8');
+        if ($nextLength > DOCS_OCR_SEARCH_TERMS_MAX_CHARS) {
+            break;
+        }
+
+        $terms[$term] = true;
+        $length = $nextLength;
+    }
+
+    return implode(' ', array_keys($terms));
 }
 
 function docs_ocr_text_quality_score(string $text): int
@@ -22192,7 +24388,7 @@ function docs_ocr_run_tesseract(string $filePath, array &$diagnostics): array
             'preserve_interword_spaces=1',
             '-c',
             'user_defined_dpi=' . DOCS_OCR_TEST_IMAGE_DPI,
-        ], 120);
+        ], DOCS_OCR_COMMAND_TIMEOUT_SECONDS);
         $text = docs_ocr_normalize_text((string) ($result['output'] ?? ''));
         $score = docs_ocr_text_quality_score($text);
         $attempts[] = [
@@ -22240,6 +24436,36 @@ function docs_ocr_run_tesseract(string $filePath, array &$diagnostics): array
 
 function docs_ocr_extract_pdf_text(string $filePath, array &$diagnostics): array
 {
+    if (docs_ocr_pdftotext_available()) {
+        $digital = docs_run_ocr_command([
+            'pdftotext',
+            '-layout',
+            '-enc',
+            'UTF-8',
+            $filePath,
+            '-',
+        ], DOCS_OCR_COMMAND_TIMEOUT_SECONDS);
+        $digitalText = docs_ocr_normalize_text(str_replace("\f", "\n\n", (string) ($digital['output'] ?? '')));
+        $diagnostics['pdftotext'] = [
+            'ok' => !empty($digital['ok']),
+            'chars' => mb_strlen($digitalText, 'UTF-8'),
+            'error' => sanitize_text_field((string) ($digital['error'] ?? ''), 500),
+        ];
+        if ($digitalText !== '') {
+            return [
+                'ok' => true,
+                'text' => $digitalText,
+                'status' => 'ready',
+                'error' => '',
+                'method' => 'pdf:pdftotext:layout',
+                'pagesProcessed' => null,
+                'pagesLimit' => null,
+            ];
+        }
+    } else {
+        $diagnostics['pdftotext'] = 'not_available';
+    }
+
     if (!docs_ocr_command_available('tesseract')) {
         $diagnostics['tesseract'] = 'not_available';
 
@@ -22286,55 +24512,43 @@ function docs_ocr_extract_pdf_text(string $filePath, array &$diagnostics): array
         ];
     }
 
-    $prefix = rtrim($workBase, '/\\') . '/page';
     try {
-        $render = docs_run_ocr_command([
-            'pdftoppm',
-            '-r',
-            (string) DOCS_OCR_TEST_IMAGE_DPI,
-            '-f',
-            '1',
-            '-l',
-            (string) DOCS_OCR_PDF_MAX_PAGES_PER_FILE,
-            '-png',
-            $filePath,
-            $prefix,
-        ], 120);
-        if (empty($render['ok'])) {
-            return [
-                'ok' => false,
-                'text' => '',
-                'status' => 'error',
-                'error' => sanitize_text_field((string) (($render['error'] ?? '') ?: ($render['output'] ?? 'pdftoppm не смог подготовить страницы PDF.')), 500),
-                'method' => 'pdf:pdftoppm+tesseract',
-            ];
-        }
-
-        $pages = glob($prefix . '-*.png');
-        if (!is_array($pages) || empty($pages)) {
-            return [
-                'ok' => false,
-                'text' => '',
-                'status' => 'empty',
-                'error' => 'PDF обработан, но страницы для OCR не получены.',
-                'method' => 'pdf:pdftoppm+tesseract',
-            ];
-        }
-
-        natsort($pages);
-        $totalRenderedPages = count($pages);
-        $pages = array_slice(array_values($pages), 0, DOCS_OCR_PDF_MAX_PAGES_PER_FILE);
         $texts = [];
         $pageDiagnostics = [];
-        $pageIndex = 0;
-        foreach ($pages as $pagePath) {
-            if (!is_string($pagePath) || !is_file($pagePath)) {
-                continue;
+        $pagesProcessed = 0;
+        for ($pageIndex = 1; $pageIndex <= DOCS_OCR_PDF_MAX_PAGES_PER_FILE; $pageIndex++) {
+            $prefix = rtrim($workBase, '/\\') . '/page-' . $pageIndex;
+            $pagePath = $prefix . '.png';
+            $render = docs_run_ocr_command([
+                'pdftoppm',
+                '-r',
+                (string) DOCS_OCR_TEST_IMAGE_DPI,
+                '-f',
+                (string) $pageIndex,
+                '-l',
+                (string) $pageIndex,
+                '-singlefile',
+                '-png',
+                $filePath,
+                $prefix,
+            ], DOCS_OCR_COMMAND_TIMEOUT_SECONDS);
+            if (empty($render['ok']) || !is_file($pagePath)) {
+                if ($pageIndex === 1) {
+                    return [
+                        'ok' => false,
+                        'text' => '',
+                        'status' => 'error',
+                        'error' => sanitize_text_field((string) (($render['error'] ?? '') ?: ($render['output'] ?? 'pdftoppm не смог подготовить страницу PDF.')), 500),
+                        'method' => 'pdf:pdftoppm+tesseract',
+                    ];
+                }
+                break;
             }
 
-            $pageIndex++;
+            $pagesProcessed++;
             $pageContext = [];
             $pageResult = docs_ocr_run_tesseract($pagePath, $pageContext);
+            @unlink($pagePath);
             $pageText = docs_ocr_normalize_text((string) ($pageResult['text'] ?? ''));
             $pageDiagnostics[] = [
                 'page' => $pageIndex,
@@ -22353,7 +24567,7 @@ function docs_ocr_extract_pdf_text(string $filePath, array &$diagnostics): array
             }
         }
 
-        $diagnostics['pdfPages'] = $totalRenderedPages;
+        $diagnostics['pdfPages'] = $pagesProcessed;
         $diagnostics['pdfPagesLimit'] = DOCS_OCR_PDF_MAX_PAGES_PER_FILE;
         $diagnostics['pdfPageAttempts'] = array_slice($pageDiagnostics, 0, 20);
 
@@ -22365,7 +24579,7 @@ function docs_ocr_extract_pdf_text(string $filePath, array &$diagnostics): array
                 'status' => 'empty',
                 'error' => 'PDF обработан, но tesseract не нашёл текст.',
                 'method' => 'pdf:pdftoppm+tesseract',
-                'pagesProcessed' => count($pages),
+                'pagesProcessed' => $pagesProcessed,
                 'pagesLimit' => DOCS_OCR_PDF_MAX_PAGES_PER_FILE,
             ];
         }
@@ -22376,7 +24590,7 @@ function docs_ocr_extract_pdf_text(string $filePath, array &$diagnostics): array
             'status' => 'ready',
             'error' => '',
             'method' => 'pdf:pdftoppm+tesseract:' . DOCS_OCR_TEST_TESSERACT_LANGUAGE,
-            'pagesProcessed' => count($pages),
+            'pagesProcessed' => $pagesProcessed,
             'pagesLimit' => DOCS_OCR_PDF_MAX_PAGES_PER_FILE,
         ];
     } finally {
@@ -22409,10 +24623,52 @@ function docs_ocr_extract_text_for_file_path(string $filePath, string $originalN
 
     if ($type === 'docx') {
         $result = docs_ocr_extract_docx_text($filePath);
-    } elseif ($type === 'pdf') {
-        $result = docs_ocr_extract_pdf_text($filePath, $diagnostics);
     } else {
-        $result = docs_ocr_run_tesseract($filePath, $diagnostics);
+        $guard = docs_ocr_runtime_guard_status();
+        if (empty($guard['ok'])) {
+            $diagnostics['runtimeGuard'] = $guard;
+
+            return [
+                'ok' => false,
+                'text' => '',
+                'status' => 'throttled',
+                'error' => sanitize_text_field((string) ($guard['message'] ?? 'OCR временно отложен защитой нагрузки.'), 500),
+                'method' => 'runtime_guard',
+                'type' => $type,
+                'pagesProcessed' => null,
+                'pagesLimit' => null,
+            ];
+        }
+
+        $lock = docs_ocr_acquire_global_lock();
+        if (!is_resource($lock)) {
+            $diagnostics['runtimeGuard'] = [
+                'ok' => false,
+                'reason' => 'busy',
+                'message' => 'OCR временно не запускается: уже выполняется другой OCR-процесс.',
+            ];
+
+            return [
+                'ok' => false,
+                'text' => '',
+                'status' => 'throttled',
+                'error' => 'OCR временно не запускается: уже выполняется другой OCR-процесс.',
+                'method' => 'runtime_guard',
+                'type' => $type,
+                'pagesProcessed' => null,
+                'pagesLimit' => null,
+            ];
+        }
+
+        try {
+            if ($type === 'pdf') {
+                $result = docs_ocr_extract_pdf_text($filePath, $diagnostics);
+            } else {
+                $result = docs_ocr_run_tesseract($filePath, $diagnostics);
+            }
+        } finally {
+            docs_ocr_release_global_lock($lock);
+        }
     }
 
     $text = docs_ocr_normalize_text((string) ($result['text'] ?? ''));
@@ -22424,7 +24680,25 @@ function docs_ocr_extract_text_for_file_path(string $filePath, string $originalN
             $status = 'empty';
         } else {
             $error = mb_strtolower((string) ($result['error'] ?? ''), 'UTF-8');
-            $status = strpos($error, 'недоступ') !== false || strpos($error, 'не установлен') !== false
+            $dependencyMarkers = [
+                'недоступ',
+                'не установлен',
+                'нет права запуска',
+                'permission denied',
+                'operation not permitted',
+                'not found',
+                'no such file',
+                'cannot execute',
+                'exec format error',
+            ];
+            $dependencyFailure = false;
+            foreach ($dependencyMarkers as $marker) {
+                if (strpos($error, $marker) !== false) {
+                    $dependencyFailure = true;
+                    break;
+                }
+            }
+            $status = $dependencyFailure
                 ? 'dependency_missing'
                 : 'error';
         }
@@ -23275,12 +25549,24 @@ switch ($action) {
         docs_handle_ocr_test($method);
         break;
 
+    case 'ocr_worker_cli':
+        docs_handle_ocr_worker_cli();
+        break;
+
     case 'ocr_status':
         docs_handle_ocr_status($method);
         break;
 
+    case 'ocr_text':
+        docs_handle_ocr_text($method);
+        break;
+
     case 'ocr_background_run':
         docs_handle_ocr_background_run($method);
+        break;
+
+    case 'ocr_control':
+        docs_handle_ocr_control($method);
         break;
 
     case 'mini_app_cached_pdf':
@@ -23408,25 +25694,29 @@ switch ($action) {
             $requestedFolderId = 'all';
         }
         $storedSnapshotResult = docs_load_mini_app_user_tasks_snapshot($telegramUserId);
-        $snapshotResult = $storedSnapshotResult;
-        if (empty($snapshotResult['ok']) || !isset($snapshotResult['snapshot']) || !is_array($snapshotResult['snapshot'])) {
-            $fallbackSnapshotResult = docs_prepare_ai_task_search_client_snapshot($payload['tasksSnapshot'] ?? null);
-            if (!empty($fallbackSnapshotResult['ok']) && isset($fallbackSnapshotResult['snapshot']) && is_array($fallbackSnapshotResult['snapshot'])) {
-                $snapshotResult = $fallbackSnapshotResult;
-            } else {
-                respond_error(
-                    (string) ($snapshotResult['message'] ?? $fallbackSnapshotResult['message'] ?? 'JSON-снимок задач пока недоступен. Обновите список задач и повторите поиск.'),
-                    404,
-                    [
-                        'snapshotStatus' => $snapshotResult['error'] ?? $fallbackSnapshotResult['error'] ?? 'unavailable',
-                        'snapshotKey' => $snapshotResult['key'] ?? $fallbackSnapshotResult['key'] ?? '',
-                    ]
-                );
-            }
+        $clientSnapshotResult = docs_prepare_ai_task_search_client_snapshot($payload['tasksSnapshot'] ?? null);
+        if (!empty($clientSnapshotResult['ok']) && isset($clientSnapshotResult['snapshot']) && is_array($clientSnapshotResult['snapshot'])) {
+            $snapshotResult = $clientSnapshotResult;
+        } elseif (!empty($storedSnapshotResult['ok']) && isset($storedSnapshotResult['snapshot']) && is_array($storedSnapshotResult['snapshot'])) {
+            $snapshotResult = $storedSnapshotResult;
+        } else {
+            respond_error(
+                (string) ($storedSnapshotResult['message'] ?? $clientSnapshotResult['message'] ?? 'JSON-снимок задач пока недоступен. Обновите список задач и повторите поиск.'),
+                404,
+                [
+                    'snapshotStatus' => $storedSnapshotResult['error'] ?? $clientSnapshotResult['error'] ?? 'unavailable',
+                    'snapshotKey' => $storedSnapshotResult['key'] ?? $clientSnapshotResult['key'] ?? '',
+                ]
+            );
         }
 
         $snapshotTasks = isset($snapshotResult['snapshot']['tasks']) && is_array($snapshotResult['snapshot']['tasks'])
-            ? $snapshotResult['snapshot']['tasks']
+            ? docs_enrich_mini_app_user_tasks_snapshot_ocr(
+                $telegramUserId,
+                $snapshotResult['snapshot']['tasks'],
+                false,
+                DOCS_OCR_SEARCH_TOTAL_TEXT_MAX_CHARS
+            )
             : [];
         $scopedSnapshot = $snapshotResult['snapshot'];
         $scopedSnapshot['tasks'] = docs_ai_task_search_apply_folder_filter($snapshotTasks, $requestedFolderId, $telegramUserId);
@@ -28757,7 +31047,10 @@ switch ($action) {
                             'url' => build_public_path($folder, $storedName),
                             'aiBrief' => $aiBrief,
                         ];
-                        $record['files'][] = docs_apply_cold_storage_metadata($fileEntry, $folder, $storedName, $target);
+                        $record['files'][] = docs_apply_cold_storage_metadata($fileEntry, $folder, $storedName, $target, true, [
+                            'source' => 'incoming',
+                            'record' => sanitize_text_field((string) ($record['registryNumber'] ?? ($record['id'] ?? $documentId)), 160),
+                        ]);
                         docs_log_file_debug('files:create stored', [
                             'documentId' => $documentId,
                             'index' => $i,
@@ -28810,7 +31103,10 @@ switch ($action) {
                             'url' => build_public_path($folder, $storedNameSingle),
                             'aiBrief' => $aiBriefSingle,
                         ];
-                        $record['files'][] = docs_apply_cold_storage_metadata($fileEntrySingle, $folder, $storedNameSingle, $targetSingle);
+                        $record['files'][] = docs_apply_cold_storage_metadata($fileEntrySingle, $folder, $storedNameSingle, $targetSingle, true, [
+                            'source' => 'incoming',
+                            'record' => sanitize_text_field((string) ($record['registryNumber'] ?? ($record['id'] ?? $documentId)), 160),
+                        ]);
                         docs_log_file_debug('files:create stored single', [
                             'documentId' => $documentId,
                             'originalName' => $originalNameSingle,
@@ -30480,7 +32776,10 @@ switch ($action) {
                                     'url' => build_public_path($folder, $storedName),
                                     'aiBrief' => $aiBrief,
                                 ];
-                                $record['files'][] = docs_apply_cold_storage_metadata($fileEntry, $folder, $storedName, $target);
+                                $record['files'][] = docs_apply_cold_storage_metadata($fileEntry, $folder, $storedName, $target, true, [
+                                    'source' => 'incoming',
+                                    'record' => sanitize_text_field((string) ($record['registryNumber'] ?? ($record['id'] ?? $documentId)), 160),
+                                ]);
                                 $filesUpdated = true;
                                 docs_log_file_debug('files:update stored', [
                                     'documentId' => $documentId,
@@ -30534,7 +32833,10 @@ switch ($action) {
                                     'url' => build_public_path($folder, $storedNameSingle),
                                     'aiBrief' => $aiBriefSingle,
                                 ];
-                                $record['files'][] = docs_apply_cold_storage_metadata($fileEntrySingle, $folder, $storedNameSingle, $targetSingle);
+                                $record['files'][] = docs_apply_cold_storage_metadata($fileEntrySingle, $folder, $storedNameSingle, $targetSingle, true, [
+                                    'source' => 'incoming',
+                                    'record' => sanitize_text_field((string) ($record['registryNumber'] ?? ($record['id'] ?? $documentId)), 160),
+                                ]);
                                 $filesUpdated = true;
                                 docs_log_file_debug('files:update stored single', [
                                     'documentId' => $documentId,
@@ -31004,7 +33306,12 @@ switch ($action) {
                 $responseEntry,
                 $folder,
                 'Ответы/' . $documentId . '/' . $storedName,
-                $target
+                $target,
+                true,
+                [
+                    'source' => 'response',
+                    'record' => sanitize_text_field((string) ($records[$recordIndex]['registryNumber'] ?? ($records[$recordIndex]['id'] ?? $documentId)), 160),
+                ]
             );
         };
 
@@ -31060,7 +33367,12 @@ switch ($action) {
                     $responseEntry,
                     $folder,
                     'Ответы/' . $documentId . '/' . $storedName,
-                    $target
+                    $target,
+                    true,
+                    [
+                        'source' => 'response',
+                        'record' => sanitize_text_field((string) ($records[$recordIndex]['registryNumber'] ?? ($records[$recordIndex]['id'] ?? $documentId)), 160),
+                    ]
                 );
             }
         }

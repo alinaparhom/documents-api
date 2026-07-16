@@ -1,1 +1,3 @@
 /app/templates/env.txt
+/lg/ocr-queue/
+/documents/.ocr-queue/
