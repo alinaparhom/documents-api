@@ -692,11 +692,6 @@
     ocrBody: null,
     ocrFileInput: null,
     ocrChooseButton: null,
-    ocrPdfTextButton: null,
-    ocrBrowserButton: null,
-    ocrServerAutoButton: null,
-    ocrServerTextButton: null,
-    ocrServerOcrButton: null,
     ocrCopyButton: null,
     ocrCloseButton: null,
     templateButton: null,
@@ -1256,7 +1251,13 @@
   var SEARCH_POPOVER_MIN_WIDTH = 300;
   var SEARCH_POPOVER_MIN_HEIGHT = 260;
   var ADMIN_S3_READ_MAX_BYTES = 1048576;
+  var ADMIN_OCR_MANUAL_MAX_FILE_BYTES = 26214400;
+  var ADMIN_OCR_MANUAL_REQUEST_TIMEOUT_MS = 30000;
+  var ADMIN_OCR_MANUAL_TOTAL_TIMEOUT_MS = 60000;
   var ADMIN_OCR_PDF_MAX_PAGES = 8;
+  var ADMIN_OCR_PDF_RENDER_SCALE = 3;
+  var ADMIN_OCR_TESSERACT_SCRIPT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+  var adminOcrTesseractLoader = null;
 
   var DEFAULT_VISUAL_SETTINGS = buildDefaultVisualSettings();
 
@@ -1393,12 +1394,10 @@
         statusType: 'info',
         results: {},
         selectedResult: '',
-        limits: null,
-        monitoring: null,
-        serverStatus: null,
-        monitorView: '',
-        testVisible: false,
-        refreshTimer: null
+        manualAbortController: null,
+        manualWorker: null,
+        manualReject: null,
+        manualOperationId: 0
       }
     },
     resizeTimer: null,
@@ -11668,47 +11667,6 @@
       '.documents-s3-modal__metric{border:1px solid rgba(148,163,184,0.3);border-radius:14px;padding:12px;background:rgba(255,255,255,0.74);display:flex;flex-direction:column;gap:4px;min-width:0;}' +
       '.documents-s3-modal__metric-label{font-size:12px;font-weight:700;color:#64748b;line-height:1.3;}' +
       '.documents-s3-modal__metric-value{font-size:18px;font-weight:800;color:#0f172a;line-height:1.2;word-break:break-word;}' +
-      '.documents-s3-modal__ocr{border:1px solid rgba(20,184,166,.24);border-radius:14px;background:rgba(255,255,255,.9);padding:12px;display:grid;gap:10px;min-width:0;}' +
-      '.documents-s3-modal__ocr-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;min-width:0;}' +
-      '.documents-s3-modal__ocr-title-wrap{display:grid;gap:3px;min-width:0;}' +
-      '.documents-s3-modal__ocr-title{font-size:14px;font-weight:900;color:#0f172a;line-height:1.25;}' +
-      '.documents-s3-modal__ocr-message{font-size:12px;font-weight:700;color:#64748b;line-height:1.35;overflow-wrap:anywhere;}' +
-      '.documents-s3-modal__ocr-health{flex:0 0 auto;border-radius:999px;padding:6px 9px;font-size:11px;font-weight:900;line-height:1;background:#f1f5f9;color:#475569;}' +
-      '.documents-s3-modal__ocr-health--ready{background:#dcfce7;color:#047857;}' +
-      '.documents-s3-modal__ocr-health--warning{background:#fef3c7;color:#a16207;}' +
-      '.documents-s3-modal__ocr-health--error{background:#fee2e2;color:#b91c1c;}' +
-      '.documents-s3-modal__ocr-grid{display:grid;grid-template-columns:repeat(6,minmax(90px,1fr));gap:7px;}' +
-      '.documents-s3-modal__ocr-item{border:1px solid rgba(148,163,184,.2);border-radius:9px;background:#f8fafc;padding:7px 8px;display:grid;gap:2px;min-width:0;}' +
-      '.documents-s3-modal__ocr-label{font-size:10px;font-weight:900;color:#64748b;text-transform:uppercase;letter-spacing:0;line-height:1.25;}' +
-      '.documents-s3-modal__ocr-value{font-size:15px;font-weight:950;color:#0f172a;line-height:1.2;overflow-wrap:anywhere;}' +
-      '.documents-s3-modal__ocr-errors{display:grid;gap:5px;}' +
-      '.documents-s3-modal__ocr-error{font-size:12px;font-weight:800;line-height:1.35;color:#991b1b;background:rgba(254,242,242,.86);border:1px solid rgba(254,202,202,.86);border-radius:8px;padding:7px 8px;overflow-wrap:anywhere;}' +
-      '.documents-s3-modal__ocr-toolbar{display:flex;flex-wrap:wrap;gap:7px;}' +
-      '.documents-s3-modal__ocr-tabs{display:flex;gap:5px;overflow-x:auto;scrollbar-gutter:stable;padding-bottom:1px;}' +
-      '.documents-s3-modal__ocr-tab{flex:0 0 auto;min-height:30px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;color:#475569;padding:0 10px;font:inherit;font-size:11px;font-weight:900;cursor:pointer;}' +
-      '.documents-s3-modal__ocr-tab.is-active{border-color:#0f766e;background:#0f766e;color:#fff;}' +
-      '.documents-s3-modal__ocr-section{display:grid;gap:7px;min-width:0;}' +
-      '.documents-s3-modal__ocr-section-head{display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0;}' +
-      '.documents-s3-modal__ocr-section-title{font-size:12px;font-weight:950;color:#0f172a;line-height:1.25;}' +
-      '.documents-s3-modal__ocr-section-count{font-size:11px;font-weight:900;color:#64748b;line-height:1.25;}' +
-      '.documents-s3-modal__ocr-table-wrap{min-width:0;max-height:360px;overflow-x:auto;overflow-y:auto;scrollbar-gutter:stable;border:1px solid rgba(148,163,184,.24);border-radius:10px;background:#fff;}' +
-      '.documents-s3-modal__ocr-table{width:100%;min-width:780px;border-collapse:separate;border-spacing:0;font-size:12px;color:#334155;}' +
-      '.documents-s3-modal__ocr-table th{position:sticky;top:0;z-index:1;background:#f0fdfa;color:#0f766e;font-size:10px;text-align:left;text-transform:uppercase;letter-spacing:0;padding:8px;border-bottom:1px solid rgba(20,184,166,.22);}' +
-      '.documents-s3-modal__ocr-table td{padding:8px;border-bottom:1px solid rgba(20,184,166,.12);vertical-align:top;overflow-wrap:anywhere;}' +
-      '.documents-s3-modal__ocr-table tr:last-child td{border-bottom:0;}' +
-      '.documents-s3-modal__ocr-table td:nth-child(2){max-width:360px;}' +
-      '.documents-s3-modal__ocr-file-name{font-weight:850;color:#0f172a;line-height:1.3;overflow-wrap:anywhere;}' +
-      '.documents-s3-modal__ocr-cell-meta{display:block;margin-top:3px;color:#64748b;font-size:10px;font-weight:700;line-height:1.3;overflow-wrap:anywhere;}' +
-      '.documents-s3-modal__ocr-badge{display:inline-flex;border-radius:999px;padding:4px 7px;background:#f1f5f9;color:#475569;font-size:10px;font-weight:900;line-height:1.1;white-space:nowrap;}' +
-      '.documents-s3-modal__ocr-badge--ready{background:#dcfce7;color:#047857;}' +
-      '.documents-s3-modal__ocr-badge--queued,.documents-s3-modal__ocr-badge--processing{background:#dbeafe;color:#1d4ed8;}' +
-      '.documents-s3-modal__ocr-badge--error,.documents-s3-modal__ocr-badge--dependency_missing{background:#fee2e2;color:#b91c1c;}' +
-      '.documents-s3-modal__ocr-badge--skipped,.documents-s3-modal__ocr-badge--unsupported{background:#fef3c7;color:#a16207;}' +
-      '.documents-s3-modal__ocr-row-actions{display:flex;flex-wrap:wrap;gap:5px;}' +
-      '.documents-s3-modal__ocr-diagnostics{border:1px solid #fecaca;border-radius:9px;background:#fff7f7;color:#991b1b;overflow:hidden;}' +
-      '.documents-s3-modal__ocr-dependencies{border-color:#cbd5e1;background:#f8fafc;color:#334155;}' +
-      '.documents-s3-modal__ocr-diagnostics-summary{cursor:pointer;padding:8px 10px;font-size:11px;font-weight:850;line-height:1.35;overflow-wrap:anywhere;}' +
-      '.documents-s3-modal__ocr-diagnostics-content{display:grid;gap:5px;padding:0 8px 8px;}' +
       '.documents-s3-modal__explorer{min-height:0;border:1px solid rgba(148,163,184,0.3);border-radius:14px;background:rgba(255,255,255,0.74);overflow:hidden;display:grid;grid-template-rows:auto auto auto auto minmax(0,1fr) auto;}' +
       '.documents-s3-modal__explorer-head{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(148,163,184,0.22);}' +
       '.documents-s3-modal__explorer-title{font-size:13px;font-weight:900;color:#0f172a;}' +
@@ -11771,7 +11729,6 @@
       '.documents-ocr-modal__status--error{border-color:#fecaca;background:#fff1f2;color:#b91c1c;}' +
       '.documents-ocr-modal__status--success{border-color:#bbf7d0;background:#ecfdf5;color:#047857;}' +
       '.documents-ocr-modal__body{min-height:0;overflow:auto;scrollbar-gutter:stable;padding:12px 18px 18px;display:grid;grid-template-columns:minmax(260px,340px) minmax(0,1fr);gap:12px;align-content:start;background:#f8fafc;}' +
-      '.documents-ocr-modal__monitor{grid-column:1 / -1;}' +
       '.documents-ocr-modal__controls,.documents-ocr-modal__result{border:1px solid #d1d5db;border-radius:8px;background:#fff;padding:12px;display:flex;flex-direction:column;gap:10px;min-width:0;}' +
       '.documents-ocr-modal__file{border:1px dashed #94a3b8;border-radius:8px;background:#f8fafc;padding:12px;display:flex;flex-direction:column;gap:6px;min-width:0;}' +
       '.documents-ocr-modal__file-name{font-size:13px;font-weight:900;color:#0f172a;overflow-wrap:anywhere;}' +
@@ -11796,8 +11753,6 @@
       '.documents-s3-modal{padding:8px;align-items:flex-end;}' +
       '.documents-s3-modal__panel{width:100%;height:calc(100dvh - 16px);max-height:calc(100dvh - 16px);border-radius:20px;padding:14px;}' +
       '.documents-s3-modal__grid{grid-template-columns:repeat(2,minmax(0,1fr));}' +
-      '.documents-s3-modal__ocr-head{display:grid;grid-template-columns:1fr;}' +
-      '.documents-s3-modal__ocr-message{text-align:left;}' +
       '.documents-s3-modal__explorer-head{grid-template-columns:1fr auto;align-items:start;}' +
       '.documents-s3-modal__explorer-title{grid-column:1 / 2;}' +
       '.documents-s3-modal__explorer-path{grid-column:1 / -1;white-space:normal;overflow-wrap:anywhere;}' +
@@ -11820,8 +11775,6 @@
       '.documents-ocr-modal__body{grid-template-columns:1fr;padding:10px 12px 12px;}' +
       '.documents-ocr-modal__inline-actions{display:grid;grid-template-columns:1fr;}' +
       '.documents-ocr-modal__textarea{min-height:300px;}' +
-      '.documents-s3-modal__ocr-grid{grid-template-columns:repeat(3,minmax(0,1fr));}' +
-      '.documents-s3-modal__ocr-toolbar{display:grid;grid-template-columns:1fr 1fr;}' +
       '}' +
       '';
     document.head.appendChild(style);
@@ -11865,7 +11818,7 @@
     s3Button.type = 'button';
     headerActions.appendChild(s3Button);
 
-    var ocrButton = createElement('button', 'documents-admin__log-button documents-admin__ocr-button', 'OCR');
+    var ocrButton = createElement('button', 'documents-admin__log-button documents-admin__ocr-button', 'OCR-тест');
     ocrButton.type = 'button';
     headerActions.appendChild(ocrButton);
 
@@ -12061,9 +12014,9 @@
     ocrPanel.setAttribute('aria-labelledby', 'documents-ocr-title');
     var ocrHeader = createElement('div', 'documents-ocr-modal__header');
     var ocrTitleWrap = createElement('div', 'documents-ocr-modal__title-wrap');
-    var ocrTitle = createElement('h3', 'documents-ocr-modal__title', 'OCR мониторинг');
+    var ocrTitle = createElement('h3', 'documents-ocr-modal__title', 'Ручной OCR-тест');
     ocrTitle.id = 'documents-ocr-title';
-    var ocrSubtitle = createElement('p', 'documents-ocr-modal__subtitle', 'Новые загрузки, ошибки и ручной тест файла.');
+    var ocrSubtitle = createElement('p', 'documents-ocr-modal__subtitle', 'Выберите PDF, изображение, DOCX, XLSX или TXT. PDF и картинки распознаются в браузере только по явному запуску.');
     ocrTitleWrap.appendChild(ocrTitle);
     ocrTitleWrap.appendChild(ocrSubtitle);
     var ocrActions = createElement('div', 'documents-ocr-modal__actions');
@@ -12083,7 +12036,7 @@
     var ocrBody = createElement('div', 'documents-ocr-modal__body');
     var ocrFileInput = document.createElement('input');
     ocrFileInput.type = 'file';
-    ocrFileInput.accept = '.pdf,.docx,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/*';
+    ocrFileInput.accept = '.pdf,.png,.jpg,.jpeg,.webp,.tif,.tiff,.bmp,.docx,.xlsx,.txt,application/pdf,image/*,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain';
     ocrFileInput.style.display = 'none';
     ocrPanel.appendChild(ocrHeader);
     ocrPanel.appendChild(ocrStatus);
@@ -12195,9 +12148,6 @@
     });
 
     ocrChooseButton.addEventListener('click', function() {
-      var ocrState = ensureAdminOcrState();
-      ocrState.testVisible = true;
-      updateAdminOcrPanel();
       if (adminElements.ocrFileInput) {
         adminElements.ocrFileInput.click();
       }
@@ -12218,15 +12168,9 @@
 
     ocrBody.addEventListener('click', function(event) {
       var target = event.target && event.target.closest
-        ? event.target.closest('[data-ocr-action], [data-ocr-select], [data-ocr-pick], [data-ocr-read], [data-ocr-view]')
+        ? event.target.closest('[data-ocr-run], [data-ocr-select], [data-ocr-pick]')
         : null;
       if (!target || !ocrBody.contains(target)) {
-        return;
-      }
-      if (target.hasAttribute('data-ocr-read')) {
-        readAdminOcrText(target.getAttribute('data-ocr-read') || '').catch(function(error) {
-          docsLogger.warn('OCR text read failed:', error);
-        });
         return;
       }
       if (target.hasAttribute('data-ocr-pick')) {
@@ -12235,18 +12179,9 @@
         }
         return;
       }
-      var monitorView = target.getAttribute('data-ocr-view') || '';
-      if (monitorView) {
-        ensureAdminOcrState().monitorView = monitorView;
-        updateAdminOcrPanel();
-        return;
-      }
-      var action = target.getAttribute('data-ocr-action') || '';
-      if (action) {
-        runAdminOcrAction(action, {
-          signature: target.getAttribute('data-ocr-signature') || ''
-        }).catch(function(error) {
-          docsLogger.warn('OCR action failed:', error);
+      if (target.hasAttribute('data-ocr-run')) {
+        runAdminOcrTest().catch(function(error) {
+          docsLogger.warn('Ручной OCR-тест завершился с ошибкой:', error);
         });
         return;
       }
@@ -13032,33 +12967,26 @@
         statusType: 'info',
         results: {},
         selectedResult: '',
-        limits: null,
-        monitoring: null
+        manualAbortController: null,
+        manualWorker: null,
+        manualReject: null,
+        manualOperationId: 0
       };
     }
     if (!state.admin.ocr.results || typeof state.admin.ocr.results !== 'object') {
       state.admin.ocr.results = {};
     }
-    if (!('limits' in state.admin.ocr)) {
-      state.admin.ocr.limits = null;
+    if (!('manualAbortController' in state.admin.ocr)) {
+      state.admin.ocr.manualAbortController = null;
     }
-    if (!('monitoring' in state.admin.ocr)) {
-      state.admin.ocr.monitoring = null;
+    if (!('manualWorker' in state.admin.ocr)) {
+      state.admin.ocr.manualWorker = null;
     }
-    if (!('serverStatus' in state.admin.ocr)) {
-      state.admin.ocr.serverStatus = null;
+    if (!('manualReject' in state.admin.ocr)) {
+      state.admin.ocr.manualReject = null;
     }
-    if (!('workerStatus' in state.admin.ocr)) {
-      state.admin.ocr.workerStatus = null;
-    }
-    if (typeof state.admin.ocr.monitorView !== 'string') {
-      state.admin.ocr.monitorView = '';
-    }
-    if (!('testVisible' in state.admin.ocr)) {
-      state.admin.ocr.testVisible = false;
-    }
-    if (!('refreshTimer' in state.admin.ocr)) {
-      state.admin.ocr.refreshTimer = null;
+    if (!Number.isFinite(Number(state.admin.ocr.manualOperationId))) {
+      state.admin.ocr.manualOperationId = 0;
     }
     return state.admin.ocr;
   }
@@ -13088,17 +13016,24 @@
     if (type === 'application/pdf' || /\.pdf$/i.test(name)) {
       return 'pdf';
     }
+    if (type.indexOf('image/') === 0 || /\.(?:png|jpe?g|webp|tiff?|bmp)$/i.test(name)) {
+      return 'image';
+    }
     if (type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || /\.docx$/i.test(name)) {
       return 'docx';
     }
-    if (type.indexOf('image/') === 0 || /\.(png|jpe?g|webp|bmp|tiff?)$/i.test(name)) {
-      return 'image';
+    if (type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' || /\.xlsx$/i.test(name)) {
+      return 'xlsx';
+    }
+    if (type === 'text/plain' || /\.txt$/i.test(name)) {
+      return 'text';
     }
     return '';
   }
 
   function setAdminOcrFile(file) {
     var ocrState = ensureAdminOcrState();
+    cancelAdminOcrManualRun();
     var fileType = getAdminOcrFileType(file);
     if (!fileType) {
       ocrState.file = null;
@@ -13106,14 +13041,24 @@
       ocrState.fileType = '';
       ocrState.results = {};
       ocrState.selectedResult = '';
-      setAdminOcrStatus('Поддерживаются только PDF, DOCX и изображения.', 'error');
+      setAdminOcrStatus('Поддерживаются PDF, изображения, DOCX, XLSX и TXT.', 'error');
+      updateAdminOcrPanel();
+      return;
+    }
+    var fileSizeLimit = ADMIN_OCR_MANUAL_MAX_FILE_BYTES;
+    if (file && Number(file.size) > fileSizeLimit) {
+      ocrState.file = null;
+      ocrState.fileName = '';
+      ocrState.fileType = '';
+      ocrState.results = {};
+      ocrState.selectedResult = '';
+      setAdminOcrStatus('Файл слишком большой. Максимум для ручного OCR — ' + formatTemplateSize(fileSizeLimit) + '.', 'error');
       updateAdminOcrPanel();
       return;
     }
     ocrState.file = file;
     ocrState.fileName = file && file.name ? String(file.name) : 'document';
     ocrState.fileType = fileType;
-    ocrState.testVisible = true;
     ocrState.running = '';
     ocrState.results = {};
     ocrState.selectedResult = '';
@@ -13157,120 +13102,62 @@
     updateAdminOcrPanel();
   }
 
-  function canvasToAdminOcrBlob(canvas) {
-    return new Promise(function(resolve, reject) {
-      if (!canvas || typeof canvas.toBlob !== 'function') {
-        reject(new Error('Браузер не смог подготовить изображение страницы.'));
-        return;
-      }
-      canvas.toBlob(function(blob) {
-        if (blob) {
-          resolve(blob);
-        } else {
-          reject(new Error('Браузер не смог создать PNG страницы.'));
-        }
-      }, 'image/png');
-    });
+  function cancelAdminOcrManualRun() {
+    var ocrState = ensureAdminOcrState();
+    ocrState.manualOperationId = Math.max(0, Number(ocrState.manualOperationId) || 0) + 1;
+    var controller = ocrState.manualAbortController;
+    var worker = ocrState.manualWorker;
+    var rejectManualRun = ocrState.manualReject;
+    ocrState.manualAbortController = null;
+    ocrState.manualWorker = null;
+    ocrState.manualReject = null;
+    if (controller && typeof controller.abort === 'function') {
+      controller.abort();
+    }
+    terminateAdminOcrWorker(worker);
+    if (typeof rejectManualRun === 'function') {
+      rejectManualRun(createAdminOcrAbortError());
+    }
+    if (ocrState.running === 'manual-test') {
+      ocrState.running = '';
+    }
   }
 
-  async function renderAdminPdfPagesToImages(file) {
-    var pdfjsLib = await ensureBriefPdfJsLoaded();
-    applyBriefPdfJsWorker(pdfjsLib);
-    var bytes = await file.arrayBuffer();
-    var pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
-    var pageCount = Math.max(0, Number(pdf.numPages) || 0);
-    if (pageCount < 1) {
-      throw new Error('В PDF не найдено страниц для распознавания.');
-    }
-    var pageLimit = Math.max(1, Number(ADMIN_OCR_PDF_MAX_PAGES) || 1);
-    var pagesToRender = Math.min(pageCount, pageLimit);
-    var pages = [];
-    for (var pageIndex = 1; pageIndex <= pagesToRender; pageIndex += 1) {
-      var page = await pdf.getPage(pageIndex);
-      var viewport = page.getViewport({ scale: 3 });
-      var canvas = document.createElement('canvas');
-      canvas.width = Math.max(1, Math.floor(viewport.width));
-      canvas.height = Math.max(1, Math.floor(viewport.height));
-      var context = canvas.getContext('2d');
-      if (!context) {
-        throw new Error('Браузер не смог подготовить страницу PDF.');
-      }
-      setAdminOcrStatus('Готовим страницу PDF ' + pageIndex + ' из ' + pagesToRender + '…', 'info');
-      await page.render({ canvasContext: context, viewport: viewport }).promise;
-      var blob = await canvasToAdminOcrBlob(canvas);
-      canvas.width = 1;
-      canvas.height = 1;
-      pages.push({
-        page: pageIndex,
-        blob: blob
-      });
-    }
-    return {
-      pages: pages,
-      totalPages: pdf.numPages || pageCount,
-      pagesLimit: pageLimit
-    };
-  }
-
-  function requestAdminOcrImage(file, fileName, pageNumber) {
+  function requestAdminOcrFile(file, fileName, controller) {
     var formData = new FormData();
     formData.append('action', 'ocr_test');
     formData.append('organization', state.organization || '');
-    if (pageNumber) {
-      formData.append('page', String(pageNumber));
-    }
-    formData.append('file', file, fileName || 'ocr-page.png');
+    formData.append('file', file, fileName || 'ocr-file');
     appendTelegramUserIdToFormData(formData);
     return requestAdminOcrApi(buildApiUrl('ocr_test', { organization: state.organization || '' }), {
       method: 'POST',
       credentials: 'same-origin',
       body: formData
-    }, 45000);
+    }, ADMIN_OCR_MANUAL_REQUEST_TIMEOUT_MS, controller);
   }
 
-  async function requestAdminServerOcr() {
+  function requestAdminOcrTest(controller) {
     var ocrState = ensureAdminOcrState();
     if (!ocrState.file) {
-      throw new Error('Файл не выбран.');
+      return Promise.reject(new Error('Файл не выбран.'));
     }
 
-    if (ocrState.fileType !== 'pdf') {
-      return requestAdminOcrImage(ocrState.file, ocrState.fileName || 'ocr-image');
-    }
-
-    var rendered = await renderAdminPdfPagesToImages(ocrState.file);
-    var pageTexts = [];
-    var firstError = '';
-    for (var index = 0; index < rendered.pages.length; index += 1) {
-      var item = rendered.pages[index];
-      setAdminOcrStatus('Распознаём страницу ' + item.page + ' из ' + rendered.pages.length + '…', 'info');
-      var data = await requestAdminOcrImage(item.blob, 'page-' + item.page + '.png', item.page);
-      var text = data && data.text ? normalizeAdminOcrText(data.text) : '';
-      if (text) {
-        pageTexts.push('--- Страница ' + item.page + ' ---\n' + text);
-      } else if (!firstError && data && data.error) {
-        firstError = String(data.error);
-      }
-    }
-
-    return {
-      text: normalizeAdminOcrText(pageTexts.join('\n\n')),
-      method: 'tesseract:pdf-pages',
-      pagesProcessed: rendered.pages.length,
-      totalPages: rendered.totalPages,
-      pagesLimit: rendered.pagesLimit,
-      serverOk: pageTexts.length > 0,
-      error: firstError
-    };
+    return requestAdminOcrFile(ocrState.file, ocrState.fileName || 'ocr-file', controller);
   }
 
-  function requestAdminOcrApi(url, options, timeoutMs) {
-    var controller = typeof AbortController === 'function' ? new AbortController() : null;
+  function requestAdminOcrApi(url, options, timeoutMs, externalController) {
+    var controller = externalController && typeof externalController.abort === 'function'
+      ? externalController
+      : (typeof AbortController === 'function' ? new AbortController() : null);
     var requestOptions = Object.assign({}, options || {});
     var timer = null;
+    var timedOut = false;
     if (controller) {
+      controller.documentsOcrTimedOut = false;
       requestOptions.signal = controller.signal;
       timer = window.setTimeout(function() {
+        timedOut = true;
+        controller.documentsOcrTimedOut = true;
         controller.abort();
       }, Math.max(1000, Number(timeoutMs) || 15000));
     }
@@ -13278,7 +13165,7 @@
     return fetch(url, requestOptions)
       .then(handleResponse)
       .catch(function(error) {
-        if (error && error.name === 'AbortError') {
+        if (error && error.name === 'AbortError' && timedOut) {
           throw new Error('Сервер OCR не ответил вовремя. Запрос остановлен, интерфейс не будет ждать бесконечно.');
         }
         throw error;
@@ -13290,242 +13177,322 @@
       });
   }
 
-  function requestAdminOcrStatus() {
-    var formData = new FormData();
-    formData.append('action', 'ocr_status');
-    formData.append('organization', state.organization || '');
-    appendTelegramUserIdToFormData(formData);
-    return requestAdminOcrApi(buildApiUrl('ocr_status', { organization: state.organization || '' }), {
-      method: 'POST',
-      credentials: 'same-origin',
-      body: formData
-    }, 20000);
+  function createAdminOcrAbortError() {
+    var error = new Error('Ручной OCR остановлен.');
+    error.name = 'AbortError';
+    return error;
   }
 
-  function requestAdminOcrText(signature) {
-    var normalizedSignature = String(signature || '').trim();
-    if (!normalizedSignature) {
-      return Promise.reject(new Error('OCR signature не найден.'));
-    }
-    return requestAdminOcrApi(buildApiUrl('ocr_text', {
-      organization: state.organization || '',
-      signature: normalizedSignature
-    }), {
-      method: 'GET',
-      credentials: 'same-origin',
-      cache: 'no-store'
-    }, 20000);
-  }
-
-  function requestAdminOcrBackgroundRun() {
-    var payload = {
-      action: 'ocr_background_run',
-      organization: state.organization || '',
-      limit: 1
-    };
-    mergeTelegramUserId(payload);
-    return requestAdminOcrApi(buildApiUrl('ocr_background_run', { organization: state.organization || '' }), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin',
-      body: JSON.stringify(payload)
-    }, 20000);
-  }
-
-  function requestAdminOcrControl(command, signature) {
-    var payload = {
-      action: 'ocr_control',
-      organization: state.organization || '',
-      command: command || ''
-    };
-    if (signature) {
-      payload.signature = String(signature);
-    }
-    mergeTelegramUserId(payload);
-    return requestAdminOcrApi(buildApiUrl('ocr_control', { organization: state.organization || '' }), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin',
-      body: JSON.stringify(payload)
-    }, 20000);
-  }
-
-  function clearAdminOcrRefreshTimer() {
+  function isAdminOcrOperationCurrent(operationId) {
     var ocrState = ensureAdminOcrState();
-    if (ocrState.refreshTimer !== null) {
-      window.clearTimeout(ocrState.refreshTimer);
-      ocrState.refreshTimer = null;
+    if (Number(operationId) !== Number(ocrState.manualOperationId)) {
+      return false;
+    }
+    var controller = ocrState.manualAbortController;
+    return !(controller && controller.signal && controller.signal.aborted);
+  }
+
+  function assertAdminOcrOperationCurrent(operationId) {
+    if (!isAdminOcrOperationCurrent(operationId)) {
+      throw createAdminOcrAbortError();
     }
   }
 
-  function scheduleAdminOcrRefresh(delayMs) {
-    var ocrState = ensureAdminOcrState();
-    clearAdminOcrRefreshTimer();
-    if (!ocrState.visible) {
-      return;
+  function terminateAdminOcrWorker(worker) {
+    if (!worker || typeof worker.terminate !== 'function') {
+      return Promise.resolve();
     }
-    ocrState.refreshTimer = window.setTimeout(function() {
-      ocrState.refreshTimer = null;
-      if (!ocrState.visible || ocrState.running) {
-        return;
+    try {
+      return Promise.resolve(worker.terminate()).catch(function() {});
+    } catch (error) {
+      return Promise.resolve();
+    }
+  }
+
+  function ensureAdminOcrTesseractLoaded() {
+    if (typeof window !== 'undefined' && window.Tesseract && typeof window.Tesseract.createWorker === 'function') {
+      return Promise.resolve(window.Tesseract);
+    }
+    if (adminOcrTesseractLoader) {
+      return adminOcrTesseractLoader;
+    }
+
+    adminOcrTesseractLoader = new Promise(function(resolve, reject) {
+      var script = document.createElement('script');
+      var configuredSource = typeof window !== 'undefined' && window.DOCUMENTS_TESSERACT_URL
+        ? String(window.DOCUMENTS_TESSERACT_URL).trim()
+        : '';
+      script.src = configuredSource || ADMIN_OCR_TESSERACT_SCRIPT_URL;
+      script.async = true;
+      script.onload = function() {
+        if (window.Tesseract && typeof window.Tesseract.createWorker === 'function') {
+          resolve(window.Tesseract);
+          return;
+        }
+        adminOcrTesseractLoader = null;
+        reject(new Error('Tesseract.js не инициализировался после загрузки.'));
+      };
+      script.onerror = function() {
+        adminOcrTesseractLoader = null;
+        if (script.parentNode) {
+          script.parentNode.removeChild(script);
+        }
+        reject(new Error('Не удалось загрузить Tesseract.js. Проверьте доступ к jsDelivr или задайте DOCUMENTS_TESSERACT_URL.'));
+      };
+      document.head.appendChild(script);
+    });
+
+    return adminOcrTesseractLoader;
+  }
+
+  function formatAdminOcrBrowserProgress(message, label) {
+    var status = message && message.status ? String(message.status) : '';
+    var statusLabels = {
+      'loading tesseract core': 'загрузка OCR-ядра',
+      'initializing tesseract': 'инициализация OCR',
+      'loading language traineddata': 'загрузка языков',
+      'initializing api': 'подготовка OCR',
+      'recognizing text': 'распознавание текста'
+    };
+    var progress = message && typeof message.progress === 'number'
+      ? ' ' + Math.round(message.progress * 100) + '%'
+      : '';
+    return (label || 'Браузерный OCR') + ': ' + (statusLabels[status] || status || 'обработка') + progress + '…';
+  }
+
+  async function createAdminOcrBrowserWorker(operationId, progressLabel) {
+    var Tesseract = await ensureAdminOcrTesseractLoaded();
+    assertAdminOcrOperationCurrent(operationId);
+    var worker = await Tesseract.createWorker('rus+eng', 1, {
+      logger: function(message) {
+        if (!isAdminOcrOperationCurrent(operationId) || !message || !message.status) {
+          return;
+        }
+        setAdminOcrStatus(formatAdminOcrBrowserProgress(message, progressLabel), 'info');
       }
-      runAdminOcrAction('server-status', { silent: true }).catch(function(error) {
-        docsLogger.warn('Не удалось автоматически обновить OCR-мониторинг:', error);
-      });
-    }, Math.max(1000, Number(delayMs) || 5000));
-  }
-
-  function formatAdminOcrDependencyStatus(status) {
-    status = status && typeof status === 'object' ? status : {};
-    if (status.runtimeGuard && status.runtimeGuard.reason === 'busy') {
-      return 'проверка зависимостей отложена: OCR сейчас занят';
+    });
+    if (!isAdminOcrOperationCurrent(operationId)) {
+      await terminateAdminOcrWorker(worker);
+      throw createAdminOcrAbortError();
     }
-    return [
-      'tesseract: ' + (status.tesseractAvailable ? 'есть' : 'нет'),
-      'pdftoppm: ' + (status.pdftoppmAvailable ? 'есть' : 'нет'),
-      'pdftotext: ' + (status.pdftotextAvailable ? 'есть' : 'нет'),
-      'docx: ' + (status.zipArchiveAvailable && status.domDocumentAvailable ? 'есть' : 'нет')
-    ].join(', ');
+    ensureAdminOcrState().manualWorker = worker;
+    return worker;
   }
 
-  function runAdminOcrAction(action, options) {
+  function extractAdminOcrPdfTextLayer(page) {
+    return page.getTextContent().then(function(content) {
+      var items = content && Array.isArray(content.items) ? content.items : [];
+      return normalizeAdminOcrText(items.map(function(item) {
+        return item && item.str ? String(item.str) : '';
+      }).join(' ').replace(/\s+/g, ' '));
+    });
+  }
+
+  async function renderAdminOcrPdfPage(page) {
+    var viewport = page.getViewport({ scale: ADMIN_OCR_PDF_RENDER_SCALE });
+    var canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.floor(viewport.width));
+    canvas.height = Math.max(1, Math.floor(viewport.height));
+    var context = canvas.getContext('2d');
+    if (!context) {
+      throw new Error('Браузер не смог подготовить страницу PDF.');
+    }
+    await page.render({ canvasContext: context, viewport: viewport }).promise;
+    return canvas;
+  }
+
+  async function requestAdminBrowserOcr(operationId) {
     var ocrState = ensureAdminOcrState();
-    var actionOptions = options && typeof options === 'object' ? options : {};
+    var file = ocrState.file;
+    var fileType = ocrState.fileType;
+    if (!file || (fileType !== 'pdf' && fileType !== 'image')) {
+      throw new Error('Файл для браузерного OCR не выбран.');
+    }
+
+    var worker = null;
+    try {
+      if (fileType === 'image') {
+        setAdminOcrStatus('Загружаем браузерный OCR…', 'info');
+        worker = await createAdminOcrBrowserWorker(operationId, 'Изображение');
+        var imageResult = await worker.recognize(file);
+        assertAdminOcrOperationCurrent(operationId);
+        var imageText = normalizeAdminOcrText(imageResult && imageResult.data ? imageResult.data.text : '');
+        return {
+          text: imageText,
+          method: 'browser:tesseract.js',
+          serverOk: Boolean(imageText),
+          error: imageText ? '' : 'Tesseract.js не вернул текст.'
+        };
+      }
+
+      setAdminOcrStatus('Открываем PDF в браузере…', 'info');
+      var pdfjsLib = await ensureBriefPdfJsLoaded();
+      applyBriefPdfJsWorker(pdfjsLib);
+      assertAdminOcrOperationCurrent(operationId);
+      var bytes = await file.arrayBuffer();
+      var pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
+      var totalPages = Math.max(0, Number(pdf.numPages) || 0);
+      if (totalPages < 1) {
+        throw new Error('В PDF не найдено страниц.');
+      }
+      var pagesToProcess = Math.min(totalPages, ADMIN_OCR_PDF_MAX_PAGES);
+      var pageTexts = [];
+      var textLayerPages = 0;
+      var recognizedPages = 0;
+
+      for (var pageNumber = 1; pageNumber <= pagesToProcess; pageNumber += 1) {
+        assertAdminOcrOperationCurrent(operationId);
+        setAdminOcrStatus('Читаем PDF: страница ' + pageNumber + ' из ' + pagesToProcess + '…', 'info');
+        var page = await pdf.getPage(pageNumber);
+        var pageText = '';
+        try {
+          pageText = await extractAdminOcrPdfTextLayer(page);
+          if (pageText) {
+            textLayerPages += 1;
+          } else {
+            if (!worker) {
+              worker = await createAdminOcrBrowserWorker(operationId, 'PDF');
+            }
+            setAdminOcrStatus('Распознаём PDF: страница ' + pageNumber + ' из ' + pagesToProcess + '…', 'info');
+            var canvas = await renderAdminOcrPdfPage(page);
+            try {
+              var pageResult = await worker.recognize(canvas);
+              assertAdminOcrOperationCurrent(operationId);
+              pageText = normalizeAdminOcrText(pageResult && pageResult.data ? pageResult.data.text : '');
+              recognizedPages += 1;
+            } finally {
+              canvas.width = 1;
+              canvas.height = 1;
+            }
+          }
+        } finally {
+          if (page && typeof page.cleanup === 'function') {
+            page.cleanup();
+          }
+        }
+        if (pageText) {
+          pageTexts.push('--- Страница ' + pageNumber + ' ---\n' + pageText);
+        }
+      }
+
+      var pdfText = normalizeAdminOcrText(pageTexts.join('\n\n'));
+      var method = recognizedPages > 0
+        ? (textLayerPages > 0 ? 'browser:pdf.js+tesseract.js' : 'browser:tesseract.js:pdf-pages')
+        : 'browser:pdf.js:text-layer';
+      return {
+        text: pdfText,
+        method: method,
+        pagesProcessed: pagesToProcess,
+        totalPages: totalPages,
+        pagesLimit: ADMIN_OCR_PDF_MAX_PAGES,
+        serverOk: Boolean(pdfText),
+        error: pdfText ? '' : 'В PDF не найден текст.'
+      };
+    } finally {
+      await terminateAdminOcrWorker(worker);
+      if (typeof pdf !== 'undefined' && pdf && typeof pdf.destroy === 'function') {
+        try {
+          await pdf.destroy();
+        } catch (error) {}
+      }
+      if (ensureAdminOcrState().manualWorker === worker) {
+        ensureAdminOcrState().manualWorker = null;
+      }
+    }
+  }
+
+  function runAdminOcrTest() {
+    var ocrState = ensureAdminOcrState();
     if (ocrState.running) {
       return Promise.resolve();
-    }
-    if (action === 'toggle-test') {
-      ocrState.testVisible = !ocrState.testVisible;
-      updateAdminOcrPanel();
-      return Promise.resolve();
-    }
-    if (action === 'server-status') {
-      ocrState.running = action;
-      if (!actionOptions.silent) {
-        setAdminOcrStatus('Проверяю серверный OCR…', 'info');
-      }
-      updateAdminOcrPanel();
-      return requestAdminOcrStatus().then(function(data) {
-        ocrState.limits = data && data.limits && typeof data.limits === 'object' ? data.limits : ocrState.limits;
-        ocrState.monitoring = data && data.monitoring && typeof data.monitoring === 'object' ? data.monitoring : ocrState.monitoring;
-        ocrState.serverStatus = data && data.status && typeof data.status === 'object' ? data.status : ocrState.serverStatus;
-        ocrState.workerStatus = data && data.worker && typeof data.worker === 'object' ? data.worker : ocrState.workerStatus;
-        if (ocrState.limits && ocrState.limits.maxPdfPagesPerFile) {
-          ADMIN_OCR_PDF_MAX_PAGES = Math.max(1, Number(ocrState.limits.maxPdfPagesPerFile) || ADMIN_OCR_PDF_MAX_PAGES);
-        }
-        if (!actionOptions.silent) {
-          var status = data && data.status ? data.status : {};
-          var message = data && data.message ? String(data.message) : 'Проверка серверного OCR завершена.';
-          message += ' ' + formatAdminOcrDependencyStatus(status) + '.';
-          var guardBusy = status.runtimeGuard && status.runtimeGuard.reason === 'busy';
-          setAdminOcrStatus(message, guardBusy ? 'info' : (data && data.ready && data.pdfReady ? 'success' : 'error'));
-        }
-      }).catch(function(error) {
-        setAdminOcrStatus(error && error.message ? error.message : 'Не удалось проверить серверный OCR.', 'error');
-        throw error;
-      }).finally(function() {
-        ocrState.running = '';
-        updateAdminOcrPanel();
-        var statuses = ocrState.monitoring && ocrState.monitoring.statuses ? ocrState.monitoring.statuses : {};
-        if (ocrState.visible && (Number(statuses.processing || 0) > 0 || (ocrState.workerStatus && ocrState.workerStatus.running))) {
-          scheduleAdminOcrRefresh(5000);
-        }
-      });
-    }
-    if (action === 'background-run') {
-      ocrState.running = action;
-      setAdminOcrStatus('Запускаю фоновую OCR-обработку одного файла…', 'info');
-      updateAdminOcrPanel();
-      return requestAdminOcrBackgroundRun().then(function(data) {
-        ocrState.monitoring = data && data.monitoring && typeof data.monitoring === 'object' ? data.monitoring : ocrState.monitoring;
-        var accepted = Number(data && data.accepted) || 0;
-        var breaker = ocrState.monitoring && ocrState.monitoring.circuitBreaker && typeof ocrState.monitoring.circuitBreaker === 'object'
-          ? ocrState.monitoring.circuitBreaker
-          : (data && data.guard && data.guard.circuitBreaker && typeof data.guard.circuitBreaker === 'object' ? data.guard.circuitBreaker : null);
-        setAdminOcrStatus(
-          data && data.message ? String(data.message) : (accepted > 0 ? 'Фоновый OCR запущен.' : 'Нет файлов для фонового OCR.'),
-          breaker && breaker.active ? 'error' : (accepted > 0 ? 'success' : 'info')
-        );
-        if (accepted > 0) {
-          scheduleAdminOcrRefresh(2500);
-        }
-      }).catch(function(error) {
-        setAdminOcrStatus(error && error.message ? error.message : 'Не удалось запустить фоновый OCR.', 'error');
-        throw error;
-      }).finally(function() {
-        ocrState.running = '';
-        updateAdminOcrPanel();
-      });
-    }
-    if (action === 'retry-errors' || action === 'retry-item' || action === 'reset-breaker' || action === 'recover-stale') {
-      var commandMap = {
-        'retry-errors': 'retry_errors',
-        'retry-item': 'retry_item',
-        'reset-breaker': 'reset_breaker',
-        'recover-stale': 'recover_stale'
-      };
-      ocrState.running = action;
-      setAdminOcrStatus('Выполняю команду управления OCR…', 'info');
-      updateAdminOcrPanel();
-      return requestAdminOcrControl(commandMap[action], actionOptions.signature || '')
-        .then(function(data) {
-          ocrState.monitoring = data && data.monitoring && typeof data.monitoring === 'object' ? data.monitoring : ocrState.monitoring;
-          setAdminOcrStatus(data && data.message ? String(data.message) : 'Команда OCR выполнена.', 'success');
-        })
-        .catch(function(error) {
-          setAdminOcrStatus(error && error.message ? error.message : 'Не удалось выполнить команду OCR.', 'error');
-          throw error;
-        })
-        .finally(function() {
-          ocrState.running = '';
-          updateAdminOcrPanel();
-        });
     }
     if (!ocrState.file) {
       setAdminOcrStatus('Сначала выберите файл.', 'error');
       updateAdminOcrPanel();
       return Promise.reject(new Error('Файл не выбран.'));
     }
-    ocrState.running = action;
-    setAdminOcrStatus('Запускаем распознавание…', 'info');
+    cancelAdminOcrManualRun();
+    var manualOperationId = Number(ocrState.manualOperationId) || 0;
+    var manualController = typeof AbortController === 'function' ? new AbortController() : null;
+    var manualTimeoutTimer = null;
+    var rejectManualTimeout = null;
+    var manualTimeoutPromise = null;
+    if (manualController) {
+      manualController.documentsOcrTotalTimedOut = false;
+      manualTimeoutPromise = new Promise(function(resolve, reject) {
+        rejectManualTimeout = reject;
+      });
+      ocrState.manualReject = rejectManualTimeout;
+      manualTimeoutTimer = window.setTimeout(function() {
+        if (manualOperationId !== Number(ocrState.manualOperationId)) {
+          return;
+        }
+        manualController.documentsOcrTotalTimedOut = true;
+        manualController.abort();
+        terminateAdminOcrWorker(ocrState.manualWorker);
+        if (rejectManualTimeout) {
+          rejectManualTimeout(createAdminOcrAbortError());
+        }
+      }, ADMIN_OCR_MANUAL_TOTAL_TIMEOUT_MS);
+    }
+    ocrState.manualAbortController = manualController;
+    ocrState.running = 'manual-test';
+    setAdminOcrStatus('Извлекаем текст…', 'info');
     updateAdminOcrPanel();
 
-    var runner = requestAdminServerOcr().then(function(data) {
-      var title = 'OCR';
+    var useBrowserOcr = ocrState.fileType === 'pdf' || ocrState.fileType === 'image';
+    var manualRequest = useBrowserOcr
+      ? requestAdminBrowserOcr(manualOperationId)
+      : requestAdminOcrTest(manualController);
+    if (manualTimeoutPromise) {
+      manualRequest = Promise.race([manualRequest, manualTimeoutPromise]);
+    }
+    var runner = manualRequest.then(function(data) {
+      if (manualOperationId !== Number(ocrState.manualOperationId)) {
+        return;
+      }
+      var title = 'Ручной OCR-тест';
       var text = data && data.text ? String(data.text) : '';
       var metaParts = [];
       if (data && data.method) {
         metaParts.push(String(data.method));
       }
       if (data && data.pagesProcessed) {
-        metaParts.push('страниц: ' + data.pagesProcessed);
+        metaParts.push(String(data.pagesProcessed) + ' из ' + String(data.totalPages || data.pagesProcessed) + ' стр.');
       }
-      if (data && data.totalPages && data.pagesLimit && Number(data.totalPages) > Number(data.pagesLimit)) {
-        metaParts.push('лимит PDF: первые ' + data.pagesLimit + ' из ' + data.totalPages);
-      } else if (data && data.pagesLimit) {
-        metaParts.push('лимит PDF: ' + data.pagesLimit);
-      }
-      saveAdminOcrResult('server-ocr', title, text, metaParts.join(', '), data && data.error ? String(data.error) : '');
-      setAdminOcrStatus(text ? 'Текст распознан.' : (data && data.error ? String(data.error) : 'OCR не вернул текст.'), text ? 'success' : 'error');
+      saveAdminOcrResult('manual-test', title, text, metaParts.join(', '), data && data.error ? String(data.error) : '');
+      setAdminOcrStatus(text ? 'Текст извлечён.' : (data && data.error ? String(data.error) : 'Текст не найден.'), text ? 'success' : 'error');
     });
 
     return runner.catch(function(error) {
+      if (manualOperationId !== Number(ocrState.manualOperationId)) {
+        return null;
+      }
+      if (manualController && manualController.documentsOcrTotalTimedOut) {
+        var timeoutSeconds = Math.round(ADMIN_OCR_MANUAL_TOTAL_TIMEOUT_MS / 1000);
+        var timeoutMessage = 'Ручной OCR остановлен: истёк общий лимит ' + timeoutSeconds + ' секунд.';
+        saveAdminOcrResult('manual-test', 'Ручной OCR-тест', '', '', timeoutMessage);
+        setAdminOcrStatus(timeoutMessage, 'error');
+        return null;
+      }
+      if (error && error.name === 'AbortError') {
+        return null;
+      }
       var message = error && error.message ? error.message : 'OCR завершился с ошибкой.';
-      saveAdminOcrResult(action, action, '', '', message);
+      saveAdminOcrResult('manual-test', 'Ручной OCR-тест', '', '', message);
       setAdminOcrStatus(message, 'error');
       throw error;
     }).finally(function() {
-      ocrState.running = '';
-      updateAdminOcrPanel();
+      if (manualTimeoutTimer !== null) {
+        window.clearTimeout(manualTimeoutTimer);
+      }
+      if (manualOperationId === Number(ocrState.manualOperationId)) {
+        ocrState.manualAbortController = null;
+        ocrState.manualReject = null;
+        ocrState.running = '';
+        updateAdminOcrPanel();
+      }
     });
-  }
-
-  function createAdminOcrActionButton(action, label, disabled) {
-    var button = createElement('button', 'documents-ocr-modal__button', label);
-    button.type = 'button';
-    button.setAttribute('data-ocr-action', action);
-    button.disabled = Boolean(disabled);
-    return button;
   }
 
   function createAdminOcrResultCard(result, selected) {
@@ -13545,6 +13512,53 @@
     return card;
   }
 
+  function captureAdminOcrPanelViewState(container) {
+    if (!container) {
+      return null;
+    }
+    var activeElement = document.activeElement;
+    var focusTarget = null;
+    if (activeElement && container.contains(activeElement)) {
+      ['data-ocr-run', 'data-ocr-select', 'data-ocr-pick'].some(function(attribute) {
+        if (!activeElement.hasAttribute || !activeElement.hasAttribute(attribute)) {
+          return false;
+        }
+        focusTarget = {
+          attribute: attribute,
+          value: activeElement.getAttribute(attribute) || ''
+        };
+        return true;
+      });
+    }
+
+    return {
+      scrollTop: container.scrollTop,
+      scrollLeft: container.scrollLeft,
+      focusTarget: focusTarget
+    };
+  }
+
+  function restoreAdminOcrPanelViewState(container, viewState) {
+    if (!container || !viewState) {
+      return;
+    }
+    container.scrollTop = Number(viewState.scrollTop) || 0;
+    container.scrollLeft = Number(viewState.scrollLeft) || 0;
+    var focusTarget = viewState.focusTarget;
+    if (!focusTarget) {
+      return;
+    }
+    Array.prototype.some.call(container.querySelectorAll('[' + focusTarget.attribute + ']'), function(candidate) {
+      if ((candidate.getAttribute(focusTarget.attribute) || '') !== focusTarget.value) {
+        return false;
+      }
+      if (typeof candidate.focus === 'function') {
+        candidate.focus({ preventScroll: true });
+      }
+      return true;
+    });
+  }
+
   function updateAdminOcrPanel() {
     ensureAdminModal();
     var ocrState = ensureAdminOcrState();
@@ -13554,61 +13568,50 @@
     if (adminElements.ocrCopyButton) {
       var selected = ocrState.selectedResult && ocrState.results[ocrState.selectedResult] ? ocrState.results[ocrState.selectedResult] : null;
       adminElements.ocrCopyButton.disabled = !selected || !selected.text;
-      adminElements.ocrCopyButton.hidden = !ocrState.testVisible;
     }
     if (adminElements.ocrChooseButton) {
-      adminElements.ocrChooseButton.textContent = ocrState.testVisible ? 'Другой файл' : 'Тест файла';
+      adminElements.ocrChooseButton.textContent = ocrState.file ? 'Другой файл' : 'Выбрать файл';
+      adminElements.ocrChooseButton.disabled = Boolean(ocrState.running);
     }
     if (!adminElements.ocrBody) {
       return;
     }
+    var panelViewState = captureAdminOcrPanelViewState(adminElements.ocrBody);
     adminElements.ocrBody.innerHTML = '';
-
-    var monitorData = ocrState.monitoring && typeof ocrState.monitoring === 'object'
-      ? ocrState.monitoring
-      : {
-          message: ocrState.running === 'server-status' ? 'Загружаю OCR-мониторинг…' : 'OCR-мониторинг загрузится при открытии окна.',
-          statuses: {},
-          limits: ocrState.limits || {}
-        };
-    var monitorPanel = createAdminS3OcrMonitor(monitorData, {
-      interactive: true,
-      serverStatus: ocrState.serverStatus,
-      workerStatus: ocrState.workerStatus,
-      monitorView: ocrState.monitorView,
-      running: ocrState.running
-    });
-    monitorPanel.classList.add('documents-ocr-modal__monitor');
-
-    adminElements.ocrBody.appendChild(monitorPanel);
-    if (!ocrState.testVisible) {
-      setAdminOcrStatus(ocrState.status, ocrState.statusType);
-      return;
-    }
 
     var controls = createElement('section', 'documents-ocr-modal__controls');
     var testGroup = createElement('div', 'documents-ocr-modal__group');
     testGroup.appendChild(createElement('div', 'documents-ocr-modal__group-title', 'Ручной тест OCR своего файла'));
     var fileBox = createElement('div', 'documents-ocr-modal__file');
     fileBox.appendChild(createElement('div', 'documents-ocr-modal__file-name', ocrState.fileName || 'Файл не выбран'));
-    var selectedTypeLabel = 'Изображение';
+    var selectedTypeLabel = 'Файл';
     if (ocrState.fileType === 'pdf') {
       selectedTypeLabel = 'PDF';
+    } else if (ocrState.fileType === 'image') {
+      selectedTypeLabel = 'Изображение';
     } else if (ocrState.fileType === 'docx') {
       selectedTypeLabel = 'Word DOCX';
+    } else if (ocrState.fileType === 'xlsx') {
+      selectedTypeLabel = 'Excel XLSX';
+    } else if (ocrState.fileType === 'text') {
+      selectedTypeLabel = 'Текст TXT';
     }
     var fileMeta = ocrState.file
       ? (selectedTypeLabel + ' • ' + formatTemplateSize(ocrState.file.size || 0))
-      : 'PDF, DOCX, PNG, JPG, WEBP, BMP, TIFF';
+      : 'PDF, PNG/JPEG/WebP/TIFF/BMP, DOCX, XLSX, TXT';
     fileBox.appendChild(createElement('div', 'documents-ocr-modal__file-meta', fileMeta));
     testGroup.appendChild(fileBox);
     var testActions = createElement('div', 'documents-ocr-modal__inline-actions');
     var pickButton = createElement('button', 'documents-ocr-modal__button documents-ocr-modal__button--primary', 'Выбрать свой файл');
     pickButton.type = 'button';
+    pickButton.disabled = Boolean(ocrState.running);
     pickButton.setAttribute('data-ocr-pick', '1');
     testActions.appendChild(pickButton);
-    testActions.appendChild(createAdminOcrActionButton('server-ocr', 'Ручной тест OCR', !ocrState.file || Boolean(ocrState.running)));
-    testActions.appendChild(createAdminOcrActionButton('toggle-test', 'Скрыть тест', Boolean(ocrState.running)));
+    var runButton = createElement('button', 'documents-ocr-modal__button', ocrState.running ? 'Извлекаем текст…' : 'Распознать текст');
+    runButton.type = 'button';
+    runButton.disabled = !ocrState.file || Boolean(ocrState.running);
+    runButton.setAttribute('data-ocr-run', '1');
+    testActions.appendChild(runButton);
     testGroup.appendChild(testActions);
     controls.appendChild(testGroup);
 
@@ -13636,6 +13639,7 @@
     adminElements.ocrBody.appendChild(controls);
     adminElements.ocrBody.appendChild(resultPanel);
     setAdminOcrStatus(ocrState.status, ocrState.statusType);
+    restoreAdminOcrPanelViewState(adminElements.ocrBody, panelViewState);
   }
 
   function copyAdminOcrSelectedText() {
@@ -13734,451 +13738,7 @@
     return metric;
   }
 
-  function createAdminS3OcrMetric(label, value) {
-    var item = createElement('div', 'documents-s3-modal__ocr-item');
-    item.appendChild(createElement('div', 'documents-s3-modal__ocr-label', label));
-    item.appendChild(createElement('div', 'documents-s3-modal__ocr-value', value));
-    return item;
-  }
-
-  function formatAdminOcrSource(source) {
-    var key = typeof source === 'string' ? source : '';
-    var labels = {
-      incoming: 'Входящие',
-      response: 'Ответы',
-      outgoing: 'Исходящие',
-      orders: 'Приказы',
-      directives: 'Распоряжения',
-      disciplinary: 'Взыскания',
-      upload: 'Загрузка',
-      mini_app_snapshot: 'Mini-app',
-      registry_backfill: 'Проверка реестра',
-      shared_cache: 'Старая очередь'
-    };
-    return labels[key] || key || '—';
-  }
-
-  function formatAdminOcrStatus(status) {
-    var key = typeof status === 'string' ? status : '';
-    var labels = {
-      queued: 'В очереди',
-      processing: 'В работе',
-      ready: 'Готово',
-      empty: 'Пусто',
-      unsupported: 'Не поддержан',
-      error: 'Ошибка',
-      dependency_missing: 'Нет зависимости',
-      skipped: 'Отложено',
-      not_started: 'Не запускалось',
-      unknown: 'Неизвестно'
-    };
-    return labels[key] || key || '—';
-  }
-
-  function formatAdminOcrTextChars(value) {
-    var chars = Number(value);
-    if (!isFinite(chars) || chars <= 0) {
-      return '—';
-    }
-    return String(Math.round(chars)) + ' симв.';
-  }
-
-  function appendAdminOcrCell(row, value) {
-    row.appendChild(createElement('td', '', value ? String(value) : '—'));
-  }
-
-  function createAdminS3OcrItemsTable(items, total, interactive) {
-    var list = Array.isArray(items) ? items : [];
-    var section = createElement('div', 'documents-s3-modal__ocr-section');
-    var head = createElement('div', 'documents-s3-modal__ocr-section-head');
-    head.appendChild(createElement('div', 'documents-s3-modal__ocr-section-title', 'Файлы'));
-    head.appendChild(createElement('div', 'documents-s3-modal__ocr-section-count', 'Показано ' + list.length + ' из ' + (Number(total) || list.length)));
-    section.appendChild(head);
-
-    if (!list.length) {
-      section.appendChild(createElement('div', 'documents-s3-modal__empty', 'Нет данных.'));
-      return section;
-    }
-
-    var wrap = createElement('div', 'documents-s3-modal__ocr-table-wrap');
-    var table = document.createElement('table');
-    table.className = 'documents-s3-modal__ocr-table';
-    var thead = document.createElement('thead');
-    var headRow = document.createElement('tr');
-    ['Статус', 'Файл', 'Источник', 'Текст', 'Обновлено', 'Действия'].forEach(function(label) {
-      headRow.appendChild(createElement('th', '', label));
-    });
-    thead.appendChild(headRow);
-    table.appendChild(thead);
-
-    var tbody = document.createElement('tbody');
-    list.forEach(function(entry) {
-      entry = entry && typeof entry === 'object' ? entry : {};
-      var row = document.createElement('tr');
-      var statusCell = document.createElement('td');
-      var statusKey = String(entry.status || 'unknown').replace(/[^a-z_]/g, '');
-      var statusBadge = createElement('span', 'documents-s3-modal__ocr-badge documents-s3-modal__ocr-badge--' + statusKey, formatAdminOcrStatus(entry.status));
-      statusCell.appendChild(statusBadge);
-      if (entry.stale) {
-        statusCell.appendChild(createElement('span', 'documents-s3-modal__ocr-cell-meta', 'зависло'));
-      }
-      row.appendChild(statusCell);
-      var fileCell = document.createElement('td');
-      fileCell.appendChild(createElement('div', 'documents-s3-modal__ocr-file-name', entry.file || '—'));
-      var detailParts = [
-        entry.error || entry.method || '',
-        Number(entry.attempts || 0) ? 'попытка ' + Number(entry.attempts || 0) : '',
-        entry.nextAttemptAt ? 'следующая: ' + String(entry.nextAttemptAt) : ''
-      ].filter(Boolean);
-      if (detailParts.length) {
-        fileCell.appendChild(createElement('div', 'documents-s3-modal__ocr-cell-meta', detailParts.join(' · ')));
-      }
-      row.appendChild(fileCell);
-      var sourceParts = [formatAdminOcrSource(entry.source), entry.record || '', entry.organization || entry.folder || ''].filter(Boolean);
-      appendAdminOcrCell(row, sourceParts.join(' · '));
-      appendAdminOcrCell(row, formatAdminOcrTextChars(entry.textChars || 0));
-      appendAdminOcrCell(row, entry.updatedAt || '');
-      var actionCell = document.createElement('td');
-      var actions = createElement('div', 'documents-s3-modal__ocr-row-actions');
-      if (entry.hasText) {
-        var readButton = createElement('button', 'documents-s3-modal__mini-button', 'Текст');
-        readButton.type = 'button';
-        readButton.disabled = !entry.signature;
-        readButton.setAttribute('data-ocr-read', entry.signature || '');
-        actions.appendChild(readButton);
-      }
-      if (interactive && ['error', 'dependency_missing', 'skipped'].indexOf(entry.status) !== -1) {
-        var retryButton = createElement('button', 'documents-s3-modal__mini-button', 'Повторить');
-        retryButton.type = 'button';
-        retryButton.disabled = !entry.signature;
-        retryButton.setAttribute('data-ocr-action', 'retry-item');
-        retryButton.setAttribute('data-ocr-signature', entry.signature || '');
-        actions.appendChild(retryButton);
-      }
-      if (!actions.childNodes.length) {
-        actions.appendChild(createElement('span', 'documents-s3-modal__ocr-cell-meta', '—'));
-      }
-      actionCell.appendChild(actions);
-      row.appendChild(actionCell);
-      tbody.appendChild(row);
-    });
-    table.appendChild(tbody);
-    wrap.appendChild(table);
-    section.appendChild(wrap);
-
-    return section;
-  }
-
-  function formatAdminOcrBreakerDetails(details) {
-    if (!details || typeof details !== 'object') {
-      return '';
-    }
-    return Object.keys(details).slice(0, 8).map(function(key) {
-      var value = details[key];
-      if (value && typeof value === 'object') {
-        try {
-          value = JSON.stringify(value);
-        } catch (error) {
-          value = String(value);
-        }
-      }
-      value = String(value == null ? '' : value);
-      if (value.length > 240) {
-        value = value.slice(0, 240) + '...';
-      }
-      return key + ': ' + value;
-    }).filter(Boolean).join(' | ');
-  }
-
-  function createAdminS3OcrCircuitBreakerPanel(circuitBreaker) {
-    var breaker = circuitBreaker && typeof circuitBreaker === 'object' ? circuitBreaker : {};
-    if (!breaker.active && !breaker.reason && !breaker.message) {
-      return null;
-    }
-
-    var box = document.createElement('details');
-    box.className = 'documents-s3-modal__ocr-diagnostics';
-    if (breaker.active) {
-      box.open = true;
-    }
-    var parts = [];
-    parts.push(breaker.active ? 'Предохранитель OCR сработал' : 'Предохранитель OCR');
-    if (breaker.reason) {
-      parts.push('причина: ' + String(breaker.reason));
-    }
-    if (breaker.message) {
-      parts.push(String(breaker.message));
-    }
-    if (breaker.disabledUntil) {
-      parts.push('пауза до: ' + String(breaker.disabledUntil));
-    }
-    if (Number(breaker.secondsRemaining) > 0) {
-      parts.push('осталось: ' + String(Number(breaker.secondsRemaining)) + ' сек.');
-    }
-    var details = formatAdminOcrBreakerDetails(breaker.details);
-    box.appendChild(createElement('summary', 'documents-s3-modal__ocr-diagnostics-summary', parts.join(' · ')));
-    var content = createElement('div', 'documents-s3-modal__ocr-diagnostics-content');
-    if (details) {
-      content.appendChild(createElement('div', 'documents-s3-modal__ocr-error', details));
-    }
-
-    if (Array.isArray(breaker.events) && breaker.events.length) {
-      breaker.events.slice(-3).reverse().forEach(function(event) {
-        event = event && typeof event === 'object' ? event : {};
-        var eventParts = [
-          event.time ? String(event.time) : '',
-          event.reason ? String(event.reason) : '',
-          event.message ? String(event.message) : '',
-          formatAdminOcrBreakerDetails(event.details)
-        ].filter(Boolean);
-        content.appendChild(createElement('div', 'documents-s3-modal__ocr-error', eventParts.join(' · ')));
-      });
-    }
-    box.appendChild(content);
-
-    return box;
-  }
-
-  function createAdminOcrDependencyPanel(serverStatus) {
-    var status = serverStatus && typeof serverStatus === 'object' ? serverStatus : null;
-    if (!status) {
-      return null;
-    }
-    var panel = document.createElement('details');
-    panel.className = 'documents-s3-modal__ocr-diagnostics documents-s3-modal__ocr-dependencies';
-    var busy = status.runtimeGuard && status.runtimeGuard.reason === 'busy';
-    var summary = busy
-      ? 'Зависимости: проверка отложена, OCR занят'
-      : 'Зависимости: Tesseract ' + (status.tesseractAvailable ? 'готов' : 'недоступен')
-        + ', PDF-текст ' + (status.pdftotextAvailable ? 'готов' : 'недоступен')
-        + ', PDF-сканы ' + (status.tesseractAvailable && status.pdftoppmAvailable ? 'готовы' : 'недоступны')
-        + ', DOCX ' + (status.zipArchiveAvailable && status.domDocumentAvailable ? 'готов' : 'недоступен');
-    panel.appendChild(createElement('summary', 'documents-s3-modal__ocr-diagnostics-summary', summary));
-    var content = createElement('div', 'documents-s3-modal__ocr-diagnostics-content');
-    [
-      ['Tesseract', status.tesseractAvailable, status.tesseractPath, status.tesseractError],
-      ['pdftoppm', status.pdftoppmAvailable, status.pdftoppmPath, status.pdftoppmError],
-      ['pdftotext', status.pdftotextAvailable, status.pdftotextPath, status.pdftotextError],
-      ['DOCX', status.zipArchiveAvailable && status.domDocumentAvailable, '', 'ZipArchive + DOMDocument']
-    ].forEach(function(item) {
-      var parts = [item[0] + ': ' + (item[1] ? 'доступен' : 'недоступен'), item[2] || '', item[3] || ''].filter(Boolean);
-      content.appendChild(createElement('div', 'documents-s3-modal__ocr-cell-meta', parts.join(' · ')));
-    });
-    panel.appendChild(content);
-    return panel;
-  }
-
-  function createAdminS3OcrMonitor(ocr, options) {
-    var data = ocr && typeof ocr === 'object' ? ocr : {};
-    var viewOptions = options && typeof options === 'object' ? options : {};
-    var interactive = Boolean(viewOptions.interactive);
-    var statuses = data.statuses && typeof data.statuses === 'object' ? data.statuses : {};
-    var circuitBreaker = data.circuitBreaker && typeof data.circuitBreaker === 'object' ? data.circuitBreaker : {};
-    var serverStatus = viewOptions.serverStatus && typeof viewOptions.serverStatus === 'object' ? viewOptions.serverStatus : null;
-    var workerStatus = viewOptions.workerStatus && typeof viewOptions.workerStatus === 'object' ? viewOptions.workerStatus : null;
-    var panel = createElement('section', 'documents-s3-modal__ocr');
-    var head = createElement('div', 'documents-s3-modal__ocr-head');
-    var titleWrap = createElement('div', 'documents-s3-modal__ocr-title-wrap');
-    titleWrap.appendChild(createElement('div', 'documents-s3-modal__ocr-title', 'Состояние OCR'));
-    titleWrap.appendChild(createElement('div', 'documents-s3-modal__ocr-message', data.message || 'Данных OCR пока нет.'));
-    if (workerStatus) {
-      var workerQueue = workerStatus.queue && typeof workerStatus.queue === 'object' ? workerStatus.queue : {};
-      var workerParts = [
-        workerStatus.running ? 'Воркер сейчас обрабатывает файл' : 'Воркер ожидает следующий запуск',
-        Number(workerQueue.queued || 0) ? 'ожидают: ' + Number(workerQueue.queued || 0) : '',
-        Number(workerQueue.failed || 0) ? 'требуют внимания: ' + Number(workerQueue.failed || 0) : ''
-      ].filter(Boolean);
-      titleWrap.appendChild(createElement('div', 'documents-s3-modal__ocr-message', workerParts.join(' · ')));
-    }
-    head.appendChild(titleWrap);
-    var healthText = 'Проверяется';
-    var healthKind = 'pending';
-    if (circuitBreaker.active) {
-      healthText = 'Остановлен защитой';
-      healthKind = 'error';
-    } else if (serverStatus) {
-      if (serverStatus.runtimeGuard && serverStatus.runtimeGuard.reason === 'busy') {
-        healthText = 'OCR занят';
-        healthKind = 'warning';
-      } else if (serverStatus.pdftotextAvailable || (serverStatus.tesseractAvailable && serverStatus.pdftoppmAvailable)) {
-        healthText = 'Работает';
-        healthKind = 'ready';
-      } else if (serverStatus.tesseractAvailable || serverStatus.pdftotextAvailable) {
-        healthText = 'PDF недоступен';
-        healthKind = 'warning';
-      } else {
-        healthText = 'Нужна настройка';
-        healthKind = 'error';
-      }
-    }
-    head.appendChild(createElement('div', 'documents-s3-modal__ocr-health documents-s3-modal__ocr-health--' + healthKind, healthText));
-    panel.appendChild(head);
-
-    var grid = createElement('div', 'documents-s3-modal__ocr-grid');
-    grid.appendChild(createAdminS3OcrMetric('Всего', String(data.totalFiles || 0)));
-    grid.appendChild(createAdminS3OcrMetric('С текстом', String(data.withText || statuses.ready || 0)));
-    grid.appendChild(createAdminS3OcrMetric('В очереди', String((statuses.queued || 0) + (statuses.processing || 0))));
-    grid.appendChild(createAdminS3OcrMetric('Ошибки', String((statuses.error || 0) + (statuses.dependency_missing || 0))));
-    grid.appendChild(createAdminS3OcrMetric('Пропущено', String((statuses.skipped || 0) + (statuses.not_started || 0))));
-    grid.appendChild(createAdminS3OcrMetric('Кэш OCR', String(data.cacheItems || 0)));
-    panel.appendChild(grid);
-
-    if (interactive) {
-      var toolbar = createElement('div', 'documents-s3-modal__ocr-toolbar');
-      toolbar.appendChild(createAdminOcrActionButton('server-status', viewOptions.running === 'server-status' ? 'Обновляю…' : 'Обновить', Boolean(viewOptions.running)));
-      toolbar.appendChild(createAdminOcrActionButton('background-run', 'Обработать следующий', Boolean(viewOptions.running) || !Number(data.queueTotal || 0) || circuitBreaker.active));
-      toolbar.appendChild(createAdminOcrActionButton('retry-errors', 'Повторить ошибки', Boolean(viewOptions.running) || !Number(data.errorTotal || 0)));
-      toolbar.appendChild(createAdminOcrActionButton('recover-stale', 'Вернуть зависшие', Boolean(viewOptions.running) || !Number(data.staleProcessingFiles || 0)));
-      toolbar.appendChild(createAdminOcrActionButton('reset-breaker', 'Сбросить защиту', Boolean(viewOptions.running) || !circuitBreaker.active));
-      panel.appendChild(toolbar);
-      var dependencyPanel = createAdminOcrDependencyPanel(serverStatus);
-      if (dependencyPanel) {
-        panel.appendChild(dependencyPanel);
-      }
-    }
-
-    var breakerPanel = createAdminS3OcrCircuitBreakerPanel(circuitBreaker);
-    if (breakerPanel) {
-      panel.appendChild(breakerPanel);
-    }
-
-    if (interactive) {
-      var views = {
-        queue: { label: 'Очередь', items: data.queueItems, total: data.queueTotal },
-        errors: { label: 'Ошибки', items: data.errorItems, total: data.errorTotal },
-        skipped: { label: 'Пропущено', items: data.skippedItems, total: data.skippedTotal },
-        ready: {
-          label: 'Готово',
-          items: (Array.isArray(data.allItems) ? data.allItems : []).filter(function(entry) { return entry && entry.status === 'ready'; }),
-          total: Number(statuses.ready || 0)
-        },
-        all: { label: 'Все', items: data.allItems, total: data.allTotal }
-      };
-      var selectedView = views[viewOptions.monitorView] ? viewOptions.monitorView : '';
-      if (!selectedView) {
-        selectedView = Number(data.queueTotal || 0) > 0 ? 'queue' : (Number(data.errorTotal || 0) > 0 ? 'errors' : 'all');
-        ensureAdminOcrState().monitorView = selectedView;
-      }
-      var tabs = createElement('div', 'documents-s3-modal__ocr-tabs');
-      Object.keys(views).forEach(function(key) {
-        var view = views[key];
-        var tab = createElement('button', 'documents-s3-modal__ocr-tab', view.label + ' ' + (Number(view.total) || 0));
-        tab.type = 'button';
-        tab.setAttribute('data-ocr-view', key);
-        tab.classList.toggle('is-active', key === selectedView);
-        tabs.appendChild(tab);
-      });
-      panel.appendChild(tabs);
-      panel.appendChild(createAdminS3OcrItemsTable(views[selectedView].items, views[selectedView].total, true));
-    }
-
-    return panel;
-  }
-
-  function closeAdminOcrTextReader(reader) {
-    if (!reader) {
-      return;
-    }
-    if (reader.parentNode) {
-      reader.parentNode.removeChild(reader);
-    }
-  }
-
-  function openAdminOcrTextReader(ocr) {
-    var entry = ocr && typeof ocr === 'object' ? ocr : {};
-    var titleText = entry.file ? String(entry.file) : 'OCR расшифровка';
-    var metaParts = [
-      entry.organization || state.organization || '',
-      formatAdminOcrSource(entry.source || ''),
-      entry.record || '',
-      formatAdminOcrStatus(entry.status || ''),
-      entry.updatedAt ? formatDateTime(entry.updatedAt) : '',
-      entry.method || ''
-    ].filter(Boolean);
-    var text = normalizeAdminOcrText(entry.text || '');
-    var reader = createElement('div', 'documents-s3-reader');
-    reader.setAttribute('role', 'dialog');
-    reader.setAttribute('aria-modal', 'true');
-    var panel = createElement('div', 'documents-s3-reader__panel');
-    var header = createElement('div', 'documents-s3-reader__header');
-    var titleWrap = createElement('div', '');
-    titleWrap.appendChild(createElement('h3', 'documents-s3-reader__title', titleText));
-    titleWrap.appendChild(createElement('div', 'documents-s3-reader__meta', metaParts.join(' • ') || 'OCR'));
-    var actions = createElement('div', 'documents-s3-reader__actions');
-    var copyButton = createElement('button', 'documents-s3-modal__mini-button', 'Копировать');
-    copyButton.type = 'button';
-    copyButton.disabled = !text;
-    var closeButton = createElement('button', 'documents-s3-modal__mini-button', 'Закрыть');
-    closeButton.type = 'button';
-    actions.appendChild(copyButton);
-    actions.appendChild(closeButton);
-    header.appendChild(titleWrap);
-    header.appendChild(actions);
-    var status = createElement('div', 'documents-s3-reader__status');
-    var body = createElement('div', 'documents-s3-reader__body');
-    body.appendChild(createElement('pre', 'documents-s3-reader__text', text || (entry.error || 'OCR-текст для этого файла пуст.')));
-    panel.appendChild(header);
-    panel.appendChild(status);
-    panel.appendChild(body);
-    reader.appendChild(panel);
-    document.body.appendChild(reader);
-
-    function setReaderStatus(message, isError) {
-      status.textContent = message || '';
-      status.classList.toggle('is-visible', Boolean(message));
-      status.classList.toggle('documents-s3-reader__status--error', Boolean(isError));
-    }
-
-    copyButton.addEventListener('click', function() {
-      if (!text) {
-        setReaderStatus('Текста для копирования нет.', true);
-        return;
-      }
-      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-        navigator.clipboard.writeText(text).then(function() {
-          setReaderStatus('Расшифровка скопирована.', false);
-        }).catch(function() {
-          setReaderStatus('Не удалось скопировать автоматически.', true);
-        });
-      } else {
-        setReaderStatus('Автокопирование недоступно. Выделите текст вручную.', true);
-      }
-    });
-    closeButton.addEventListener('click', function() {
-      closeAdminOcrTextReader(reader);
-    });
-    reader.addEventListener('click', function(event) {
-      if (event.target === reader) {
-        closeAdminOcrTextReader(reader);
-      }
-    });
-  }
-
-  function readAdminOcrText(signature) {
-    var ocrState = ensureAdminOcrState();
-    if (ocrState.running) {
-      return Promise.resolve();
-    }
-    ocrState.running = 'read-text';
-    setAdminOcrStatus('Загружаю OCR-расшифровку…', 'info');
-    updateAdminOcrPanel();
-    return requestAdminOcrText(signature)
-      .then(function(data) {
-        var ocr = data && data.ocr && typeof data.ocr === 'object' ? data.ocr : {};
-        openAdminOcrTextReader(ocr);
-        setAdminOcrStatus(ocr.text ? 'Расшифровка открыта.' : 'OCR-текст пуст.', ocr.text ? 'success' : 'info');
-      })
-      .catch(function(error) {
-        setAdminOcrStatus(error && error.message ? error.message : 'Не удалось открыть OCR-текст.', 'error');
-        throw error;
-      })
-      .finally(function() {
-        ocrState.running = '';
-        updateAdminOcrPanel();
-      });
-  }
-
-  function normalizeAdminS3BrowserPath(value) {
+ function normalizeAdminS3BrowserPath(value) {
     var raw = typeof value === 'string' ? value : '';
     raw = raw.replace(/\\/g, '/').trim();
     if (!raw) {
@@ -14481,7 +14041,7 @@
     return explorer;
   }
 
-  function updateAdminS3Panel() {
+ function updateAdminS3Panel() {
     ensureAdminModal();
     var s3State = ensureAdminS3State();
     if (adminElements.s3Button) {
@@ -14513,8 +14073,6 @@
     grid.appendChild(createAdminS3Metric('Локально на сервере', storage.localLabel || '0 Б'));
     grid.appendChild(createAdminS3Metric('Оценка S3', storage.coldLabel || '0 Б'));
     adminElements.s3Summary.appendChild(grid);
-
-    adminElements.s3Summary.appendChild(createAdminS3OcrMonitor(storage.ocr));
 
     adminElements.s3Summary.appendChild(createAdminS3Explorer(s3State));
 
@@ -15186,14 +14744,13 @@
       adminElements.ocrModal.classList.add('is-visible');
       adminElements.ocrModal.setAttribute('aria-hidden', 'false');
     }
-    if (!ocrState.status) {
-      setAdminOcrStatus('Загружаю состояние OCR и очереди…', 'info');
-    }
+    setAdminOcrStatus(
+      ocrState.file ? 'Файл готов к ручному тесту.' : 'Выберите файл для ручного OCR-теста.',
+      'info'
+    );
     updateAdminOcrPanel();
-    if (!ocrState.monitoring && !ocrState.running) {
-      runAdminOcrAction('server-status').catch(function(error) {
-        docsLogger.warn('Не удалось загрузить OCR-мониторинг:', error);
-      });
+    if (adminElements.ocrCloseButton && typeof adminElements.ocrCloseButton.focus === 'function') {
+      adminElements.ocrCloseButton.focus();
     }
   }
 
@@ -15201,7 +14758,7 @@
     ensureAdminModal();
     var ocrState = ensureAdminOcrState();
     ocrState.visible = false;
-    clearAdminOcrRefreshTimer();
+    cancelAdminOcrManualRun();
     if (adminElements.ocrModal) {
       adminElements.ocrModal.classList.remove('is-visible');
       adminElements.ocrModal.setAttribute('aria-hidden', 'true');
@@ -33957,8 +33514,8 @@
       statusType: 'info',
       results: {},
       selectedResult: '',
-      limits: null,
-      monitoring: null
+      manualAbortController: null,
+      manualOperationId: 0
     };
     var initialColumnOrder = loadColumnOrderFromLocalStorage();
     if (initialColumnOrder && initialColumnOrder.length) {
@@ -34061,6 +33618,7 @@
 
   function resetDocumentsRuntimeCache(options) {
     var config = options && typeof options === 'object' ? options : {};
+    cancelAdminOcrManualRun();
     state.runtimeCacheVersion += 1;
     state.registryRequestSequence += 1;
     stopRealtimeRegistrySync();
@@ -34168,8 +33726,8 @@
       statusType: 'info',
       results: {},
       selectedResult: '',
-      limits: null,
-      monitoring: null
+      manualAbortController: null,
+      manualOperationId: 0
     };
 
     if (config.clearLocalStorage !== false) {

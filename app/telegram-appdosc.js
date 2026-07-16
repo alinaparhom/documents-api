@@ -7031,59 +7031,6 @@ function copyTaskSearchScalarFields(source, fields, target = {}) {
   return target;
 }
 
-function compactTaskSearchEntries(entries, fields, limit) {
-  if (!Array.isArray(entries) || !Array.isArray(fields)) {
-    return [];
-  }
-  const result = [];
-  entries.forEach((entry) => {
-    if (result.length >= limit || !isPlainObject(entry)) {
-      return;
-    }
-    const compact = copyTaskSearchScalarFields(entry, fields, {});
-    if (Object.keys(compact).length) {
-      result.push(compact);
-    }
-  });
-  return result;
-}
-
-function compactTaskSearchFileEntries(entries, fields, limit) {
-  if (!Array.isArray(entries) || !Array.isArray(fields)) {
-    return [];
-  }
-  const result = [];
-  entries.forEach((entry) => {
-    if (result.length >= limit || !isPlainObject(entry)) {
-      return;
-    }
-    const compact = copyTaskSearchScalarFields(entry, fields, {});
-    if (isPlainObject(entry.coldStorage)) {
-      const coldStorage = copyTaskSearchScalarFields(entry.coldStorage, [
-        'provider',
-        'remote',
-        'key',
-        'status',
-        'updatedAt',
-      ], {});
-      if (Object.keys(coldStorage).length) {
-        compact.coldStorage = coldStorage;
-      }
-    }
-    if (Object.keys(compact).length) {
-      result.push(compact);
-    }
-  });
-  return result;
-}
-
-function resolveTaskSearchTextValue(value) {
-  if (isPlainObject(value)) {
-    return normalizeValue(value.summary || value.content || value.description || value.text || value.title || value.name || value.fullName || value.fio);
-  }
-  return normalizeValue(value);
-}
-
 function buildTaskForCurrentSearchSnapshot(task) {
   if (!isPlainObject(task)) {
     return null;
@@ -7096,77 +7043,10 @@ function buildTaskForCurrentSearchSnapshot(task) {
     'documentNumber',
     'organization',
     'documentFolder',
-    'dueDate',
-    'registrationDate',
-    'documentDate',
-    'direction',
     'folderId',
   ], {});
-  const status = getTaskStatusValue(task);
-  if (status) {
-    compact.status = status;
-  }
-  const correspondent = resolveTaskSearchTextValue(task.correspondent)
-    || resolveTaskSearchTextValue(task.sender || task.from);
-  if (correspondent) {
-    compact.correspondent = correspondent;
-  }
-  const summary = resolveTaskSearchTextValue(task.summary)
-    || resolveTaskSearchTextValue(task.content)
-    || resolveTaskSearchTextValue(task.description)
-    || resolveTaskSearchTextValue(task.document);
-  if (summary) {
-    compact.summary = summary;
-  }
-  const instruction = normalizeValue(resolveInstructionSummary(task)) || resolveTaskSearchTextValue(task.resolution);
-  if (instruction) {
-    compact.instruction = instruction;
-  }
-  const executor = formatEntityDisplay(resolveExecutor(task), '');
-  if (executor) {
-    compact.executor = executor;
-  }
   if (isPlainObject(task.folderByUser)) {
     compact.folderByUser = { ...task.folderByUser };
-  }
-
-  const peopleFields = ['name', 'responsible', 'fio', 'fullName', 'role', 'assignmentInstruction', 'assignmentComment', 'assignmentDueDate', 'status'];
-  ['directors', 'responsibles', 'assignees', 'executors', 'subordinates'].forEach((field) => {
-    const entries = compactTaskSearchEntries(task[field], peopleFields, 12);
-    if (entries.length) {
-      compact[field] = entries;
-    }
-  });
-
-  const ocrFileFields = [
-    'originalName',
-    'name',
-    'storedName',
-    'url',
-    'size',
-    'storageProvider',
-    'ocrSignature',
-    'ocrText',
-    'ocrSearchTerms',
-    'ocrStatus',
-    'ocrMethod',
-    'ocrQueuedAt',
-    'ocrUpdatedAt',
-    'ocrError',
-  ];
-  const files = compactTaskSearchFileEntries(task.files, ocrFileFields, 16);
-  if (files.length) {
-    compact.files = files;
-  }
-  const responses = compactTaskSearchFileEntries(task.responses, [
-    ...ocrFileFields,
-    'textContent',
-    'comment',
-    'note',
-    'uploadedBy',
-  ], 12);
-  if (responses.length) {
-    compact.responses = responses;
   }
 
   return Object.keys(compact).length ? compact : null;
@@ -12617,6 +12497,71 @@ function createDownloadFileAccessUrl(rawUrl, fileName = '', disposition = 'attac
   }
 }
 
+function calculateShortDocumentReferencePart(value) {
+  let crc = 0xFFFFFFFF;
+  for (let index = 0; index < value.length; index += 1) {
+    crc ^= value.charCodeAt(index);
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ ((crc & 1) ? 0xEDB88320 : 0);
+    }
+  }
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+
+function createShortDocumentDownloadReference(path) {
+  const normalizedPath = normalizeDocumentsPublicPathForEndpoint(path);
+  if (!normalizedPath || !normalizedPath.toLowerCase().startsWith('documents/')) {
+    return '';
+  }
+
+  const firstPart = calculateShortDocumentReferencePart(normalizedPath);
+  const secondPart = calculateShortDocumentReferencePart(`docs-share-v1:${normalizedPath}`);
+  const bytes = String.fromCharCode(
+    (firstPart >>> 24) & 0xFF,
+    (firstPart >>> 16) & 0xFF,
+    (firstPart >>> 8) & 0xFF,
+    firstPart & 0xFF,
+    (secondPart >>> 24) & 0xFF,
+    (secondPart >>> 16) & 0xFF,
+    (secondPart >>> 8) & 0xFF,
+    secondPart & 0xFF,
+  );
+
+  return btoa(bytes)
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+}
+
+function createCompactTelegramShareUrl(rawUrl) {
+  const normalizedUrl = normalizeValue(rawUrl);
+  if (!normalizedUrl || typeof window === 'undefined') {
+    return normalizedUrl;
+  }
+
+  try {
+    const absoluteUrl = new URL(normalizedUrl, window.location.origin);
+    if (absoluteUrl.origin !== window.location.origin) {
+      return absoluteUrl.toString();
+    }
+
+    let publicPath = normalizeDocumentsPublicPathForEndpoint(absoluteUrl.pathname);
+    if (!publicPath.toLowerCase().startsWith('documents/')) {
+      publicPath = normalizeDocumentsPublicPathForEndpoint(absoluteUrl.searchParams.get('path') || '');
+    }
+    const reference = createShortDocumentDownloadReference(publicPath);
+    if (!reference) {
+      return absoluteUrl.toString();
+    }
+
+    const endpointUrl = new URL('/docs.php', window.location.origin);
+    endpointUrl.searchParams.set('f', reference);
+    return endpointUrl.toString();
+  } catch (error) {
+    return normalizedUrl;
+  }
+}
+
 async function downloadFileFromUrl(url, filename) {
   if (!url || typeof fetch !== 'function') {
     return false;
@@ -12841,7 +12786,7 @@ function shareFileViaTelegramLink(url, fileName, shareText = '') {
 async function resolveShareUrlForTelegram(task, file, fileName, downloadUrl) {
   const primaryUrl = normalizeValue(downloadUrl);
   if (isTelegramShareableUrl(primaryUrl) && await isTelegramShareUrlReachable(primaryUrl)) {
-    return primaryUrl;
+    return createCompactTelegramShareUrl(primaryUrl);
   }
 
   try {
@@ -14953,7 +14898,7 @@ function buildTelegramShareUrl(file) {
     || normalizeValue(file.storedName)
     || 'document';
 
-  const shareUrl = createDownloadFileAccessUrl(toAbsoluteUrl(resolved), fileName, 'inline');
+  const shareUrl = createCompactTelegramShareUrl(toAbsoluteUrl(resolved));
   return isTelegramShareableUrl(shareUrl) ? shareUrl : '';
 }
 
