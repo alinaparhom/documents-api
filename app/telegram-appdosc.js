@@ -13,7 +13,7 @@ const THEME_SETTINGS_SAVE_ENDPOINT = '/docs.php?action=mini_app_save_theme';
 const ASSIGNMENT_TEMPLATES_ENDPOINT = '/docs.php?action=mini_app_assignment_templates';
 const TASK_SNAPSHOT_API_URL = '/docs.php?action=mini_app_task_snapshot';
 const TASK_AI_SEARCH_API_URL = '/docs.php?action=mini_app_ai_task_search';
-const TASK_AI_ASSISTANT_WELCOME = 'Напишите, что нужно найти в задачах, файлах, OCR-тексте или ответах.';
+const TASK_AI_ASSISTANT_WELCOME = 'Напишите, что нужно найти в задачах, файлах или ответах.';
 const CLIENT_LOG_ENDPOINT = '/docs.php?action=mini_app_log';
 const ENTRY_LOG_ENDPOINT = '/docs.php?action=mini_app_entry_log';
 const PDF_LOG_ENDPOINT = '/docs.php?action=mini_app_pdf_log';
@@ -6982,8 +6982,8 @@ function getTaskAiSearchLoadingMessage(mode, source) {
   const normalizedMode = normalizeTaskAiSearchMode(mode);
   if (normalizedMode === 'local') {
     return source === 'voice'
-      ? 'Распознал голос. Ищу совпадения в задачах и OCR-тексте...'
-      : 'Ищу совпадения в задачах и OCR-тексте...';
+      ? 'Распознал голос. Ищу совпадения в задачах, файлах и ответах...'
+      : 'Ищу совпадения в задачах, файлах и ответах...';
   }
 
   return source === 'voice'
@@ -7763,7 +7763,7 @@ function openTaskSearchModal() {
 	        <span class="appdosc-task-search-modal__kicker">Помощник</span>
 	        <button type="button" class="appdosc-task-search-modal__close" data-task-search-close aria-label="Закрыть помощника">×</button>
 	        <h3 class="appdosc-task-search-modal__title">Поиск задачи</h3>
-	        <p class="appdosc-task-search-modal__subtitle">Ищу только по вашему запросу: по задачам, вложениям, OCR-тексту файлов и ответам.</p>
+	        <p class="appdosc-task-search-modal__subtitle">Ищу только по вашему запросу: по задачам, вложениям и ответам.</p>
           <div class="appdosc-ai-task-search__mode" role="group" aria-label="Режим поиска">
             <button type="button" class="appdosc-ai-task-search__mode-button" data-ai-task-search-mode="local">Локально</button>
           </div>

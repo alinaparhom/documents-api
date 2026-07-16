@@ -686,14 +686,6 @@
     s3RefreshButton: null,
     s3TestButton: null,
     s3CloseButton: null,
-    ocrButton: null,
-    ocrModal: null,
-    ocrStatus: null,
-    ocrBody: null,
-    ocrFileInput: null,
-    ocrChooseButton: null,
-    ocrCopyButton: null,
-    ocrCloseButton: null,
     templateButton: null,
     templateModal: null,
     templateStatus: null,
@@ -1251,13 +1243,6 @@
   var SEARCH_POPOVER_MIN_WIDTH = 300;
   var SEARCH_POPOVER_MIN_HEIGHT = 260;
   var ADMIN_S3_READ_MAX_BYTES = 1048576;
-  var ADMIN_OCR_MANUAL_MAX_FILE_BYTES = 26214400;
-  var ADMIN_OCR_MANUAL_REQUEST_TIMEOUT_MS = 30000;
-  var ADMIN_OCR_MANUAL_TOTAL_TIMEOUT_MS = 60000;
-  var ADMIN_OCR_PDF_MAX_PAGES = 8;
-  var ADMIN_OCR_PDF_RENDER_SCALE = 3;
-  var ADMIN_OCR_TESSERACT_SCRIPT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
-  var adminOcrTesseractLoader = null;
 
   var DEFAULT_VISUAL_SETTINGS = buildDefaultVisualSettings();
 
@@ -1383,21 +1368,6 @@
         listingLoadedAt: 0,
         listingPromise: null,
         promise: null
-      },
-      ocr: {
-        visible: false,
-        file: null,
-        fileName: '',
-        fileType: '',
-        running: '',
-        status: '',
-        statusType: 'info',
-        results: {},
-        selectedResult: '',
-        manualAbortController: null,
-        manualWorker: null,
-        manualReject: null,
-        manualOperationId: 0
       }
     },
     resizeTimer: null,
@@ -11652,7 +11622,6 @@
       '.documents-template-modal__button--secondary{background:rgba(148,163,184,0.18);color:#0f172a;}' +
       '.documents-template-modal__button:hover:not(:disabled){transform:translateY(-1px);}' +
       '.documents-admin__s3-button{margin-right:8px;}' +
-      '.documents-admin__ocr-button{margin-right:8px;}' +
       '.documents-s3-modal{position:fixed;inset:0;z-index:1900;display:none;align-items:center;justify-content:center;padding:16px;background:rgba(15,23,42,0.32);backdrop-filter:blur(10px);}' +
       '.documents-s3-modal.is-visible{display:flex;}' +
       '.documents-s3-modal__panel{width:min(1320px,calc(100vw - 24px));height:min(920px,calc(100dvh - 24px));max-height:calc(100dvh - 24px);overflow:hidden;border-radius:22px;background:linear-gradient(165deg, rgba(255,255,255,0.96), rgba(248,250,252,0.92));border:1px solid rgba(255,255,255,0.95);box-shadow:0 28px 60px rgba(15,23,42,0.22);padding:18px;display:grid;grid-template-rows:auto auto auto minmax(0,1fr) auto;gap:14px;}' +
@@ -11712,39 +11681,6 @@
       '.documents-s3-modal__button--primary{background:linear-gradient(120deg,#2563eb,#38bdf8);color:#fff;box-shadow:0 16px 28px rgba(37,99,235,0.28);}' +
       '.documents-s3-modal__button--secondary{background:rgba(148,163,184,0.18);color:#0f172a;}' +
       '.documents-s3-modal__button:hover:not(:disabled){transform:translateY(-1px);}' +
-      '.documents-ocr-modal{position:fixed;inset:0;z-index:1960;display:none;align-items:center;justify-content:center;padding:16px;background:rgba(15,23,42,.38);backdrop-filter:blur(8px);color:#0f172a;}' +
-      '.documents-ocr-modal.is-visible{display:flex;}' +
-      '.documents-ocr-modal__panel{width:min(1180px,calc(100vw - 24px));height:min(820px,calc(100dvh - 24px));max-height:calc(100dvh - 24px);display:grid;grid-template-rows:auto auto minmax(0,1fr);overflow:hidden;border:1px solid rgba(226,232,240,.95);border-radius:18px;background:#fff;box-shadow:0 28px 64px rgba(15,23,42,.26);}' +
-      '.documents-ocr-modal__header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:14px 18px;border-bottom:1px solid #e2e8f0;background:#fff;}' +
-      '.documents-ocr-modal__title{margin:0;font-size:20px;line-height:1.2;font-weight:900;color:#0f172a;}' +
-      '.documents-ocr-modal__subtitle{margin:5px 0 0;color:#64748b;font-size:13px;line-height:1.4;font-weight:700;}' +
-      '.documents-ocr-modal__actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex:0 0 auto;}' +
-      '.documents-ocr-modal__button{min-height:36px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;color:#0f172a;padding:0 12px;font:inherit;font-size:12px;font-weight:900;cursor:pointer;}' +
-      '.documents-ocr-modal__button:hover,.documents-ocr-modal__button:focus-visible{border-color:#14b8a6;background:#f0fdfa;color:#0f766e;outline:0;}' +
-      '.documents-ocr-modal__button:disabled{opacity:.58;cursor:default;}' +
-      '.documents-ocr-modal__button--primary{border-color:#0f766e;background:#0f766e;color:#fff;}' +
-      '.documents-ocr-modal__button--primary:hover,.documents-ocr-modal__button--primary:focus-visible{border-color:#115e59;background:#115e59;color:#fff;}' +
-      '.documents-ocr-modal__status{display:none;margin:12px 18px 0;padding:10px 12px;border-radius:8px;border:1px solid #99f6e4;background:#f0fdfa;color:#0f766e;font-size:13px;font-weight:800;line-height:1.35;}' +
-      '.documents-ocr-modal__status.is-visible{display:block;}' +
-      '.documents-ocr-modal__status--error{border-color:#fecaca;background:#fff1f2;color:#b91c1c;}' +
-      '.documents-ocr-modal__status--success{border-color:#bbf7d0;background:#ecfdf5;color:#047857;}' +
-      '.documents-ocr-modal__body{min-height:0;overflow:auto;scrollbar-gutter:stable;padding:12px 18px 18px;display:grid;grid-template-columns:minmax(260px,340px) minmax(0,1fr);gap:12px;align-content:start;background:#f8fafc;}' +
-      '.documents-ocr-modal__controls,.documents-ocr-modal__result{border:1px solid #d1d5db;border-radius:8px;background:#fff;padding:12px;display:flex;flex-direction:column;gap:10px;min-width:0;}' +
-      '.documents-ocr-modal__file{border:1px dashed #94a3b8;border-radius:8px;background:#f8fafc;padding:12px;display:flex;flex-direction:column;gap:6px;min-width:0;}' +
-      '.documents-ocr-modal__file-name{font-size:13px;font-weight:900;color:#0f172a;overflow-wrap:anywhere;}' +
-      '.documents-ocr-modal__file-meta{font-size:12px;font-weight:800;color:#64748b;overflow-wrap:anywhere;}' +
-      '.documents-ocr-modal__group{display:grid;gap:8px;}' +
-      '.documents-ocr-modal__group-title{font-size:11px;line-height:1.25;font-weight:900;color:#64748b;text-transform:uppercase;letter-spacing:0;}' +
-      '.documents-ocr-modal__inline-actions{display:flex;flex-wrap:wrap;gap:8px;}' +
-      '.documents-ocr-modal__result-list{display:grid;gap:8px;}' +
-      '.documents-ocr-modal__result-card{border:1px solid #e2e8f0;border-radius:8px;background:#fff;padding:10px;display:grid;gap:6px;min-width:0;font:inherit;text-align:left;cursor:pointer;}' +
-      '.documents-ocr-modal__result-head{display:flex;align-items:center;justify-content:space-between;gap:8px;}' +
-      '.documents-ocr-modal__result-title{font-size:13px;font-weight:900;color:#0f172a;}' +
-      '.documents-ocr-modal__result-meta{font-size:11px;font-weight:800;color:#64748b;}' +
-      '.documents-ocr-modal__result-text{max-height:120px;overflow:auto;scrollbar-gutter:stable;white-space:pre-wrap;font-size:12px;line-height:1.45;color:#334155;background:#f8fafc;border-radius:7px;padding:8px;}' +
-      '.documents-ocr-modal__result-card.is-selected{border-color:#14b8a6;box-shadow:0 0 0 2px rgba(20,184,166,.12);}' +
-      '.documents-ocr-modal__textarea{width:100%;min-height:260px;resize:vertical;border:1px solid #cbd5e1;border-radius:8px;padding:10px;font:inherit;font-size:13px;line-height:1.5;color:#0f172a;background:#fff;}' +
-      '.documents-ocr-modal__empty{padding:16px;color:#64748b;font-size:13px;font-weight:800;}' +
       '@media (max-width: 720px){' +
       '.documents-template-modal{padding:8px;align-items:flex-end;}' +
       '.documents-template-modal__panel{width:100%;max-height:calc(100vh - 16px);border-radius:20px;padding:14px;}' +
@@ -11766,15 +11702,6 @@
       '.documents-s3-reader__actions{display:grid;grid-template-columns:1fr;min-width:104px;}' +
       '.documents-s3-reader__actions .documents-s3-modal__mini-button{width:100%;}' +
       '.documents-s3-reader__body{padding:10px 12px 12px;}' +
-      '.documents-ocr-modal{padding:8px;align-items:flex-end;}' +
-      '.documents-ocr-modal__panel{width:100%;height:calc(100dvh - 16px);max-height:calc(100dvh - 16px);border-radius:14px;}' +
-      '.documents-ocr-modal__header{display:grid;grid-template-columns:1fr;padding:12px;gap:10px;}' +
-      '.documents-ocr-modal__actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));width:100%;}' +
-      '.documents-ocr-modal__button{width:100%;}' +
-      '.documents-ocr-modal__status{margin:10px 12px 0;}' +
-      '.documents-ocr-modal__body{grid-template-columns:1fr;padding:10px 12px 12px;}' +
-      '.documents-ocr-modal__inline-actions{display:grid;grid-template-columns:1fr;}' +
-      '.documents-ocr-modal__textarea{min-height:300px;}' +
       '}' +
       '';
     document.head.appendChild(style);
@@ -11817,10 +11744,6 @@
     var s3Button = createElement('button', 'documents-admin__log-button documents-admin__s3-button', 'S3');
     s3Button.type = 'button';
     headerActions.appendChild(s3Button);
-
-    var ocrButton = createElement('button', 'documents-admin__log-button documents-admin__ocr-button', 'OCR-тест');
-    ocrButton.type = 'button';
-    headerActions.appendChild(ocrButton);
 
     var logButton = createElement('button', 'documents-admin__log-button', 'Журнал мини-приложения');
     logButton.type = 'button';
@@ -12006,44 +11929,6 @@
     s3Modal.appendChild(s3Panel);
     document.body.appendChild(s3Modal);
 
-    var ocrModal = createElement('div', 'documents-ocr-modal');
-    ocrModal.setAttribute('aria-hidden', 'true');
-    var ocrPanel = createElement('div', 'documents-ocr-modal__panel');
-    ocrPanel.setAttribute('role', 'dialog');
-    ocrPanel.setAttribute('aria-modal', 'true');
-    ocrPanel.setAttribute('aria-labelledby', 'documents-ocr-title');
-    var ocrHeader = createElement('div', 'documents-ocr-modal__header');
-    var ocrTitleWrap = createElement('div', 'documents-ocr-modal__title-wrap');
-    var ocrTitle = createElement('h3', 'documents-ocr-modal__title', 'Ручной OCR-тест');
-    ocrTitle.id = 'documents-ocr-title';
-    var ocrSubtitle = createElement('p', 'documents-ocr-modal__subtitle', 'Выберите PDF, изображение, DOCX, XLSX или TXT. PDF и картинки распознаются в браузере только по явному запуску.');
-    ocrTitleWrap.appendChild(ocrTitle);
-    ocrTitleWrap.appendChild(ocrSubtitle);
-    var ocrActions = createElement('div', 'documents-ocr-modal__actions');
-    var ocrChooseButton = createElement('button', 'documents-ocr-modal__button documents-ocr-modal__button--primary', 'Выбрать файл');
-    ocrChooseButton.type = 'button';
-    var ocrCopyButton = createElement('button', 'documents-ocr-modal__button', 'Скопировать');
-    ocrCopyButton.type = 'button';
-    var ocrCloseButton = createElement('button', 'documents-ocr-modal__button', 'Закрыть');
-    ocrCloseButton.type = 'button';
-    ocrActions.appendChild(ocrChooseButton);
-    ocrActions.appendChild(ocrCopyButton);
-    ocrActions.appendChild(ocrCloseButton);
-    ocrHeader.appendChild(ocrTitleWrap);
-    ocrHeader.appendChild(ocrActions);
-    var ocrStatus = createElement('div', 'documents-ocr-modal__status');
-    ocrStatus.setAttribute('role', 'status');
-    var ocrBody = createElement('div', 'documents-ocr-modal__body');
-    var ocrFileInput = document.createElement('input');
-    ocrFileInput.type = 'file';
-    ocrFileInput.accept = '.pdf,.png,.jpg,.jpeg,.webp,.tif,.tiff,.bmp,.docx,.xlsx,.txt,application/pdf,image/*,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain';
-    ocrFileInput.style.display = 'none';
-    ocrPanel.appendChild(ocrHeader);
-    ocrPanel.appendChild(ocrStatus);
-    ocrPanel.appendChild(ocrBody);
-    ocrPanel.appendChild(ocrFileInput);
-    ocrModal.appendChild(ocrPanel);
-    document.body.appendChild(ocrModal);
 
     document.body.appendChild(modal);
 
@@ -12061,14 +11946,6 @@
     adminElements.s3RefreshButton = s3RefreshButton;
     adminElements.s3TestButton = s3TestButton;
     adminElements.s3CloseButton = s3CloseButton;
-    adminElements.ocrButton = ocrButton;
-    adminElements.ocrModal = ocrModal;
-    adminElements.ocrStatus = ocrStatus;
-    adminElements.ocrBody = ocrBody;
-    adminElements.ocrFileInput = ocrFileInput;
-    adminElements.ocrChooseButton = ocrChooseButton;
-    adminElements.ocrCopyButton = ocrCopyButton;
-    adminElements.ocrCloseButton = ocrCloseButton;
     adminElements.templateButton = templateButton;
     adminElements.logPanel = logPanel;
     adminElements.logStatus = logStatus;
@@ -12099,10 +11976,6 @@
 
     s3Button.addEventListener('click', function() {
       openAdminS3Modal();
-    });
-
-    ocrButton.addEventListener('click', function() {
-      openAdminOcrModal();
     });
 
     logButton.addEventListener('click', function() {
@@ -12137,59 +12010,6 @@
       closeAdminS3Modal();
     });
 
-    ocrModal.addEventListener('click', function(event) {
-      if (event.target === ocrModal) {
-        closeAdminOcrModal();
-      }
-    });
-
-    ocrCloseButton.addEventListener('click', function() {
-      closeAdminOcrModal();
-    });
-
-    ocrChooseButton.addEventListener('click', function() {
-      if (adminElements.ocrFileInput) {
-        adminElements.ocrFileInput.click();
-      }
-    });
-
-    ocrCopyButton.addEventListener('click', function() {
-      copyAdminOcrSelectedText();
-    });
-
-    ocrFileInput.addEventListener('change', function(event) {
-      var fileList = event && event.target && event.target.files ? event.target.files : [];
-      var file = fileList && fileList[0] ? fileList[0] : null;
-      if (file) {
-        setAdminOcrFile(file);
-      }
-      ocrFileInput.value = '';
-    });
-
-    ocrBody.addEventListener('click', function(event) {
-      var target = event.target && event.target.closest
-        ? event.target.closest('[data-ocr-run], [data-ocr-select], [data-ocr-pick]')
-        : null;
-      if (!target || !ocrBody.contains(target)) {
-        return;
-      }
-      if (target.hasAttribute('data-ocr-pick')) {
-        if (adminElements.ocrFileInput) {
-          adminElements.ocrFileInput.click();
-        }
-        return;
-      }
-      if (target.hasAttribute('data-ocr-run')) {
-        runAdminOcrTest().catch(function(error) {
-          docsLogger.warn('Ручной OCR-тест завершился с ошибкой:', error);
-        });
-        return;
-      }
-      var selectKey = target.getAttribute('data-ocr-select') || '';
-      if (selectKey) {
-        selectAdminOcrResult(selectKey);
-      }
-    });
 
     s3RefreshButton.addEventListener('click', function() {
       refreshAdminS3Panel().catch(function() {});
@@ -12955,713 +12775,6 @@
     }
   }
 
-  function ensureAdminOcrState() {
-    if (!state.admin.ocr) {
-      state.admin.ocr = {
-        visible: false,
-        file: null,
-        fileName: '',
-        fileType: '',
-        running: '',
-        status: '',
-        statusType: 'info',
-        results: {},
-        selectedResult: '',
-        manualAbortController: null,
-        manualWorker: null,
-        manualReject: null,
-        manualOperationId: 0
-      };
-    }
-    if (!state.admin.ocr.results || typeof state.admin.ocr.results !== 'object') {
-      state.admin.ocr.results = {};
-    }
-    if (!('manualAbortController' in state.admin.ocr)) {
-      state.admin.ocr.manualAbortController = null;
-    }
-    if (!('manualWorker' in state.admin.ocr)) {
-      state.admin.ocr.manualWorker = null;
-    }
-    if (!('manualReject' in state.admin.ocr)) {
-      state.admin.ocr.manualReject = null;
-    }
-    if (!Number.isFinite(Number(state.admin.ocr.manualOperationId))) {
-      state.admin.ocr.manualOperationId = 0;
-    }
-    return state.admin.ocr;
-  }
-
-  function setAdminOcrStatus(text, type) {
-    ensureAdminModal();
-    var ocrState = ensureAdminOcrState();
-    ocrState.status = text || '';
-    ocrState.statusType = type || 'info';
-    if (!adminElements.ocrStatus) {
-      return;
-    }
-    var status = adminElements.ocrStatus;
-    status.textContent = ocrState.status;
-    status.classList.toggle('is-visible', Boolean(ocrState.status));
-    status.classList.remove('documents-ocr-modal__status--error', 'documents-ocr-modal__status--success');
-    if (type === 'error') {
-      status.classList.add('documents-ocr-modal__status--error');
-    } else if (type === 'success') {
-      status.classList.add('documents-ocr-modal__status--success');
-    }
-  }
-
-  function getAdminOcrFileType(file) {
-    var name = file && file.name ? String(file.name).toLowerCase() : '';
-    var type = file && file.type ? String(file.type).toLowerCase() : '';
-    if (type === 'application/pdf' || /\.pdf$/i.test(name)) {
-      return 'pdf';
-    }
-    if (type.indexOf('image/') === 0 || /\.(?:png|jpe?g|webp|tiff?|bmp)$/i.test(name)) {
-      return 'image';
-    }
-    if (type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || /\.docx$/i.test(name)) {
-      return 'docx';
-    }
-    if (type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' || /\.xlsx$/i.test(name)) {
-      return 'xlsx';
-    }
-    if (type === 'text/plain' || /\.txt$/i.test(name)) {
-      return 'text';
-    }
-    return '';
-  }
-
-  function setAdminOcrFile(file) {
-    var ocrState = ensureAdminOcrState();
-    cancelAdminOcrManualRun();
-    var fileType = getAdminOcrFileType(file);
-    if (!fileType) {
-      ocrState.file = null;
-      ocrState.fileName = '';
-      ocrState.fileType = '';
-      ocrState.results = {};
-      ocrState.selectedResult = '';
-      setAdminOcrStatus('Поддерживаются PDF, изображения, DOCX, XLSX и TXT.', 'error');
-      updateAdminOcrPanel();
-      return;
-    }
-    var fileSizeLimit = ADMIN_OCR_MANUAL_MAX_FILE_BYTES;
-    if (file && Number(file.size) > fileSizeLimit) {
-      ocrState.file = null;
-      ocrState.fileName = '';
-      ocrState.fileType = '';
-      ocrState.results = {};
-      ocrState.selectedResult = '';
-      setAdminOcrStatus('Файл слишком большой. Максимум для ручного OCR — ' + formatTemplateSize(fileSizeLimit) + '.', 'error');
-      updateAdminOcrPanel();
-      return;
-    }
-    ocrState.file = file;
-    ocrState.fileName = file && file.name ? String(file.name) : 'document';
-    ocrState.fileType = fileType;
-    ocrState.running = '';
-    ocrState.results = {};
-    ocrState.selectedResult = '';
-    setAdminOcrStatus('Файл выбран. Нажмите «Распознать текст».', 'info');
-    updateAdminOcrPanel();
-  }
-
-  function normalizeAdminOcrText(text) {
-    return String(text || '')
-      .replace(/\r\n/g, '\n')
-      .replace(/\u0000/g, '')
-      .replace(/[ \t]+\n/g, '\n')
-      .replace(/\n{4,}/g, '\n\n\n')
-      .trim();
-  }
-
-  function saveAdminOcrResult(key, title, text, meta, error) {
-    var ocrState = ensureAdminOcrState();
-    var normalizedText = normalizeAdminOcrText(text);
-    ocrState.results[key] = {
-      key: key,
-      title: title,
-      text: normalizedText,
-      meta: meta || '',
-      error: error || '',
-      createdAt: new Date().toISOString()
-    };
-    if (normalizedText && (!ocrState.selectedResult || !ocrState.results[ocrState.selectedResult] || !ocrState.results[ocrState.selectedResult].text)) {
-      ocrState.selectedResult = key;
-    }
-    updateAdminOcrPanel();
-    return ocrState.results[key];
-  }
-
-  function selectAdminOcrResult(key) {
-    var ocrState = ensureAdminOcrState();
-    if (!ocrState.results[key]) {
-      return;
-    }
-    ocrState.selectedResult = key;
-    updateAdminOcrPanel();
-  }
-
-  function cancelAdminOcrManualRun() {
-    var ocrState = ensureAdminOcrState();
-    ocrState.manualOperationId = Math.max(0, Number(ocrState.manualOperationId) || 0) + 1;
-    var controller = ocrState.manualAbortController;
-    var worker = ocrState.manualWorker;
-    var rejectManualRun = ocrState.manualReject;
-    ocrState.manualAbortController = null;
-    ocrState.manualWorker = null;
-    ocrState.manualReject = null;
-    if (controller && typeof controller.abort === 'function') {
-      controller.abort();
-    }
-    terminateAdminOcrWorker(worker);
-    if (typeof rejectManualRun === 'function') {
-      rejectManualRun(createAdminOcrAbortError());
-    }
-    if (ocrState.running === 'manual-test') {
-      ocrState.running = '';
-    }
-  }
-
-  function requestAdminOcrFile(file, fileName, controller) {
-    var formData = new FormData();
-    formData.append('action', 'ocr_test');
-    formData.append('organization', state.organization || '');
-    formData.append('file', file, fileName || 'ocr-file');
-    appendTelegramUserIdToFormData(formData);
-    return requestAdminOcrApi(buildApiUrl('ocr_test', { organization: state.organization || '' }), {
-      method: 'POST',
-      credentials: 'same-origin',
-      body: formData
-    }, ADMIN_OCR_MANUAL_REQUEST_TIMEOUT_MS, controller);
-  }
-
-  function requestAdminOcrTest(controller) {
-    var ocrState = ensureAdminOcrState();
-    if (!ocrState.file) {
-      return Promise.reject(new Error('Файл не выбран.'));
-    }
-
-    return requestAdminOcrFile(ocrState.file, ocrState.fileName || 'ocr-file', controller);
-  }
-
-  function requestAdminOcrApi(url, options, timeoutMs, externalController) {
-    var controller = externalController && typeof externalController.abort === 'function'
-      ? externalController
-      : (typeof AbortController === 'function' ? new AbortController() : null);
-    var requestOptions = Object.assign({}, options || {});
-    var timer = null;
-    var timedOut = false;
-    if (controller) {
-      controller.documentsOcrTimedOut = false;
-      requestOptions.signal = controller.signal;
-      timer = window.setTimeout(function() {
-        timedOut = true;
-        controller.documentsOcrTimedOut = true;
-        controller.abort();
-      }, Math.max(1000, Number(timeoutMs) || 15000));
-    }
-
-    return fetch(url, requestOptions)
-      .then(handleResponse)
-      .catch(function(error) {
-        if (error && error.name === 'AbortError' && timedOut) {
-          throw new Error('Сервер OCR не ответил вовремя. Запрос остановлен, интерфейс не будет ждать бесконечно.');
-        }
-        throw error;
-      })
-      .finally(function() {
-        if (timer !== null) {
-          window.clearTimeout(timer);
-        }
-      });
-  }
-
-  function createAdminOcrAbortError() {
-    var error = new Error('Ручной OCR остановлен.');
-    error.name = 'AbortError';
-    return error;
-  }
-
-  function isAdminOcrOperationCurrent(operationId) {
-    var ocrState = ensureAdminOcrState();
-    if (Number(operationId) !== Number(ocrState.manualOperationId)) {
-      return false;
-    }
-    var controller = ocrState.manualAbortController;
-    return !(controller && controller.signal && controller.signal.aborted);
-  }
-
-  function assertAdminOcrOperationCurrent(operationId) {
-    if (!isAdminOcrOperationCurrent(operationId)) {
-      throw createAdminOcrAbortError();
-    }
-  }
-
-  function terminateAdminOcrWorker(worker) {
-    if (!worker || typeof worker.terminate !== 'function') {
-      return Promise.resolve();
-    }
-    try {
-      return Promise.resolve(worker.terminate()).catch(function() {});
-    } catch (error) {
-      return Promise.resolve();
-    }
-  }
-
-  function ensureAdminOcrTesseractLoaded() {
-    if (typeof window !== 'undefined' && window.Tesseract && typeof window.Tesseract.createWorker === 'function') {
-      return Promise.resolve(window.Tesseract);
-    }
-    if (adminOcrTesseractLoader) {
-      return adminOcrTesseractLoader;
-    }
-
-    adminOcrTesseractLoader = new Promise(function(resolve, reject) {
-      var script = document.createElement('script');
-      var configuredSource = typeof window !== 'undefined' && window.DOCUMENTS_TESSERACT_URL
-        ? String(window.DOCUMENTS_TESSERACT_URL).trim()
-        : '';
-      script.src = configuredSource || ADMIN_OCR_TESSERACT_SCRIPT_URL;
-      script.async = true;
-      script.onload = function() {
-        if (window.Tesseract && typeof window.Tesseract.createWorker === 'function') {
-          resolve(window.Tesseract);
-          return;
-        }
-        adminOcrTesseractLoader = null;
-        reject(new Error('Tesseract.js не инициализировался после загрузки.'));
-      };
-      script.onerror = function() {
-        adminOcrTesseractLoader = null;
-        if (script.parentNode) {
-          script.parentNode.removeChild(script);
-        }
-        reject(new Error('Не удалось загрузить Tesseract.js. Проверьте доступ к jsDelivr или задайте DOCUMENTS_TESSERACT_URL.'));
-      };
-      document.head.appendChild(script);
-    });
-
-    return adminOcrTesseractLoader;
-  }
-
-  function formatAdminOcrBrowserProgress(message, label) {
-    var status = message && message.status ? String(message.status) : '';
-    var statusLabels = {
-      'loading tesseract core': 'загрузка OCR-ядра',
-      'initializing tesseract': 'инициализация OCR',
-      'loading language traineddata': 'загрузка языков',
-      'initializing api': 'подготовка OCR',
-      'recognizing text': 'распознавание текста'
-    };
-    var progress = message && typeof message.progress === 'number'
-      ? ' ' + Math.round(message.progress * 100) + '%'
-      : '';
-    return (label || 'Браузерный OCR') + ': ' + (statusLabels[status] || status || 'обработка') + progress + '…';
-  }
-
-  async function createAdminOcrBrowserWorker(operationId, progressLabel) {
-    var Tesseract = await ensureAdminOcrTesseractLoaded();
-    assertAdminOcrOperationCurrent(operationId);
-    var worker = await Tesseract.createWorker('rus+eng', 1, {
-      logger: function(message) {
-        if (!isAdminOcrOperationCurrent(operationId) || !message || !message.status) {
-          return;
-        }
-        setAdminOcrStatus(formatAdminOcrBrowserProgress(message, progressLabel), 'info');
-      }
-    });
-    if (!isAdminOcrOperationCurrent(operationId)) {
-      await terminateAdminOcrWorker(worker);
-      throw createAdminOcrAbortError();
-    }
-    ensureAdminOcrState().manualWorker = worker;
-    return worker;
-  }
-
-  function extractAdminOcrPdfTextLayer(page) {
-    return page.getTextContent().then(function(content) {
-      var items = content && Array.isArray(content.items) ? content.items : [];
-      return normalizeAdminOcrText(items.map(function(item) {
-        return item && item.str ? String(item.str) : '';
-      }).join(' ').replace(/\s+/g, ' '));
-    });
-  }
-
-  async function renderAdminOcrPdfPage(page) {
-    var viewport = page.getViewport({ scale: ADMIN_OCR_PDF_RENDER_SCALE });
-    var canvas = document.createElement('canvas');
-    canvas.width = Math.max(1, Math.floor(viewport.width));
-    canvas.height = Math.max(1, Math.floor(viewport.height));
-    var context = canvas.getContext('2d');
-    if (!context) {
-      throw new Error('Браузер не смог подготовить страницу PDF.');
-    }
-    await page.render({ canvasContext: context, viewport: viewport }).promise;
-    return canvas;
-  }
-
-  async function requestAdminBrowserOcr(operationId) {
-    var ocrState = ensureAdminOcrState();
-    var file = ocrState.file;
-    var fileType = ocrState.fileType;
-    if (!file || (fileType !== 'pdf' && fileType !== 'image')) {
-      throw new Error('Файл для браузерного OCR не выбран.');
-    }
-
-    var worker = null;
-    try {
-      if (fileType === 'image') {
-        setAdminOcrStatus('Загружаем браузерный OCR…', 'info');
-        worker = await createAdminOcrBrowserWorker(operationId, 'Изображение');
-        var imageResult = await worker.recognize(file);
-        assertAdminOcrOperationCurrent(operationId);
-        var imageText = normalizeAdminOcrText(imageResult && imageResult.data ? imageResult.data.text : '');
-        return {
-          text: imageText,
-          method: 'browser:tesseract.js',
-          serverOk: Boolean(imageText),
-          error: imageText ? '' : 'Tesseract.js не вернул текст.'
-        };
-      }
-
-      setAdminOcrStatus('Открываем PDF в браузере…', 'info');
-      var pdfjsLib = await ensureBriefPdfJsLoaded();
-      applyBriefPdfJsWorker(pdfjsLib);
-      assertAdminOcrOperationCurrent(operationId);
-      var bytes = await file.arrayBuffer();
-      var pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
-      var totalPages = Math.max(0, Number(pdf.numPages) || 0);
-      if (totalPages < 1) {
-        throw new Error('В PDF не найдено страниц.');
-      }
-      var pagesToProcess = Math.min(totalPages, ADMIN_OCR_PDF_MAX_PAGES);
-      var pageTexts = [];
-      var textLayerPages = 0;
-      var recognizedPages = 0;
-
-      for (var pageNumber = 1; pageNumber <= pagesToProcess; pageNumber += 1) {
-        assertAdminOcrOperationCurrent(operationId);
-        setAdminOcrStatus('Читаем PDF: страница ' + pageNumber + ' из ' + pagesToProcess + '…', 'info');
-        var page = await pdf.getPage(pageNumber);
-        var pageText = '';
-        try {
-          pageText = await extractAdminOcrPdfTextLayer(page);
-          if (pageText) {
-            textLayerPages += 1;
-          } else {
-            if (!worker) {
-              worker = await createAdminOcrBrowserWorker(operationId, 'PDF');
-            }
-            setAdminOcrStatus('Распознаём PDF: страница ' + pageNumber + ' из ' + pagesToProcess + '…', 'info');
-            var canvas = await renderAdminOcrPdfPage(page);
-            try {
-              var pageResult = await worker.recognize(canvas);
-              assertAdminOcrOperationCurrent(operationId);
-              pageText = normalizeAdminOcrText(pageResult && pageResult.data ? pageResult.data.text : '');
-              recognizedPages += 1;
-            } finally {
-              canvas.width = 1;
-              canvas.height = 1;
-            }
-          }
-        } finally {
-          if (page && typeof page.cleanup === 'function') {
-            page.cleanup();
-          }
-        }
-        if (pageText) {
-          pageTexts.push('--- Страница ' + pageNumber + ' ---\n' + pageText);
-        }
-      }
-
-      var pdfText = normalizeAdminOcrText(pageTexts.join('\n\n'));
-      var method = recognizedPages > 0
-        ? (textLayerPages > 0 ? 'browser:pdf.js+tesseract.js' : 'browser:tesseract.js:pdf-pages')
-        : 'browser:pdf.js:text-layer';
-      return {
-        text: pdfText,
-        method: method,
-        pagesProcessed: pagesToProcess,
-        totalPages: totalPages,
-        pagesLimit: ADMIN_OCR_PDF_MAX_PAGES,
-        serverOk: Boolean(pdfText),
-        error: pdfText ? '' : 'В PDF не найден текст.'
-      };
-    } finally {
-      await terminateAdminOcrWorker(worker);
-      if (typeof pdf !== 'undefined' && pdf && typeof pdf.destroy === 'function') {
-        try {
-          await pdf.destroy();
-        } catch (error) {}
-      }
-      if (ensureAdminOcrState().manualWorker === worker) {
-        ensureAdminOcrState().manualWorker = null;
-      }
-    }
-  }
-
-  function runAdminOcrTest() {
-    var ocrState = ensureAdminOcrState();
-    if (ocrState.running) {
-      return Promise.resolve();
-    }
-    if (!ocrState.file) {
-      setAdminOcrStatus('Сначала выберите файл.', 'error');
-      updateAdminOcrPanel();
-      return Promise.reject(new Error('Файл не выбран.'));
-    }
-    cancelAdminOcrManualRun();
-    var manualOperationId = Number(ocrState.manualOperationId) || 0;
-    var manualController = typeof AbortController === 'function' ? new AbortController() : null;
-    var manualTimeoutTimer = null;
-    var rejectManualTimeout = null;
-    var manualTimeoutPromise = null;
-    if (manualController) {
-      manualController.documentsOcrTotalTimedOut = false;
-      manualTimeoutPromise = new Promise(function(resolve, reject) {
-        rejectManualTimeout = reject;
-      });
-      ocrState.manualReject = rejectManualTimeout;
-      manualTimeoutTimer = window.setTimeout(function() {
-        if (manualOperationId !== Number(ocrState.manualOperationId)) {
-          return;
-        }
-        manualController.documentsOcrTotalTimedOut = true;
-        manualController.abort();
-        terminateAdminOcrWorker(ocrState.manualWorker);
-        if (rejectManualTimeout) {
-          rejectManualTimeout(createAdminOcrAbortError());
-        }
-      }, ADMIN_OCR_MANUAL_TOTAL_TIMEOUT_MS);
-    }
-    ocrState.manualAbortController = manualController;
-    ocrState.running = 'manual-test';
-    setAdminOcrStatus('Извлекаем текст…', 'info');
-    updateAdminOcrPanel();
-
-    var useBrowserOcr = ocrState.fileType === 'pdf' || ocrState.fileType === 'image';
-    var manualRequest = useBrowserOcr
-      ? requestAdminBrowserOcr(manualOperationId)
-      : requestAdminOcrTest(manualController);
-    if (manualTimeoutPromise) {
-      manualRequest = Promise.race([manualRequest, manualTimeoutPromise]);
-    }
-    var runner = manualRequest.then(function(data) {
-      if (manualOperationId !== Number(ocrState.manualOperationId)) {
-        return;
-      }
-      var title = 'Ручной OCR-тест';
-      var text = data && data.text ? String(data.text) : '';
-      var metaParts = [];
-      if (data && data.method) {
-        metaParts.push(String(data.method));
-      }
-      if (data && data.pagesProcessed) {
-        metaParts.push(String(data.pagesProcessed) + ' из ' + String(data.totalPages || data.pagesProcessed) + ' стр.');
-      }
-      saveAdminOcrResult('manual-test', title, text, metaParts.join(', '), data && data.error ? String(data.error) : '');
-      setAdminOcrStatus(text ? 'Текст извлечён.' : (data && data.error ? String(data.error) : 'Текст не найден.'), text ? 'success' : 'error');
-    });
-
-    return runner.catch(function(error) {
-      if (manualOperationId !== Number(ocrState.manualOperationId)) {
-        return null;
-      }
-      if (manualController && manualController.documentsOcrTotalTimedOut) {
-        var timeoutSeconds = Math.round(ADMIN_OCR_MANUAL_TOTAL_TIMEOUT_MS / 1000);
-        var timeoutMessage = 'Ручной OCR остановлен: истёк общий лимит ' + timeoutSeconds + ' секунд.';
-        saveAdminOcrResult('manual-test', 'Ручной OCR-тест', '', '', timeoutMessage);
-        setAdminOcrStatus(timeoutMessage, 'error');
-        return null;
-      }
-      if (error && error.name === 'AbortError') {
-        return null;
-      }
-      var message = error && error.message ? error.message : 'OCR завершился с ошибкой.';
-      saveAdminOcrResult('manual-test', 'Ручной OCR-тест', '', '', message);
-      setAdminOcrStatus(message, 'error');
-      throw error;
-    }).finally(function() {
-      if (manualTimeoutTimer !== null) {
-        window.clearTimeout(manualTimeoutTimer);
-      }
-      if (manualOperationId === Number(ocrState.manualOperationId)) {
-        ocrState.manualAbortController = null;
-        ocrState.manualReject = null;
-        ocrState.running = '';
-        updateAdminOcrPanel();
-      }
-    });
-  }
-
-  function createAdminOcrResultCard(result, selected) {
-    var card = createElement('button', 'documents-ocr-modal__result-card');
-    card.type = 'button';
-    card.setAttribute('data-ocr-select', result.key);
-    if (selected) {
-      card.classList.add('is-selected');
-    }
-    var head = createElement('div', 'documents-ocr-modal__result-head');
-    head.appendChild(createElement('div', 'documents-ocr-modal__result-title', result.title || result.key));
-    head.appendChild(createElement('div', 'documents-ocr-modal__result-meta', result.text ? String(result.text.length) + ' симв.' : 'ошибка'));
-    card.appendChild(head);
-    var meta = result.error || result.meta || '';
-    card.appendChild(createElement('div', 'documents-ocr-modal__result-meta', meta));
-    card.appendChild(createElement('div', 'documents-ocr-modal__result-text', result.text || result.error || 'Текста нет.'));
-    return card;
-  }
-
-  function captureAdminOcrPanelViewState(container) {
-    if (!container) {
-      return null;
-    }
-    var activeElement = document.activeElement;
-    var focusTarget = null;
-    if (activeElement && container.contains(activeElement)) {
-      ['data-ocr-run', 'data-ocr-select', 'data-ocr-pick'].some(function(attribute) {
-        if (!activeElement.hasAttribute || !activeElement.hasAttribute(attribute)) {
-          return false;
-        }
-        focusTarget = {
-          attribute: attribute,
-          value: activeElement.getAttribute(attribute) || ''
-        };
-        return true;
-      });
-    }
-
-    return {
-      scrollTop: container.scrollTop,
-      scrollLeft: container.scrollLeft,
-      focusTarget: focusTarget
-    };
-  }
-
-  function restoreAdminOcrPanelViewState(container, viewState) {
-    if (!container || !viewState) {
-      return;
-    }
-    container.scrollTop = Number(viewState.scrollTop) || 0;
-    container.scrollLeft = Number(viewState.scrollLeft) || 0;
-    var focusTarget = viewState.focusTarget;
-    if (!focusTarget) {
-      return;
-    }
-    Array.prototype.some.call(container.querySelectorAll('[' + focusTarget.attribute + ']'), function(candidate) {
-      if ((candidate.getAttribute(focusTarget.attribute) || '') !== focusTarget.value) {
-        return false;
-      }
-      if (typeof candidate.focus === 'function') {
-        candidate.focus({ preventScroll: true });
-      }
-      return true;
-    });
-  }
-
-  function updateAdminOcrPanel() {
-    ensureAdminModal();
-    var ocrState = ensureAdminOcrState();
-    if (adminElements.ocrButton) {
-      adminElements.ocrButton.disabled = !state.organization;
-    }
-    if (adminElements.ocrCopyButton) {
-      var selected = ocrState.selectedResult && ocrState.results[ocrState.selectedResult] ? ocrState.results[ocrState.selectedResult] : null;
-      adminElements.ocrCopyButton.disabled = !selected || !selected.text;
-    }
-    if (adminElements.ocrChooseButton) {
-      adminElements.ocrChooseButton.textContent = ocrState.file ? 'Другой файл' : 'Выбрать файл';
-      adminElements.ocrChooseButton.disabled = Boolean(ocrState.running);
-    }
-    if (!adminElements.ocrBody) {
-      return;
-    }
-    var panelViewState = captureAdminOcrPanelViewState(adminElements.ocrBody);
-    adminElements.ocrBody.innerHTML = '';
-
-    var controls = createElement('section', 'documents-ocr-modal__controls');
-    var testGroup = createElement('div', 'documents-ocr-modal__group');
-    testGroup.appendChild(createElement('div', 'documents-ocr-modal__group-title', 'Ручной тест OCR своего файла'));
-    var fileBox = createElement('div', 'documents-ocr-modal__file');
-    fileBox.appendChild(createElement('div', 'documents-ocr-modal__file-name', ocrState.fileName || 'Файл не выбран'));
-    var selectedTypeLabel = 'Файл';
-    if (ocrState.fileType === 'pdf') {
-      selectedTypeLabel = 'PDF';
-    } else if (ocrState.fileType === 'image') {
-      selectedTypeLabel = 'Изображение';
-    } else if (ocrState.fileType === 'docx') {
-      selectedTypeLabel = 'Word DOCX';
-    } else if (ocrState.fileType === 'xlsx') {
-      selectedTypeLabel = 'Excel XLSX';
-    } else if (ocrState.fileType === 'text') {
-      selectedTypeLabel = 'Текст TXT';
-    }
-    var fileMeta = ocrState.file
-      ? (selectedTypeLabel + ' • ' + formatTemplateSize(ocrState.file.size || 0))
-      : 'PDF, PNG/JPEG/WebP/TIFF/BMP, DOCX, XLSX, TXT';
-    fileBox.appendChild(createElement('div', 'documents-ocr-modal__file-meta', fileMeta));
-    testGroup.appendChild(fileBox);
-    var testActions = createElement('div', 'documents-ocr-modal__inline-actions');
-    var pickButton = createElement('button', 'documents-ocr-modal__button documents-ocr-modal__button--primary', 'Выбрать свой файл');
-    pickButton.type = 'button';
-    pickButton.disabled = Boolean(ocrState.running);
-    pickButton.setAttribute('data-ocr-pick', '1');
-    testActions.appendChild(pickButton);
-    var runButton = createElement('button', 'documents-ocr-modal__button', ocrState.running ? 'Извлекаем текст…' : 'Распознать текст');
-    runButton.type = 'button';
-    runButton.disabled = !ocrState.file || Boolean(ocrState.running);
-    runButton.setAttribute('data-ocr-run', '1');
-    testActions.appendChild(runButton);
-    testGroup.appendChild(testActions);
-    controls.appendChild(testGroup);
-
-    var resultList = createElement('div', 'documents-ocr-modal__result-list');
-    var resultKeys = Object.keys(ocrState.results || {});
-    if (resultKeys.length) {
-      resultKeys.forEach(function(key) {
-        resultList.appendChild(createAdminOcrResultCard(ocrState.results[key], key === ocrState.selectedResult));
-      });
-    } else {
-      resultList.appendChild(createElement('div', 'documents-ocr-modal__empty', 'Результатов пока нет. Нажмите «Распознать текст».'));
-    }
-    controls.appendChild(resultList);
-
-    var resultPanel = createElement('section', 'documents-ocr-modal__result');
-    var selectedResult = ocrState.selectedResult && ocrState.results[ocrState.selectedResult] ? ocrState.results[ocrState.selectedResult] : null;
-    resultPanel.appendChild(createElement('div', 'documents-ocr-modal__group-title', selectedResult ? selectedResult.title : 'Итоговый текст'));
-    var textarea = document.createElement('textarea');
-    textarea.className = 'documents-ocr-modal__textarea';
-    textarea.readOnly = true;
-    textarea.value = selectedResult && selectedResult.text ? selectedResult.text : '';
-    textarea.placeholder = 'Здесь появится текст выбранного результата.';
-    resultPanel.appendChild(textarea);
-
-    adminElements.ocrBody.appendChild(controls);
-    adminElements.ocrBody.appendChild(resultPanel);
-    setAdminOcrStatus(ocrState.status, ocrState.statusType);
-    restoreAdminOcrPanelViewState(adminElements.ocrBody, panelViewState);
-  }
-
-  function copyAdminOcrSelectedText() {
-    var ocrState = ensureAdminOcrState();
-    var selected = ocrState.selectedResult && ocrState.results[ocrState.selectedResult] ? ocrState.results[ocrState.selectedResult] : null;
-    var text = selected && selected.text ? selected.text : '';
-    if (!text) {
-      setAdminOcrStatus('Нет текста для копирования.', 'error');
-      return;
-    }
-    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-      navigator.clipboard.writeText(text)
-        .then(function() {
-          setAdminOcrStatus('Текст скопирован.', 'success');
-        })
-        .catch(function() {
-          setAdminOcrStatus('Не удалось скопировать автоматически. Выделите текст вручную.', 'error');
-        });
-      return;
-    }
-    setAdminOcrStatus('Автокопирование недоступно. Выделите текст вручную.', 'error');
-  }
 
   function ensureAdminS3State() {
     if (!state.admin.s3) {
@@ -13898,7 +13011,6 @@
     var quick = createElement('div', 'documents-s3-modal__quick');
     quick.appendChild(createAdminS3QuickButton('Корень', '', path));
     quick.appendChild(createAdminS3QuickButton('Telegram JSON', 'js/documents/telegram-user-tasks/users', path));
-    quick.appendChild(createAdminS3QuickButton('OCR кэш', 'js/documents/telegram-user-tasks', path));
     quick.appendChild(createAdminS3QuickButton('Тесты S3', '.s3-test', path));
     if (state.organization) {
       quick.appendChild(createAdminS3QuickButton('Текущая организация', String(state.organization).trim().replace(/\s+/g, '_'), path));
@@ -14732,42 +13844,6 @@
     });
   }
 
-  function openAdminOcrModal() {
-    ensureAdminModal();
-    var ocrState = ensureAdminOcrState();
-    if (!state.organization) {
-      setAdminOcrStatus('Сначала выберите организацию.', 'error');
-      return;
-    }
-    ocrState.visible = true;
-    if (adminElements.ocrModal) {
-      adminElements.ocrModal.classList.add('is-visible');
-      adminElements.ocrModal.setAttribute('aria-hidden', 'false');
-    }
-    setAdminOcrStatus(
-      ocrState.file ? 'Файл готов к ручному тесту.' : 'Выберите файл для ручного OCR-теста.',
-      'info'
-    );
-    updateAdminOcrPanel();
-    if (adminElements.ocrCloseButton && typeof adminElements.ocrCloseButton.focus === 'function') {
-      adminElements.ocrCloseButton.focus();
-    }
-  }
-
-  function closeAdminOcrModal(options) {
-    ensureAdminModal();
-    var ocrState = ensureAdminOcrState();
-    ocrState.visible = false;
-    cancelAdminOcrManualRun();
-    if (adminElements.ocrModal) {
-      adminElements.ocrModal.classList.remove('is-visible');
-      adminElements.ocrModal.setAttribute('aria-hidden', 'true');
-    }
-    var shouldRestoreFocus = !(options && options.skipFocus);
-    if (shouldRestoreFocus && adminElements.ocrButton && typeof adminElements.ocrButton.focus === 'function') {
-      adminElements.ocrButton.focus();
-    }
-  }
 
   function closeAdminS3Modal(options) {
     ensureAdminModal();
@@ -15138,14 +14214,11 @@
       ensureAdminUserLogState().visible = false;
       ensureAdminTemplateState().visible = false;
       ensureAdminS3State().visible = false;
-      ensureAdminOcrState().visible = false;
       closeAdminTemplateModal({ skipFocus: true });
       closeAdminS3Modal({ skipFocus: true });
-      closeAdminOcrModal({ skipFocus: true });
       updateAdminLogPanel();
       updateAdminTemplatePanel();
       updateAdminS3Panel();
-      updateAdminOcrPanel();
       adminElements.modal.classList.add('is-visible');
       adminElements.modal.setAttribute('aria-hidden', 'false');
       document.addEventListener('keydown', handleAdminKeydown, true);
@@ -15181,11 +14254,9 @@
     ensureAdminUserLogState().visible = false;
     ensureAdminTemplateState().visible = false;
     ensureAdminS3State().visible = false;
-    ensureAdminOcrState().visible = false;
     updateAdminLogPanel();
     closeAdminTemplateModal({ skipFocus: true });
     closeAdminS3Modal({ skipFocus: true });
-    closeAdminOcrModal({ skipFocus: true });
     if (lastFocusedElement && typeof lastFocusedElement.focus === 'function') {
       lastFocusedElement.focus();
     }
@@ -15199,8 +14270,6 @@
         closeAdminTemplateModal();
       } else if (ensureAdminS3State().visible) {
         closeAdminS3Modal();
-      } else if (ensureAdminOcrState().visible) {
-        closeAdminOcrModal();
       } else if (ensureAdminUserLogState().visible) {
         closeAdminLogPanel();
       } else {
@@ -33618,7 +32687,6 @@
 
   function resetDocumentsRuntimeCache(options) {
     var config = options && typeof options === 'object' ? options : {};
-    cancelAdminOcrManualRun();
     state.runtimeCacheVersion += 1;
     state.registryRequestSequence += 1;
     stopRealtimeRegistrySync();
