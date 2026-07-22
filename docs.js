@@ -599,6 +599,10 @@
   var MESSAGE_DEFAULT_DURATION_MS = 6500;
   var MESSAGE_LONG_DURATION_MS = 9500;
   var MESSAGE_INFO_DURATION_MS = 4500;
+  var OCR_CLIENT_TIMEOUT_MS = 240000;
+  var OCR_BROWSER_MAX_PDF_PAGES = 10;
+  var OCR_BROWSER_PDF_SCALE = 2;
+  var OCR_BROWSER_TESSERACT_CDN_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
   var messageTimerId = null;
   var outgoingRegistryEscapeHandler = null;
   var outgoingFilterPopoverOutsideHandler = null;
@@ -1172,6 +1176,7 @@
   var DOCUMENT_TABS_STORAGE_PREFIX = 'documents:tabs:';
   var TABLE_PREFERENCES_STORAGE_PREFIX = 'documents:table-preferences:';
   var COLUMN_ORDER_STORAGE_PREFIX = 'documents:column-order:';
+  var ADMIN_OCR_BASELINE_STORAGE_PREFIX = 'documents:admin-ocr-baseline:';
   var STATUS_OPTIONS = ['Принято в работу', 'На проверке', 'На доработку', 'Выполнено', 'Отменено'];
   var ASSIGNEE_STATUS_OPTIONS = STATUS_OPTIONS.slice();
   var REVIEW_FLOW_RESPONSIBLE_SUBORDINATE = 'responsible_subordinate_v1';
@@ -1243,6 +1248,7 @@
   var SEARCH_POPOVER_MIN_WIDTH = 300;
   var SEARCH_POPOVER_MIN_HEIGHT = 260;
   var ADMIN_S3_READ_MAX_BYTES = 1048576;
+  var CORRESPONDENT_SUGGESTIONS_LIMIT = 8;
 
   var DEFAULT_VISUAL_SETTINGS = buildDefaultVisualSettings();
 
@@ -1640,6 +1646,210 @@
       .replace(/\u00a0/g, ' ')
       .replace(/[\u200B-\u200D\uFEFF]/g, '')
       .trim();
+  }
+
+  function collectCorrespondentSuggestions() {
+    var suggestionMap = Object.create(null);
+    var suggestions = [];
+    var documents = Array.isArray(state.documents) ? state.documents : [];
+
+    for (var index = 0; index < documents.length; index += 1) {
+      var documentData = documents[index];
+      if (!documentData || typeof documentData !== 'object') {
+        continue;
+      }
+      var value = normalizeTextInputValue(documentData.correspondent || '');
+      if (!value) {
+        continue;
+      }
+      var key = value.toLocaleLowerCase('ru-RU');
+      if (!suggestionMap[key]) {
+        suggestionMap[key] = {
+          value: value,
+          count: 0,
+          lastIndex: index
+        };
+        suggestions.push(suggestionMap[key]);
+      }
+      suggestionMap[key].count += 1;
+      suggestionMap[key].lastIndex = index;
+    }
+
+    suggestions.sort(function(a, b) {
+      if (a.count !== b.count) {
+        return b.count - a.count;
+      }
+      if (a.lastIndex !== b.lastIndex) {
+        return b.lastIndex - a.lastIndex;
+      }
+      return a.value.localeCompare(b.value, 'ru-RU');
+    });
+
+    return suggestions;
+  }
+
+  function attachCorrespondentSuggestions(fieldData) {
+    if (!fieldData || !fieldData.field || !fieldData.input) {
+      return;
+    }
+
+    var field = fieldData.field;
+    var input = fieldData.input;
+    var suggestions = collectCorrespondentSuggestions();
+    var picker = createElement('div', 'documents-correspondent-picker');
+    var list = createElement('div', 'documents-correspondent-suggestions');
+    var listId = 'documents-correspondent-suggestions-' + Date.now();
+    var hint = createElement(
+      'div',
+      'documents-correspondent-picker__hint',
+      'Можно вводить новое название, в том числе с кавычками, или выбрать из ранее введённых.'
+    );
+    var activeIndex = -1;
+    var visibleSuggestions = [];
+
+    field.classList.add('documents-form__field--correspondent');
+    input.maxLength = 200;
+    input.placeholder = 'Например, ООО «Название»';
+    input.setAttribute('autocomplete', 'off');
+    input.setAttribute('aria-autocomplete', 'list');
+    input.setAttribute('aria-controls', listId);
+    input.setAttribute('aria-expanded', 'false');
+
+    list.id = listId;
+    hint.id = listId + '-hint';
+    list.setAttribute('role', 'listbox');
+    list.setAttribute('aria-label', 'Ранее введённые отправители и получатели');
+    list.hidden = true;
+    input.setAttribute('aria-describedby', hint.id);
+
+    field.insertBefore(picker, input);
+    picker.appendChild(input);
+    picker.appendChild(list);
+    field.appendChild(hint);
+
+    function closeSuggestions() {
+      activeIndex = -1;
+      list.hidden = true;
+      input.setAttribute('aria-expanded', 'false');
+      input.removeAttribute('aria-activedescendant');
+    }
+
+    function setActiveSuggestion(nextIndex) {
+      var items = list.querySelectorAll('.documents-correspondent-suggestions__item');
+      if (!items.length) {
+        activeIndex = -1;
+        return;
+      }
+      activeIndex = Math.max(0, Math.min(nextIndex, items.length - 1));
+      for (var itemIndex = 0; itemIndex < items.length; itemIndex += 1) {
+        var isActive = itemIndex === activeIndex;
+        items[itemIndex].classList.toggle('is-active', isActive);
+        items[itemIndex].setAttribute('aria-selected', isActive ? 'true' : 'false');
+      }
+      var activeItem = items[activeIndex];
+      input.setAttribute('aria-activedescendant', activeItem.id);
+      if (typeof activeItem.scrollIntoView === 'function') {
+        activeItem.scrollIntoView({ block: 'nearest' });
+      }
+    }
+
+    function selectSuggestion(index) {
+      var suggestion = visibleSuggestions[index];
+      if (!suggestion) {
+        return;
+      }
+      input.value = suggestion.value;
+      closeSuggestions();
+      input.focus();
+    }
+
+    function renderSuggestions() {
+      var query = normalizeTextInputValue(input.value).toLocaleLowerCase('ru-RU');
+      visibleSuggestions = suggestions.filter(function(suggestion) {
+        return !query || suggestion.value.toLocaleLowerCase('ru-RU').indexOf(query) !== -1;
+      }).slice(0, CORRESPONDENT_SUGGESTIONS_LIMIT);
+
+      list.textContent = '';
+      activeIndex = -1;
+      if (!visibleSuggestions.length) {
+        closeSuggestions();
+        return;
+      }
+
+      var caption = createElement(
+        'div',
+        'documents-correspondent-suggestions__caption',
+        query ? 'Подходящие значения' : 'Ранее введённые'
+      );
+      list.appendChild(caption);
+
+      visibleSuggestions.forEach(function(suggestion, suggestionIndex) {
+        var item = createElement('button', 'documents-correspondent-suggestions__item');
+        var valueNode = createElement('span', 'documents-correspondent-suggestions__value', suggestion.value);
+        var countNode = createElement(
+          'span',
+          'documents-correspondent-suggestions__count',
+          suggestion.count > 1 ? String(suggestion.count) : ''
+        );
+        item.type = 'button';
+        item.id = listId + '-option-' + suggestionIndex;
+        item.setAttribute('role', 'option');
+        item.setAttribute('aria-selected', 'false');
+        item.appendChild(valueNode);
+        if (suggestion.count > 1) {
+          countNode.title = 'Сколько раз значение использовалось ранее';
+          item.appendChild(countNode);
+        }
+        item.addEventListener('click', function() {
+          selectSuggestion(suggestionIndex);
+        });
+        item.addEventListener('pointerdown', function(event) {
+          event.preventDefault();
+        });
+        item.addEventListener('mousemove', function() {
+          setActiveSuggestion(suggestionIndex);
+        });
+        list.appendChild(item);
+      });
+
+      list.hidden = false;
+      input.setAttribute('aria-expanded', 'true');
+    }
+
+    input.addEventListener('focus', renderSuggestions);
+    input.addEventListener('input', renderSuggestions);
+    input.addEventListener('blur', closeSuggestions);
+    input.addEventListener('keydown', function(event) {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        if (list.hidden) {
+          renderSuggestions();
+        }
+        setActiveSuggestion(activeIndex + 1);
+        return;
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        if (list.hidden) {
+          renderSuggestions();
+        }
+        setActiveSuggestion(activeIndex > 0 ? activeIndex - 1 : visibleSuggestions.length - 1);
+        return;
+      }
+      if (event.key === 'Enter' && activeIndex >= 0 && !list.hidden) {
+        event.preventDefault();
+        selectSuggestion(activeIndex);
+        return;
+      }
+      if (event.key === 'Escape' && !list.hidden) {
+        event.preventDefault();
+        event.stopPropagation();
+        closeSuggestions();
+      }
+    });
+    list.addEventListener('mousedown', function(event) {
+      event.preventDefault();
+    });
   }
 
   function buildNextDocumentRegistryNumber(records) {
@@ -2124,6 +2334,17 @@
     if (name === 'x') {
       append('path', { d: 'M18 6L6 18' });
       append('path', { d: 'M6 6l12 12' });
+      return svg;
+    }
+    if (name === 'check') {
+      append('path', { d: 'M20 6L9 17l-5-5' });
+      return svg;
+    }
+    if (name === 'file-plus') {
+      append('path', { d: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z' });
+      append('path', { d: 'M14 2v6h6' });
+      append('path', { d: 'M12 12v6' });
+      append('path', { d: 'M9 15h6' });
       return svg;
     }
 
@@ -3271,18 +3492,238 @@
     return ext ? (base + '.' + ext) : base;
   }
 
+  var browserTesseractLoader = null;
+
+  function ensureBrowserTesseractLoaded() {
+    if (typeof window !== 'undefined' && window.Tesseract && typeof window.Tesseract.createWorker === 'function') {
+      return Promise.resolve(window.Tesseract);
+    }
+    if (browserTesseractLoader) {
+      return browserTesseractLoader;
+    }
+
+    browserTesseractLoader = new Promise(function(resolve, reject) {
+      var scriptDirectory = getDocsScriptDirectory();
+      var candidates = [];
+      var explicitUrl = window.DOCUMENTS_TESSERACT_URL ? String(window.DOCUMENTS_TESSERACT_URL).trim() : '';
+      if (explicitUrl) {
+        candidates.push(explicitUrl);
+      }
+      if (scriptDirectory) {
+        candidates.push(scriptDirectory + 'tesseract/tesseract.min.js');
+      }
+      candidates.push(OCR_BROWSER_TESSERACT_CDN_URL);
+
+      var candidateIndex = 0;
+      function loadNextCandidate() {
+        if (window.Tesseract && typeof window.Tesseract.createWorker === 'function') {
+          resolve(window.Tesseract);
+          return;
+        }
+        if (candidateIndex >= candidates.length) {
+          browserTesseractLoader = null;
+          reject(new Error('Не удалось загрузить Tesseract.js для браузерного OCR.'));
+          return;
+        }
+
+        var script = document.createElement('script');
+        script.src = candidates[candidateIndex];
+        script.async = true;
+        candidateIndex += 1;
+        script.onload = function() {
+          script.onload = null;
+          script.onerror = null;
+          if (window.Tesseract && typeof window.Tesseract.createWorker === 'function') {
+            resolve(window.Tesseract);
+            return;
+          }
+          loadNextCandidate();
+        };
+        script.onerror = function() {
+          script.onload = null;
+          script.onerror = null;
+          loadNextCandidate();
+        };
+        document.head.appendChild(script);
+      }
+
+      loadNextCandidate();
+    });
+
+    return browserTesseractLoader;
+  }
+
+  function createOcrAbortError() {
+    var error = new Error('OCR-запрос отменён.');
+    error.name = 'AbortError';
+    return error;
+  }
+
+  function normalizeBrowserOcrText(text) {
+    return String(text || '')
+      .replace(/\r\n?/g, '\n')
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{4,}/g, '\n\n\n')
+      .trim();
+  }
+
+  function shouldUseBrowserOcrFallback(error) {
+    if (typeof window === 'undefined' || typeof window.WebAssembly !== 'object' || typeof window.Worker !== 'function') {
+      return false;
+    }
+    if (error && error.name === 'AbortError') {
+      return false;
+    }
+    var status = Number(error && error.ocrServerStatus) || 0;
+    return status >= 500 || (status === 0 && error instanceof TypeError);
+  }
+
+  async function recognizeFileWithBrowserTesseract(file, source) {
+    if (!file) {
+      throw new Error('Файл для браузерного OCR не подготовлен.');
+    }
+
+    var signal = source && source.abortController ? source.abortController.signal : null;
+    var worker = null;
+    var loadingTask = null;
+    var aborted = Boolean(signal && signal.aborted);
+    var abortHandler = function() {
+      aborted = true;
+      if (worker && typeof worker.terminate === 'function') {
+        var activeWorker = worker;
+        worker = null;
+        Promise.resolve(activeWorker.terminate()).catch(function() {});
+      }
+    };
+    if (signal) {
+      signal.addEventListener('abort', abortHandler, { once: true });
+    }
+
+    try {
+      if (aborted) {
+        throw createOcrAbortError();
+      }
+      var tesseract = await ensureBrowserTesseractLoaded();
+      if (aborted) {
+        throw createOcrAbortError();
+      }
+      worker = await tesseract.createWorker(['rus', 'eng'], 1, {
+        logger: function(message) {
+          if (source && typeof source.onBrowserProgress === 'function') {
+            source.onBrowserProgress(message || {});
+          }
+        }
+      });
+      if (aborted) {
+        throw createOcrAbortError();
+      }
+
+      var fileName = String((file && file.name) || (source && source.label) || 'ocr-file');
+      var fileType = String((file && file.type) || '').toLowerCase();
+      var isPdf = fileType === 'application/pdf' || /\.pdf$/i.test(fileName);
+      var textParts = [];
+
+      if (!isPdf) {
+        var imageResult = await worker.recognize(file);
+        var imageText = normalizeBrowserOcrText(imageResult && imageResult.data ? imageResult.data.text : '');
+        if (imageText) {
+          textParts.push(imageText);
+        }
+      } else {
+        var pdfjsLib = await ensureBriefPdfJsLoaded();
+        applyBriefPdfJsWorker(pdfjsLib);
+        var bytes = await file.arrayBuffer();
+        loadingTask = pdfjsLib.getDocument({ data: bytes });
+        var pdf = await loadingTask.promise;
+        var pagesToProcess = Math.min(pdf.numPages, OCR_BROWSER_MAX_PDF_PAGES);
+        for (var pageNumber = 1; pageNumber <= pagesToProcess; pageNumber += 1) {
+          if (aborted) {
+            throw createOcrAbortError();
+          }
+          var page = await pdf.getPage(pageNumber);
+          var viewport = page.getViewport({ scale: OCR_BROWSER_PDF_SCALE });
+          var canvas = document.createElement('canvas');
+          canvas.width = Math.max(1, Math.floor(viewport.width));
+          canvas.height = Math.max(1, Math.floor(viewport.height));
+          var context = canvas.getContext('2d', { alpha: false });
+          if (!context) {
+            throw new Error('Браузер не смог подготовить страницу PDF для OCR.');
+          }
+          await page.render({ canvasContext: context, viewport: viewport }).promise;
+          var pageResult = await worker.recognize(canvas);
+          var pageText = normalizeBrowserOcrText(pageResult && pageResult.data ? pageResult.data.text : '');
+          if (pageText) {
+            textParts.push(pageText);
+          }
+          canvas.width = 1;
+          canvas.height = 1;
+          if (typeof page.cleanup === 'function') {
+            page.cleanup();
+          }
+        }
+        if (pdf.numPages > pagesToProcess && source && typeof source.onPartial === 'function') {
+          source.onPartial('Браузерный OCR обработал первые ' + pagesToProcess + ' из ' + pdf.numPages + ' страниц.');
+        }
+      }
+
+      var resultText = normalizeBrowserOcrText(textParts.join('\n\n'));
+      if (!resultText) {
+        throw new Error('Браузерный OCR не нашёл текст.');
+      }
+      return resultText;
+    } finally {
+      if (signal) {
+        signal.removeEventListener('abort', abortHandler);
+      }
+      if (loadingTask && typeof loadingTask.destroy === 'function') {
+        Promise.resolve(loadingTask.destroy()).catch(function() {});
+      }
+      if (worker && typeof worker.terminate === 'function') {
+        await Promise.resolve(worker.terminate()).catch(function() {});
+      }
+    }
+  }
+
   function requestOcrTextForSource(source, apiUrl) {
     var endpoint = apiUrl || (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
     var formData = new FormData();
     formData.append('action', 'ocr_extract');
-    formData.append('language', 'rus+eng');
+    formData.append('language', 'rus');
+    var abortController = source && source.abortController
+      ? source.abortController
+      : (typeof AbortController === 'function' ? new AbortController() : null);
+    var requestTimedOut = false;
+    var timeoutId = abortController ? window.setTimeout(function() {
+      requestTimedOut = true;
+      abortController.abort();
+    }, OCR_CLIENT_TIMEOUT_MS) : null;
 
+    function clearOcrTimeout() {
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+    }
+
+    function buildFetchOptions(options) {
+      var nextOptions = options || {};
+      if (abortController) {
+        nextOptions.signal = abortController.signal;
+      }
+      return nextOptions;
+    }
+
+    var preparedFile = null;
     var prepareSource = Promise.resolve();
     if (source && source.fileObject) {
       var localName = ensureUploadFileName(source.fileObject.name, source.fileObject.type, source && source.label ? source.label : 'ocr-file');
-      formData.append('file', source.fileObject, localName);
+      preparedFile = source.fileObject;
+      formData.append('file', preparedFile, localName);
     } else if (source && source.url) {
-      prepareSource = fetch(String(source.url), { credentials: 'same-origin' })
+      prepareSource = fetch(String(source.url), buildFetchOptions({
+        credentials: 'same-origin',
+        cache: 'no-store'
+      }))
         .then(function(fileResponse) {
           if (!fileResponse.ok) {
             throw new Error('Не удалось загрузить файл для OCR (' + fileResponse.status + ')');
@@ -3295,29 +3736,67 @@
             fileBlob.type,
             'ocr-file'
           );
-          formData.append('file', new File([fileBlob], fileName, { type: fileBlob.type || 'application/octet-stream' }), fileName);
+          preparedFile = new File([fileBlob], fileName, { type: fileBlob.type || 'application/octet-stream' });
+          formData.append('file', preparedFile, fileName);
         });
     } else {
+      clearOcrTimeout();
       return Promise.reject(new Error('Источник для OCR не найден.'));
     }
 
     return prepareSource.then(function() {
-      return fetch(endpoint, {
+      return fetch(endpoint, buildFetchOptions({
         method: 'POST',
         credentials: 'same-origin',
+        cache: 'no-store',
         body: formData
-      });
+      }));
     }).then(function(response) {
       return response.json().catch(function() { return null; }).then(function(payload) {
         if (!response.ok || !payload || payload.ok !== true) {
-          throw new Error(payload && payload.error ? payload.error : ('Ошибка OCR (' + response.status + ')'));
+          var errorMessage = payload && payload.error ? String(payload.error) : ('Ошибка OCR (' + response.status + ')');
+          if (payload && payload.requestId) {
+            errorMessage += ' Код запроса: ' + String(payload.requestId) + '.';
+          }
+          var serverError = new Error(errorMessage);
+          serverError.ocrServerStatus = response.status;
+          throw serverError;
         }
         var extractedText = payload && payload.text ? String(payload.text).trim() : '';
         if (!extractedText) {
           throw new Error('OCR не вернул текст.');
         }
+        if (payload.partial === true && source && typeof source.onPartial === 'function') {
+          source.onPartial(payload.warning ? String(payload.warning) : 'Распознаны не все страницы документа.');
+        }
         return extractedText;
       });
+    }).catch(function(error) {
+      if (error && error.name === 'AbortError') {
+        var timeoutSeconds = Math.round(OCR_CLIENT_TIMEOUT_MS / 1000);
+        throw new Error(requestTimedOut
+          ? 'Локальный OCR не завершился за ' + timeoutSeconds + ' секунд. Уменьшите PDF или лимит страниц.'
+          : 'OCR-запрос отменён.');
+      }
+      if (shouldUseBrowserOcrFallback(error)) {
+        if (source && typeof source.onBrowserFallback === 'function') {
+          source.onBrowserFallback();
+        }
+        return recognizeFileWithBrowserTesseract(preparedFile, source).catch(function(browserError) {
+          if (browserError && browserError.name === 'AbortError') {
+            var timeoutSeconds = Math.round(OCR_CLIENT_TIMEOUT_MS / 1000);
+            throw new Error(requestTimedOut
+              ? 'Браузерный OCR не завершился за ' + timeoutSeconds + ' секунд. Уменьшите PDF или количество страниц.'
+              : 'OCR-запрос отменён.');
+          }
+          var serverMessage = error && error.message ? String(error.message) : 'Серверный OCR недоступен.';
+          var browserMessage = browserError && browserError.message ? String(browserError.message) : 'неизвестная ошибка';
+          throw new Error(serverMessage + ' Браузерный fallback также не выполнен: ' + browserMessage);
+        });
+      }
+      throw error;
+    }).finally(function() {
+      clearOcrTimeout();
     });
   }
 
@@ -3530,8 +4009,30 @@
     }
   }
 
-  function postGroqPaidForBrief(createFormData) {
-    var endpoints = ['/js/documents/api-groq-paid.php', '/api-groq-paid.php'];
+  function getGroqPaidBriefEndpoints(apiUrl) {
+    var configuredEndpoint = window.GROQ_PAID_API_URL
+      ? String(window.GROQ_PAID_API_URL).trim()
+      : '';
+    var documentsApiEndpoint = apiUrl || window.DOCUMENTS_AI_API_URL || '';
+    var documentsApiPath = documentsApiEndpoint
+      ? String(documentsApiEndpoint).replace(/[?#].*$/g, '')
+      : '';
+    var siblingEndpoint = /api-docs\.php$/i.test(documentsApiPath)
+      ? documentsApiPath.replace(/api-docs\.php$/i, 'api-groq-paid.php')
+      : '';
+    var endpoints = [
+      configuredEndpoint,
+      siblingEndpoint,
+      '/js/documents/api-groq-paid.php',
+      '/api-groq-paid.php'
+    ];
+    return endpoints.filter(function(endpoint, index) {
+      return endpoint && endpoints.indexOf(endpoint) === index;
+    });
+  }
+
+  function postGroqPaidForBrief(createFormData, apiUrl) {
+    var endpoints = getGroqPaidBriefEndpoints(apiUrl);
     var lastError = null;
     return endpoints.reduce(function(chain, endpoint) {
       return chain.catch(function() {
@@ -3588,7 +4089,7 @@
         }]));
       }
       return formData;
-    });
+    }, apiUrl);
     var response = request && request.response;
     var payload = request && request.payload;
     if (!response.ok || !payload || payload.ok !== true) {
@@ -5077,7 +5578,9 @@
     var style = document.createElement('style');
     style.id = 'documents-registry-table-view-style';
     style.textContent = '' +
-      '.documents-workspace{display:flex;flex-direction:column;gap:12px;color:#172554;}' +
+      '#documents-panel.documents-panel--fullscreen{inset:0;width:100vw;max-width:none;height:100vh;max-height:none;height:100dvh;margin:0;padding:0;border-radius:0;box-sizing:border-box;display:flex;flex-direction:column;overflow:hidden;}' +
+      '#documents-panel.documents-panel--fullscreen #documents-root{display:flex;flex:1 1 auto;min-width:0;min-height:0;width:100%;padding:0;box-sizing:border-box;overflow:hidden;}' +
+      '.documents-workspace{display:flex;flex:1 1 auto;flex-direction:column;gap:8px;min-width:0;min-height:0;width:100%;padding:0;color:#172554;box-sizing:border-box;}' +
       '.documents-panel__header{display:flex;flex-wrap:nowrap;align-items:center;gap:6px;min-height:44px;height:44px;padding:6px 10px;box-sizing:border-box;min-width:0;overflow:visible;}' +
       '.documents-panel__header>*{flex:0 0 auto;}' +
       '.documents-panel-control-group{display:inline-flex;align-items:center;justify-content:flex-end;gap:4px;margin-left:auto;flex:0 0 auto;min-width:0;white-space:nowrap;}' +
@@ -5141,7 +5644,7 @@
       '.documents-tab-shell:nth-child(2) .documents-tab__count{background:#fff1f2;color:#ef4444;}' +
       '.documents-tab-shell:nth-child(3) .documents-tab__count{background:#ecfdf5;color:#10b981;}' +
       '.documents-tabs__add{width:38px;height:40px;margin:0;border-color:#e2e8f0;border-radius:6px 6px 0 0;background:#fff;box-shadow:none;font-size:20px;}' +
-      '.documents-table-wrapper{border:var(--docs-border-width,1px) solid var(--docs-border-color,#e2e8f0);border-radius:6px;background:#fff;box-shadow:0 14px 35px rgba(15,23,42,.06);overflow-x:auto;overflow-y:auto;scrollbar-gutter:stable;max-height:clamp(320px,calc(100vh - 260px),720px);}' +
+      '.documents-table-wrapper{flex:1 1 auto;min-width:0;min-height:0;border:var(--docs-border-width,1px) solid var(--docs-border-color,#e2e8f0);border-radius:6px;background:#fff;box-shadow:0 14px 35px rgba(15,23,42,.06);overflow-x:auto;overflow-y:auto;scrollbar-gutter:stable;}' +
       '.documents-table{border-collapse:separate;border-spacing:0;table-layout:fixed;background:#fff;color:#172554;font-size:13px;}' +
       '.documents-table__head th{background:#fff;border-bottom:var(--docs-border-width,1px) solid var(--docs-border-color,#e2e8f0);border-right:var(--docs-border-width,1px) solid var(--docs-border-color,#e2e8f0);color:#0f172a;font-size:12px;font-weight:800;text-align:left;}' +
       '.documents-table__header-row th{height:48px;padding:0 12px;z-index:9;overflow:visible;}' +
@@ -11622,6 +12125,33 @@
       '.documents-template-modal__button--secondary{background:rgba(148,163,184,0.18);color:#0f172a;}' +
       '.documents-template-modal__button:hover:not(:disabled){transform:translateY(-1px);}' +
       '.documents-admin__s3-button{margin-right:8px;}' +
+      '.documents-admin__ocr-button{margin-right:8px;}' +
+      '.documents-ocr-modal{position:fixed;inset:0;z-index:1900;display:none;align-items:center;justify-content:center;padding:16px;background:rgba(15,23,42,0.32);backdrop-filter:blur(10px);}' +
+      '.documents-ocr-modal.is-visible{display:flex;}' +
+      '.documents-ocr-modal__panel{width:min(1180px,calc(100vw - 24px));height:min(820px,calc(100dvh - 24px));overflow:hidden;border-radius:22px;background:linear-gradient(165deg,rgba(255,255,255,.98),rgba(248,250,252,.94));border:1px solid rgba(255,255,255,.95);box-shadow:0 28px 60px rgba(15,23,42,.22);padding:18px;display:grid;grid-template-rows:auto auto minmax(0,1fr) auto;gap:14px;}' +
+      '.documents-ocr-modal__header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;}' +
+      '.documents-ocr-modal__title{margin:0;font-size:20px;font-weight:800;color:#0f172a;}' +
+      '.documents-ocr-modal__subtitle{margin:5px 0 0;color:#64748b;font-size:13px;line-height:1.45;}' +
+      '.documents-ocr-modal__status{display:none;padding:10px 12px;border-radius:12px;font-size:13px;font-weight:700;background:#eff6ff;color:#1d4ed8;}' +
+      '.documents-ocr-modal__status.is-visible{display:block;}' +
+      '.documents-ocr-modal__status--error{background:#fff1f2;color:#b91c1c;}' +
+      '.documents-ocr-modal__status--success{background:#ecfdf5;color:#047857;}' +
+      '.documents-ocr-modal__content{min-height:0;display:grid;grid-template-columns:minmax(420px,1.15fr) minmax(320px,.85fr);gap:14px;}' +
+      '.documents-ocr-modal__table-wrap{min-height:0;overflow:auto;overflow-x:auto;scrollbar-gutter:stable;border:1px solid #e2e8f0;border-radius:14px;background:#fff;}' +
+      '.documents-ocr-modal__table{width:100%;min-width:680px;border-collapse:separate;border-spacing:0;font-size:12px;color:#334155;}' +
+      '.documents-ocr-modal__table th{position:sticky;top:0;z-index:1;padding:9px;background:#f8fafc;border-bottom:1px solid #e2e8f0;color:#475569;text-align:left;font-size:11px;text-transform:uppercase;}' +
+      '.documents-ocr-modal__table td{padding:9px;border-bottom:1px solid #eef2f7;vertical-align:middle;}' +
+      '.documents-ocr-modal__file-name{font-weight:800;color:#0f172a;overflow-wrap:anywhere;}' +
+      '.documents-ocr-modal__file-meta{margin-top:3px;color:#64748b;font-size:11px;}' +
+      '.documents-ocr-modal__run{min-height:32px;border:0;border-radius:9px;padding:0 11px;background:#2563eb;color:#fff;font-size:12px;font-weight:800;white-space:nowrap;cursor:pointer;}' +
+      '.documents-ocr-modal__run:disabled{opacity:.55;cursor:default;}' +
+      '.documents-ocr-modal__result{min-height:0;display:grid;grid-template-rows:auto minmax(0,1fr);border:1px solid #e2e8f0;border-radius:14px;background:#fff;overflow:hidden;}' +
+      '.documents-ocr-modal__result-title{padding:11px 12px;border-bottom:1px solid #e2e8f0;color:#0f172a;font-size:13px;font-weight:900;overflow-wrap:anywhere;}' +
+      '.documents-ocr-modal__textarea{width:100%;height:100%;min-height:220px;resize:none;border:0;outline:0;padding:12px;box-sizing:border-box;background:#f8fafc;color:#0f172a;font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;white-space:pre-wrap;}' +
+      '.documents-ocr-modal__empty{padding:18px;color:#64748b;font-size:13px;text-align:center;}' +
+      '.documents-ocr-modal__actions{display:flex;justify-content:flex-end;gap:10px;}' +
+      '.documents-ocr-modal__button{min-height:38px;border:0;border-radius:11px;padding:0 14px;background:#e2e8f0;color:#0f172a;font-size:13px;font-weight:800;cursor:pointer;}' +
+      '.documents-ocr-modal__button:disabled{opacity:.55;cursor:default;}' +
       '.documents-s3-modal{position:fixed;inset:0;z-index:1900;display:none;align-items:center;justify-content:center;padding:16px;background:rgba(15,23,42,0.32);backdrop-filter:blur(10px);}' +
       '.documents-s3-modal.is-visible{display:flex;}' +
       '.documents-s3-modal__panel{width:min(1320px,calc(100vw - 24px));height:min(920px,calc(100dvh - 24px));max-height:calc(100dvh - 24px);overflow:hidden;border-radius:22px;background:linear-gradient(165deg, rgba(255,255,255,0.96), rgba(248,250,252,0.92));border:1px solid rgba(255,255,255,0.95);box-shadow:0 28px 60px rgba(15,23,42,0.22);padding:18px;display:grid;grid-template-rows:auto auto auto minmax(0,1fr) auto;gap:14px;}' +
@@ -11686,6 +12216,12 @@
       '.documents-template-modal__panel{width:100%;max-height:calc(100vh - 16px);border-radius:20px;padding:14px;}' +
       '.documents-template-modal__actions{display:grid;grid-template-columns:1fr;}' +
       '.documents-template-modal__button{width:100%;}' +
+      '.documents-ocr-modal{padding:8px;align-items:flex-end;}' +
+      '.documents-ocr-modal__panel{width:100%;height:calc(100dvh - 16px);border-radius:20px;padding:14px;}' +
+      '.documents-ocr-modal__header{display:block;}' +
+      '.documents-ocr-modal__content{grid-template-columns:1fr;grid-template-rows:minmax(260px,1fr) minmax(220px,.8fr);}' +
+      '.documents-ocr-modal__actions{display:grid;grid-template-columns:1fr;}' +
+      '.documents-ocr-modal__button{width:100%;}' +
       '.documents-s3-modal{padding:8px;align-items:flex-end;}' +
       '.documents-s3-modal__panel{width:100%;height:calc(100dvh - 16px);max-height:calc(100dvh - 16px);border-radius:20px;padding:14px;}' +
       '.documents-s3-modal__grid{grid-template-columns:repeat(2,minmax(0,1fr));}' +
@@ -11744,6 +12280,10 @@
     var s3Button = createElement('button', 'documents-admin__log-button documents-admin__s3-button', 'S3');
     s3Button.type = 'button';
     headerActions.appendChild(s3Button);
+
+    var ocrButton = createElement('button', 'documents-admin__log-button documents-admin__ocr-button', 'OCR');
+    ocrButton.type = 'button';
+    headerActions.appendChild(ocrButton);
 
     var logButton = createElement('button', 'documents-admin__log-button', 'Журнал мини-приложения');
     logButton.type = 'button';
@@ -11929,6 +12469,49 @@
     s3Modal.appendChild(s3Panel);
     document.body.appendChild(s3Modal);
 
+    var ocrModal = createElement('div', 'documents-ocr-modal');
+    ocrModal.setAttribute('aria-hidden', 'true');
+    var ocrPanel = createElement('div', 'documents-ocr-modal__panel');
+    ocrPanel.setAttribute('role', 'dialog');
+    ocrPanel.setAttribute('aria-modal', 'true');
+    ocrPanel.setAttribute('aria-labelledby', 'documents-ocr-title');
+    var ocrHeader = createElement('div', 'documents-ocr-modal__header');
+    var ocrHeading = createElement('div');
+    var ocrTitle = createElement('h3', 'documents-ocr-modal__title', 'OCR новых файлов задач');
+    ocrTitle.id = 'documents-ocr-title';
+    var ocrSubtitle = createElement('p', 'documents-ocr-modal__subtitle', 'Показаны только задачи, добавленные после запуска отслеживания. PDF и изображения распознаются по одному.');
+    ocrHeading.appendChild(ocrTitle);
+    ocrHeading.appendChild(ocrSubtitle);
+    ocrHeader.appendChild(ocrHeading);
+    var ocrStatus = createElement('div', 'documents-ocr-modal__status');
+    ocrStatus.setAttribute('role', 'status');
+    var ocrContent = createElement('div', 'documents-ocr-modal__content');
+    var ocrTableWrap = createElement('div', 'documents-ocr-modal__table-wrap');
+    var ocrResult = createElement('div', 'documents-ocr-modal__result');
+    var ocrResultTitle = createElement('div', 'documents-ocr-modal__result-title', 'Распознанный текст');
+    var ocrTextarea = document.createElement('textarea');
+    ocrTextarea.className = 'documents-ocr-modal__textarea';
+    ocrTextarea.readOnly = true;
+    ocrTextarea.placeholder = 'Выберите файл и нажмите «Вычислить текст».';
+    ocrResult.appendChild(ocrResultTitle);
+    ocrResult.appendChild(ocrTextarea);
+    ocrContent.appendChild(ocrTableWrap);
+    ocrContent.appendChild(ocrResult);
+    var ocrActions = createElement('div', 'documents-ocr-modal__actions');
+    var ocrCopyButton = createElement('button', 'documents-ocr-modal__button', 'Скопировать текст');
+    ocrCopyButton.type = 'button';
+    ocrCopyButton.disabled = true;
+    var ocrCloseButton = createElement('button', 'documents-ocr-modal__button', 'Закрыть');
+    ocrCloseButton.type = 'button';
+    ocrActions.appendChild(ocrCopyButton);
+    ocrActions.appendChild(ocrCloseButton);
+    ocrPanel.appendChild(ocrHeader);
+    ocrPanel.appendChild(ocrStatus);
+    ocrPanel.appendChild(ocrContent);
+    ocrPanel.appendChild(ocrActions);
+    ocrModal.appendChild(ocrPanel);
+    document.body.appendChild(ocrModal);
+
 
     document.body.appendChild(modal);
 
@@ -11940,6 +12523,14 @@
     adminElements.closeButton = closeButton;
     adminElements.logButton = logButton;
     adminElements.s3Button = s3Button;
+    adminElements.ocrButton = ocrButton;
+    adminElements.ocrModal = ocrModal;
+    adminElements.ocrTableWrap = ocrTableWrap;
+    adminElements.ocrStatus = ocrStatus;
+    adminElements.ocrResultTitle = ocrResultTitle;
+    adminElements.ocrTextarea = ocrTextarea;
+    adminElements.ocrCopyButton = ocrCopyButton;
+    adminElements.ocrCloseButton = ocrCloseButton;
     adminElements.s3Modal = s3Modal;
     adminElements.s3Status = s3Status;
     adminElements.s3Summary = s3Summary;
@@ -11978,6 +12569,10 @@
       openAdminS3Modal();
     });
 
+    ocrButton.addEventListener('click', function() {
+      openAdminOcrModal();
+    });
+
     logButton.addEventListener('click', function() {
       toggleAdminLogPanel();
     });
@@ -12008,6 +12603,28 @@
 
     s3CloseButton.addEventListener('click', function() {
       closeAdminS3Modal();
+    });
+
+    ocrCloseButton.addEventListener('click', function() {
+      closeAdminOcrModal();
+    });
+
+    ocrModal.addEventListener('click', function(event) {
+      if (event.target === ocrModal) {
+        closeAdminOcrModal();
+      }
+    });
+
+    ocrTableWrap.addEventListener('click', function(event) {
+      var button = event.target && event.target.closest ? event.target.closest('[data-ocr-file-key]') : null;
+      if (!button || !ocrTableWrap.contains(button)) {
+        return;
+      }
+      runAdminOcrForFile(button.getAttribute('data-ocr-file-key') || '');
+    });
+
+    ocrCopyButton.addEventListener('click', function() {
+      copyAdminOcrResult();
     });
 
 
@@ -13826,6 +14443,355 @@
     });
   }
 
+  function ensureAdminOcrState() {
+    if (!state.admin.ocr) {
+      state.admin.ocr = {
+        visible: false,
+        files: [],
+        running: '',
+        status: '',
+        statusType: 'info',
+        results: {},
+        selectedResult: '',
+        manualAbortController: null,
+        manualOperationId: 0,
+        baselineStorageKey: '',
+        baselineInitializedAt: '',
+        baselineDocumentKeys: null
+      };
+    }
+    if (!Array.isArray(state.admin.ocr.files)) {
+      state.admin.ocr.files = [];
+    }
+    if (!state.admin.ocr.results || typeof state.admin.ocr.results !== 'object') {
+      state.admin.ocr.results = {};
+    }
+    if (!Object.prototype.hasOwnProperty.call(state.admin.ocr, 'manualAbortController')) {
+      state.admin.ocr.manualAbortController = null;
+    }
+    return state.admin.ocr;
+  }
+
+  function getAdminOcrDocumentKey(documentData) {
+    if (!documentData || typeof documentData !== 'object') {
+      return '';
+    }
+    if (documentData.id !== undefined && documentData.id !== null && String(documentData.id).trim() !== '') {
+      return 'id:' + String(documentData.id).trim();
+    }
+    var fallbackParts = [
+      documentData.entryNumber,
+      documentData.registryNumber,
+      documentData.documentNumber,
+      documentData.createdAt,
+      documentData.registeredAt
+    ].map(function(value) {
+      return value === undefined || value === null ? '' : String(value).trim();
+    });
+    var fallback = fallbackParts.join('|');
+    return fallback.replace(/\|/g, '') ? 'fallback:' + fallback : '';
+  }
+
+  function getAdminOcrBaselineStorageKey() {
+    if (!state.organization) {
+      return '';
+    }
+    return ADMIN_OCR_BASELINE_STORAGE_PREFIX + state.organization + ':' + getAccessProfileKey(state.access);
+  }
+
+  function ensureAdminOcrBaseline() {
+    var ocrState = ensureAdminOcrState();
+    var storageKey = getAdminOcrBaselineStorageKey();
+    if (ocrState.baselineStorageKey === storageKey && ocrState.baselineDocumentKeys) {
+      return ocrState.baselineDocumentKeys;
+    }
+
+    var baselinePayload = null;
+    if (storageKey && typeof window !== 'undefined' && window.localStorage) {
+      try {
+        var storedPayload = window.localStorage.getItem(storageKey);
+        baselinePayload = storedPayload ? JSON.parse(storedPayload) : null;
+      } catch (error) {
+        baselinePayload = null;
+      }
+    }
+
+    var documentKeys = baselinePayload && Array.isArray(baselinePayload.documentKeys)
+      ? baselinePayload.documentKeys
+      : null;
+    var initializedAt = baselinePayload && baselinePayload.initializedAt
+      ? String(baselinePayload.initializedAt)
+      : '';
+    if (!documentKeys) {
+      documentKeys = [];
+      var documents = Array.isArray(state.documents) ? state.documents : [];
+      documents.forEach(function(documentData) {
+        var documentKey = getAdminOcrDocumentKey(documentData);
+        if (documentKey) {
+          documentKeys.push(documentKey);
+        }
+      });
+      initializedAt = new Date().toISOString();
+      if (storageKey && typeof window !== 'undefined' && window.localStorage) {
+        try {
+          window.localStorage.setItem(storageKey, JSON.stringify({
+            initializedAt: initializedAt,
+            documentKeys: documentKeys
+          }));
+        } catch (error) {
+          if (typeof docsLogger.warn === 'function') {
+            docsLogger.warn('Не удалось сохранить границу новых OCR-задач:', error);
+          }
+        }
+      }
+    }
+
+    var keyMap = Object.create(null);
+    documentKeys.forEach(function(documentKey) {
+      var normalizedKey = String(documentKey || '').trim();
+      if (normalizedKey) {
+        keyMap[normalizedKey] = true;
+      }
+    });
+    ocrState.baselineStorageKey = storageKey;
+    ocrState.baselineInitializedAt = initializedAt;
+    ocrState.baselineDocumentKeys = keyMap;
+    return keyMap;
+  }
+
+  function adminOcrFileIsSupported(file) {
+    var extension = getFileExtension(file);
+    return ['pdf', 'png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif', 'tif', 'tiff'].indexOf(extension) !== -1;
+  }
+
+  function collectAdminOcrFiles() {
+    var documents = Array.isArray(state.documents) ? state.documents : [];
+    var baselineDocumentKeys = ensureAdminOcrBaseline();
+    var files = [];
+    documents.forEach(function(documentData, documentIndex) {
+      if (!documentData || !Array.isArray(documentData.files)) {
+        return;
+      }
+      var documentKey = getAdminOcrDocumentKey(documentData);
+      if (!documentKey || baselineDocumentKeys[documentKey]) {
+        return;
+      }
+      var createdAt = documentData.createdAt || documentData.registeredAt || documentData.registrationDate || '';
+      var timestamp = createdAt ? Date.parse(createdAt) : 0;
+      documentData.files.forEach(function(file, fileIndex) {
+        if (!file || typeof file !== 'object') {
+          return;
+        }
+        var name = String(file.originalName || file.name || file.storedName || 'Файл');
+        var url = String(file.url || '');
+        files.push({
+          key: String(documentData.id || documentData.entryNumber || documentIndex) + ':' + fileIndex,
+          name: name,
+          url: url,
+          size: Number(file.size) || 0,
+          supported: adminOcrFileIsSupported(file),
+          taskLabel: String(documentData.registryNumber || documentData.entryNumber || documentData.documentNumber || documentData.id || 'Без номера'),
+          createdAt: createdAt ? String(createdAt) : '',
+          timestamp: isNaN(timestamp) ? 0 : timestamp
+        });
+      });
+    });
+    files.sort(function(left, right) {
+      return right.timestamp - left.timestamp;
+    });
+    return files;
+  }
+
+  function setAdminOcrStatus(text, type) {
+    var ocrState = ensureAdminOcrState();
+    ocrState.status = text || '';
+    ocrState.statusType = type || 'info';
+    if (!adminElements.ocrStatus) {
+      return;
+    }
+    adminElements.ocrStatus.textContent = ocrState.status;
+    adminElements.ocrStatus.className = 'documents-ocr-modal__status';
+    if (ocrState.status) {
+      adminElements.ocrStatus.classList.add('is-visible');
+      if (ocrState.statusType === 'error' || ocrState.statusType === 'success') {
+        adminElements.ocrStatus.classList.add('documents-ocr-modal__status--' + ocrState.statusType);
+      }
+    }
+  }
+
+  function renderAdminOcrFiles() {
+    ensureAdminModal();
+    var ocrState = ensureAdminOcrState();
+    var wrapper = adminElements.ocrTableWrap;
+    if (!wrapper) {
+      return;
+    }
+    wrapper.innerHTML = '';
+    if (!ocrState.files.length) {
+      var sinceLabel = formatAdminLogTimestamp(ocrState.baselineInitializedAt);
+      var emptyText = sinceLabel
+        ? 'Новых задач с файлами после ' + sinceLabel + ' пока нет.'
+        : 'Новых задач с файлами пока нет.';
+      wrapper.appendChild(createElement('div', 'documents-ocr-modal__empty', emptyText));
+      return;
+    }
+    var table = createElement('table', 'documents-ocr-modal__table');
+    table.innerHTML = '<thead><tr><th>Файл</th><th>Задача</th><th>Дата</th><th>Действие</th></tr></thead>';
+    var tbody = document.createElement('tbody');
+    ocrState.files.forEach(function(file) {
+      var row = document.createElement('tr');
+      var fileCell = document.createElement('td');
+      fileCell.appendChild(createElement('div', 'documents-ocr-modal__file-name', file.name));
+      fileCell.appendChild(createElement('div', 'documents-ocr-modal__file-meta', file.size ? formatFileSize(file.size) : getFileExtension(file).toUpperCase()));
+      row.appendChild(fileCell);
+      row.appendChild(createElement('td', '', file.taskLabel));
+      row.appendChild(createElement('td', '', formatAdminLogTimestamp(file.createdAt) || '—'));
+      var actionCell = document.createElement('td');
+      var buttonLabel = ocrState.running === file.key
+        ? 'Вычисляем…'
+        : (ocrState.results[file.key] ? 'Вычислить снова' : 'Вычислить текст');
+      var runButton = createElement('button', 'documents-ocr-modal__run', buttonLabel);
+      runButton.type = 'button';
+      runButton.setAttribute('data-ocr-file-key', file.key);
+      runButton.disabled = Boolean(ocrState.running) || !file.supported || !file.url;
+      if (!file.supported) {
+        runButton.title = 'OCR доступен для PDF и изображений.';
+      } else if (!file.url) {
+        runButton.title = 'У файла отсутствует адрес для загрузки.';
+      }
+      actionCell.appendChild(runButton);
+      row.appendChild(actionCell);
+      tbody.appendChild(row);
+    });
+    table.appendChild(tbody);
+    wrapper.appendChild(table);
+  }
+
+  function selectAdminOcrResult(fileKey) {
+    var ocrState = ensureAdminOcrState();
+    var file = ocrState.files.find(function(item) { return item.key === fileKey; });
+    var text = ocrState.results[fileKey] || '';
+    ocrState.selectedResult = fileKey;
+    if (adminElements.ocrResultTitle) {
+      adminElements.ocrResultTitle.textContent = file ? 'Распознанный текст — ' + file.name : 'Распознанный текст';
+    }
+    if (adminElements.ocrTextarea) {
+      adminElements.ocrTextarea.value = text;
+    }
+    if (adminElements.ocrCopyButton) {
+      adminElements.ocrCopyButton.disabled = !text;
+    }
+  }
+
+  function runAdminOcrForFile(fileKey) {
+    var ocrState = ensureAdminOcrState();
+    if (ocrState.running) {
+      return;
+    }
+    var file = ocrState.files.find(function(item) { return item.key === fileKey; });
+    if (!file || !file.supported || !file.url) {
+      setAdminOcrStatus('Этот файл нельзя передать в OCR.', 'error');
+      return;
+    }
+    ocrState.running = fileKey;
+    ocrState.manualOperationId += 1;
+    var operationId = ocrState.manualOperationId;
+    var abortController = typeof AbortController === 'function' ? new AbortController() : null;
+    ocrState.manualAbortController = abortController;
+    var partialWarning = '';
+    setAdminOcrStatus('Вычисляем текст из файла «' + file.name + '»…', 'info');
+    renderAdminOcrFiles();
+    requestOcrTextForSource({
+      label: file.name,
+      url: file.url,
+      abortController: abortController,
+      onBrowserFallback: function() {
+        setAdminOcrStatus('Серверный OCR недоступен. Распознаём файл в этом браузере…', 'info');
+      },
+      onPartial: function(warning) {
+        partialWarning = String(warning || '').trim();
+      }
+    })
+      .then(function(text) {
+        if (operationId !== ocrState.manualOperationId) {
+          return;
+        }
+        ocrState.results[fileKey] = String(text || '').trim();
+        selectAdminOcrResult(fileKey);
+        if (partialWarning) {
+          setAdminOcrStatus('Текст получен частично. ' + partialWarning, 'info');
+        } else {
+          setAdminOcrStatus('Текст успешно вычислен.', 'success');
+        }
+      })
+      .catch(function(error) {
+        if (operationId !== ocrState.manualOperationId) {
+          return;
+        }
+        setAdminOcrStatus(error && error.message ? error.message : 'Не удалось вычислить текст.', 'error');
+      })
+      .finally(function() {
+        if (operationId === ocrState.manualOperationId) {
+          ocrState.running = '';
+          if (ocrState.manualAbortController === abortController) {
+            ocrState.manualAbortController = null;
+          }
+          renderAdminOcrFiles();
+        }
+      });
+  }
+
+  function copyAdminOcrResult() {
+    var value = adminElements.ocrTextarea ? adminElements.ocrTextarea.value : '';
+    if (!value) {
+      return;
+    }
+    var copyPromise = navigator.clipboard && typeof navigator.clipboard.writeText === 'function'
+      ? navigator.clipboard.writeText(value)
+      : Promise.reject(new Error('clipboard_unavailable'));
+    copyPromise.then(function() {
+      setAdminOcrStatus('Текст скопирован в буфер обмена.', 'success');
+    }).catch(function() {
+      adminElements.ocrTextarea.focus();
+      adminElements.ocrTextarea.select();
+      var copied = document.execCommand && document.execCommand('copy');
+      setAdminOcrStatus(copied ? 'Текст скопирован в буфер обмена.' : 'Выделите текст и скопируйте вручную.', copied ? 'success' : 'error');
+    });
+  }
+
+  function openAdminOcrModal() {
+    ensureAdminModal();
+    var ocrState = ensureAdminOcrState();
+    ocrState.visible = true;
+    ocrState.files = collectAdminOcrFiles();
+    ocrState.status = '';
+    adminElements.ocrModal.classList.add('is-visible');
+    adminElements.ocrModal.setAttribute('aria-hidden', 'false');
+    setAdminOcrStatus('', 'info');
+    renderAdminOcrFiles();
+    if (ocrState.selectedResult) {
+      selectAdminOcrResult(ocrState.selectedResult);
+    }
+  }
+
+  function closeAdminOcrModal(options) {
+    var ocrState = ensureAdminOcrState();
+    ocrState.visible = false;
+    ocrState.manualOperationId += 1;
+    if (ocrState.manualAbortController && typeof ocrState.manualAbortController.abort === 'function') {
+      ocrState.manualAbortController.abort();
+    }
+    ocrState.manualAbortController = null;
+    ocrState.running = '';
+    if (adminElements.ocrModal) {
+      adminElements.ocrModal.classList.remove('is-visible');
+      adminElements.ocrModal.setAttribute('aria-hidden', 'true');
+    }
+    if (!(options && options.skipFocus) && adminElements.ocrButton && typeof adminElements.ocrButton.focus === 'function') {
+      adminElements.ocrButton.focus();
+    }
+  }
+
   function openAdminS3Modal() {
     ensureAdminModal();
     var s3State = ensureAdminS3State();
@@ -14214,8 +15180,10 @@
       ensureAdminUserLogState().visible = false;
       ensureAdminTemplateState().visible = false;
       ensureAdminS3State().visible = false;
+      ensureAdminOcrState().visible = false;
       closeAdminTemplateModal({ skipFocus: true });
       closeAdminS3Modal({ skipFocus: true });
+      closeAdminOcrModal({ skipFocus: true });
       updateAdminLogPanel();
       updateAdminTemplatePanel();
       updateAdminS3Panel();
@@ -14254,9 +15222,11 @@
     ensureAdminUserLogState().visible = false;
     ensureAdminTemplateState().visible = false;
     ensureAdminS3State().visible = false;
+    ensureAdminOcrState().visible = false;
     updateAdminLogPanel();
     closeAdminTemplateModal({ skipFocus: true });
     closeAdminS3Modal({ skipFocus: true });
+    closeAdminOcrModal({ skipFocus: true });
     if (lastFocusedElement && typeof lastFocusedElement.focus === 'function') {
       lastFocusedElement.focus();
     }
@@ -14270,6 +15240,8 @@
         closeAdminTemplateModal();
       } else if (ensureAdminS3State().visible) {
         closeAdminS3Modal();
+      } else if (ensureAdminOcrState().visible) {
+        closeAdminOcrModal();
       } else if (ensureAdminUserLogState().visible) {
         closeAdminLogPanel();
       } else {
@@ -16723,6 +17695,7 @@
     var allowEmptySelection = config.allowEmptySelection === true;
     var lockExistingSelection = config.lockExistingSelection === true;
     var allowComment = config.allowComment === true;
+    var showFieldLabels = config.showFieldLabels === true;
     var isSubordinateEditor = defaultRole === 'subordinate';
     var isSubordinateUser = isSubordinateEditor && isCurrentUserSubordinate();
 
@@ -16944,6 +17917,11 @@
       }
       var selectWrapper = createElement('div', 'documents-assignees__select');
       var select = document.createElement('select');
+      var assigneeFieldLabel = defaultRole === 'subordinate' ? 'Подчинённый' : 'Ответственный';
+      if (showFieldLabels) {
+        selectWrapper.appendChild(createElement('div', 'documents-assignees__field-label', assigneeFieldLabel));
+      }
+      select.setAttribute('aria-label', assigneeFieldLabel);
       selectWrapper.appendChild(select);
       row.appendChild(selectWrapper);
 
@@ -16957,10 +17935,14 @@
       var showDeadline = defaultRole === 'subordinate' || directorEnhanced || allowDeadline;
       if (showComment) {
         commentWrapper = createElement('div', 'documents-assignees__comment');
+        if (showFieldLabels) {
+          commentWrapper.appendChild(createElement('div', 'documents-assignees__field-label', 'Комментарий'));
+        }
         commentInput = document.createElement('textarea');
         commentInput.className = 'documents-assignees__comment-input';
         commentInput.setAttribute('rows', '2');
         commentInput.setAttribute('maxlength', '500');
+        commentInput.setAttribute('aria-label', 'Комментарий к назначению');
         commentInput.placeholder = directorEnhanced ? 'Комментарий для ответственного' : 'Комментарий для подчинённого';
         commentWrapper.appendChild(commentInput);
         row.appendChild(commentWrapper);
@@ -16972,6 +17954,7 @@
         deadlineInput = document.createElement('input');
         deadlineInput.type = 'date';
         deadlineInput.className = 'documents-assignees__deadline-input';
+        deadlineInput.setAttribute('aria-label', 'Срок исполнения назначения');
         deadlineWrapper.appendChild(deadlineInput);
         if (directorEnhanced || (allowDeadline && defaultRole === 'responsible') || !showComment) {
           row.appendChild(deadlineWrapper);
@@ -16986,6 +17969,7 @@
         instructionWrapper.appendChild(instructionLabel);
         instructionSelect = document.createElement('select');
         instructionSelect.className = 'documents-assignees__instruction-select';
+        instructionSelect.setAttribute('aria-label', 'Поручение ответственному');
         instructionWrapper.appendChild(instructionSelect);
         row.appendChild(instructionWrapper);
         if (!directorEnhanced) {
@@ -16997,6 +17981,9 @@
       var statusSelect = null;
       if (allowStatusSelection) {
         statusWrapper = createElement('div', 'documents-assignees__status');
+        if (showFieldLabels) {
+          statusWrapper.appendChild(createElement('div', 'documents-assignees__field-label', 'Статус'));
+        }
         statusSelect = document.createElement('select');
         statusSelect.setAttribute('aria-label', statusAriaLabel);
         statusWrapper.appendChild(statusSelect);
@@ -23552,9 +24539,6 @@
     return postOutgoingRegistryAction(action, payload);
   }
 
-  // OCR на сервере обрабатывает один файл за запрос, поэтому вложения отправляем по одному.
-  var DOCUMENTS_UPLOAD_BATCH_SIZE = 1;
-  var DOCUMENTS_UPLOAD_STEP_DELAY = 0;
   var DOCUMENTS_ATTACHMENT_VISIBLE_LIMIT = 30;
   var DOCUMENTS_ATTACHMENT_MAX_FILE_SIZE = 25 * 1024 * 1024;
   var DOCUMENTS_ATTACHMENT_TOTAL_MAX_SIZE = 120 * 1024 * 1024;
@@ -23638,18 +24622,6 @@
     return errors;
   }
 
-  function splitFilesToBatches(files, batchSize) {
-    if (!Array.isArray(files) || !files.length) {
-      return [];
-    }
-    var size = Math.max(1, Number(batchSize) || DOCUMENTS_UPLOAD_BATCH_SIZE);
-    var batches = [];
-    for (var i = 0; i < files.length; i += size) {
-      batches.push(files.slice(i, i + size));
-    }
-    return batches;
-  }
-
   function ensureDocumentDraftUploadStyle() {
     if (document.getElementById('documents-draft-upload-style')) {
       return;
@@ -23725,6 +24697,357 @@
       '}' +
       '.documents-upload-progress:not(.is-active){' +
       'display:none;' +
+      '}' +
+      '.documents-form__field--correspondent{' +
+      'position:relative;' +
+      '}' +
+      '.documents-correspondent-picker{' +
+      'position:relative;width:100%;' +
+      '}' +
+      '.documents-correspondent-picker__hint{' +
+      'margin-top:6px;color:#64748b;font-size:12px;line-height:1.4;' +
+      '}' +
+      '.documents-correspondent-suggestions{' +
+      'position:absolute;top:calc(100% + 6px);left:0;right:0;z-index:40;max-height:248px;overflow-y:auto;scrollbar-gutter:stable;padding:6px;border:1px solid #cbd8ec;border-radius:12px;background:#fff;box-shadow:0 18px 42px rgba(15,23,42,.18);box-sizing:border-box;' +
+      '}' +
+      '.documents-correspondent-suggestions[hidden]{' +
+      'display:none;' +
+      '}' +
+      '.documents-correspondent-suggestions__caption{' +
+      'padding:5px 8px 7px;color:#64748b;font-size:11px;font-weight:800;line-height:1.3;text-transform:uppercase;letter-spacing:.03em;' +
+      '}' +
+      '.documents-correspondent-suggestions__item{' +
+      'display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;min-height:38px;padding:8px;border:0;border-radius:8px;background:transparent;color:#172554;font:inherit;font-size:13px;font-weight:700;line-height:1.35;text-align:left;cursor:pointer;box-sizing:border-box;' +
+      '}' +
+      '.documents-correspondent-suggestions__item:hover,.documents-correspondent-suggestions__item:focus-visible,.documents-correspondent-suggestions__item.is-active{' +
+      'background:#eff6ff;color:#1d4ed8;outline:none;' +
+      '}' +
+      '.documents-correspondent-suggestions__value{' +
+      'min-width:0;overflow-wrap:anywhere;' +
+      '}' +
+      '.documents-correspondent-suggestions__count{' +
+      'display:inline-flex;align-items:center;justify-content:center;min-width:24px;min-height:22px;padding:2px 7px;border-radius:999px;background:#e0f2fe;color:#0369a1;font-size:11px;font-weight:900;line-height:1;box-sizing:border-box;' +
+      '}' +
+      '.documents-modal--document-form{' +
+      'align-items:stretch;padding:0;background:#e9eef6;box-sizing:border-box;' +
+      '}' +
+      '.documents-modal--document-form .documents-modal__shell--document-form{' +
+      'display:flex;flex-direction:column;width:100%;height:100vh;height:100dvh;max-width:none;max-height:none;margin:0;padding:0;overflow:hidden;border:0;border-radius:0;background:#f4f7fb;box-shadow:none;' +
+      '}' +
+      '.documents-modal--document-form .documents-modal__header{' +
+      'position:relative;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:20px;flex:0 0 auto;min-height:72px;margin:0;padding:10px 20px;border-bottom:1px solid #dce4ef;background:linear-gradient(90deg,#fff 0%,#fff 72%,#f5f9ff 100%);box-shadow:0 1px 3px rgba(15,23,42,.05);box-sizing:border-box;' +
+      '}' +
+      '.documents-document-form__heading{' +
+      'display:flex;align-items:center;gap:12px;min-width:0;' +
+      '}' +
+      '.documents-document-form__heading-icon{' +
+      'display:inline-flex;align-items:center;justify-content:center;width:42px;height:42px;min-width:42px;border:1px solid rgba(147,197,253,.72);border-radius:13px;background:linear-gradient(145deg,#eff6ff,#dbeafe);color:#2563eb;box-shadow:0 7px 18px rgba(37,99,235,.14);' +
+      '}' +
+      '.documents-document-form__heading-icon-svg{' +
+      'width:21px;height:21px;' +
+      '}' +
+      '.documents-document-form__title-wrap{' +
+      'display:grid;gap:4px;min-width:0;' +
+      '}' +
+      '.documents-modal--document-form .documents-modal__title{' +
+      'margin:0;color:#0f172a;font-size:21px;font-weight:800;line-height:1.2;letter-spacing:-.015em;' +
+      '}' +
+      '.documents-document-form__subtitle{' +
+      'display:flex;align-items:center;gap:6px;max-width:760px;margin:0;color:#64748b;font-size:12px;font-weight:500;line-height:1.4;' +
+      '}' +
+      '.documents-document-form__subtitle::before{' +
+      'content:"";display:block;width:5px;height:5px;min-width:5px;border-radius:999px;background:#60a5fa;box-shadow:0 0 0 3px rgba(96,165,250,.13);' +
+      '}' +
+      '.documents-modal--document-form .documents-modal__actions{' +
+      'display:flex;align-items:center;justify-content:flex-end;gap:10px;flex:0 0 auto;' +
+      '}' +
+      '.documents-modal--document-form .documents-modal__actions .documents-button{' +
+      'display:inline-flex;align-items:center;justify-content:center;gap:7px;min-width:116px;min-height:40px;margin:0;padding:0 18px;border-radius:10px;font-size:13px;font-weight:700;box-shadow:none;transition:border-color .16s ease,background .16s ease,color .16s ease,box-shadow .16s ease,transform .16s ease;' +
+      '}' +
+      '.documents-document-form__button-icon{' +
+      'width:15px;height:15px;flex:0 0 auto;' +
+      '}' +
+      '.documents-modal--document-form .documents-modal__actions .documents-button--secondary{' +
+      'border:1px solid #d5deea;background:#fff;color:#334155;' +
+      '}' +
+      '.documents-modal--document-form .documents-modal__actions .documents-button--primary{' +
+      'border:1px solid #1d4ed8;background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;box-shadow:0 8px 18px rgba(37,99,235,.2);' +
+      '}' +
+      '.documents-modal--document-form .documents-modal__actions .documents-button:hover:not(:disabled),' +
+      '.documents-modal--document-form .documents-modal__actions .documents-button:focus-visible:not(:disabled){' +
+      'outline:none;box-shadow:0 0 0 3px rgba(37,99,235,.12),0 8px 18px rgba(37,99,235,.16);transform:translateY(-1px);' +
+      '}' +
+      '.documents-modal--document-form .documents-modal__actions .documents-button:disabled{' +
+      'opacity:.62;cursor:wait;' +
+      '}' +
+      '.documents-document-form{' +
+      'display:grid;grid-template-columns:repeat(12,minmax(0,1fr));grid-template-rows:minmax(0,.96fr) minmax(0,1.04fr);gap:14px;align-content:stretch;align-items:stretch;flex:1 1 auto;min-height:0;margin:0;padding:14px 16px calc(16px + env(safe-area-inset-bottom));overflow:hidden;background:radial-gradient(circle at 8% 0%,rgba(219,234,254,.72),transparent 28%),radial-gradient(circle at 96% 100%,rgba(224,231,255,.6),transparent 30%),#f4f7fb;box-sizing:border-box;' +
+      '}' +
+      '.documents-document-form__section{' +
+      'position:relative;display:flex;flex-direction:column;min-width:0;min-height:0;padding:16px;border:1px solid rgba(219,227,239,.96);border-radius:15px;background:rgba(255,255,255,.96);box-shadow:0 8px 24px rgba(15,23,42,.065),inset 0 1px 0 rgba(255,255,255,.9);overflow:hidden;box-sizing:border-box;transition:border-color .18s ease,box-shadow .18s ease,transform .18s ease;' +
+      '}' +
+      '.documents-document-form__section::after{' +
+      'content:"";position:absolute;top:0;left:16px;right:16px;height:3px;border-radius:0 0 999px 999px;background:linear-gradient(90deg,#60a5fa,#2563eb);opacity:.82;' +
+      '}' +
+      '.documents-document-form__section--execution::after{' +
+      'background:linear-gradient(90deg,#c084fc,#7e22ce);' +
+      '}' +
+      '.documents-document-form__section--files::after{' +
+      'background:linear-gradient(90deg,#67e8f9,#0891b2);' +
+      '}' +
+      '.documents-document-form__section--details::after{' +
+      'background:linear-gradient(90deg,#fdba74,#ea580c);' +
+      '}' +
+      '.documents-document-form__section:hover{' +
+      'border-color:#d3deed;box-shadow:0 11px 30px rgba(15,23,42,.085),inset 0 1px 0 rgba(255,255,255,.9);transform:translateY(-1px);' +
+      '}' +
+      '.documents-document-form__section:focus-within{' +
+      'border-color:#b7cff7;box-shadow:0 12px 32px rgba(37,99,235,.11),0 0 0 3px rgba(59,130,246,.07);transform:translateY(-1px);' +
+      '}' +
+      '.documents-document-form__section--registration{' +
+      'grid-column:span 7;' +
+      '}' +
+      '.documents-document-form__section--execution{' +
+      'grid-column:span 7;' +
+      '}' +
+      '.documents-document-form__section--files{' +
+      'grid-column:span 5;' +
+      '}' +
+      '.documents-document-form__section--details{' +
+      'grid-column:span 5;' +
+      '}' +
+      '.documents-document-form__section-header{' +
+      'display:flex;align-items:flex-start;gap:10px;flex:0 0 auto;margin-bottom:12px;padding-bottom:11px;border-bottom:1px solid #edf1f6;' +
+      '}' +
+      '.documents-document-form__section-header::before{' +
+      'content:"";display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;min-width:28px;border:1px solid rgba(191,219,254,.8);border-radius:9px;background:#eff6ff;color:#2563eb;font-size:10px;font-weight:800;line-height:1;box-shadow:0 5px 12px rgba(37,99,235,.09);box-sizing:border-box;' +
+      '}' +
+      '.documents-document-form__section--registration .documents-document-form__section-header::before{content:"01";}' +
+      '.documents-document-form__section--execution .documents-document-form__section-header::before{content:"02";background:#f3e8ff;color:#7e22ce;}' +
+      '.documents-document-form__section--files .documents-document-form__section-header::before{content:"03";background:#ecfeff;color:#0e7490;}' +
+      '.documents-document-form__section--details .documents-document-form__section-header::before{content:"04";background:#fff7ed;color:#c2410c;}' +
+      '.documents-document-form__section-copy{' +
+      'display:grid;gap:2px;min-width:0;' +
+      '}' +
+      '.documents-document-form__section-title{' +
+      'margin:0;color:#172033;font-size:14px;font-weight:800;line-height:1.3;' +
+      '}' +
+      '.documents-document-form__section-description{' +
+      'margin:0;color:#718096;font-size:11px;font-weight:500;line-height:1.35;' +
+      '}' +
+      '.documents-document-form__grid--registration,' +
+      '.documents-document-form__grid--execution,' +
+      '.documents-document-form__files,' +
+      '.documents-document-form__areas{' +
+      'flex:1 1 auto;min-width:0;min-height:0;overflow-x:hidden;overflow-y:auto;scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:#cbd5e1 transparent;padding:1px 3px 2px 1px;' +
+      '}' +
+      '.documents-document-form__grid--registration{' +
+      'display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:9px 11px;align-items:start;' +
+      '}' +
+      '.documents-document-form__grid--execution{' +
+      'display:grid;grid-template-columns:minmax(0,1fr);gap:10px;align-items:start;' +
+      '}' +
+      '.documents-document-form__files{' +
+      'display:grid;grid-template-columns:minmax(0,1fr);align-items:start;' +
+      '}' +
+      '.documents-document-form__areas{' +
+      'display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 12px;align-items:start;' +
+      '}' +
+      '.documents-modal--document-form .documents-form__field{' +
+      'display:flex;grid-column:span 3;flex-direction:column;gap:6px;min-width:0;margin:0;' +
+      '}' +
+      '.documents-modal--document-form .documents-form__field--span-2{grid-column:span 2;}' +
+      '.documents-modal--document-form .documents-form__field--span-3{grid-column:span 3;}' +
+      '.documents-modal--document-form .documents-form__field--span-4{grid-column:span 4;}' +
+      '.documents-modal--document-form .documents-form__field--span-5{grid-column:span 5;}' +
+      '.documents-modal--document-form .documents-form__field--span-6{grid-column:span 6;}' +
+      '.documents-modal--document-form .documents-form__field--span-7{grid-column:span 7;}' +
+      '.documents-modal--document-form .documents-form__field--span-9{grid-column:span 9;}' +
+      '.documents-modal--document-form .documents-form__field--span-12{grid-column:1 / -1;}' +
+      '.documents-modal--document-form .documents-form__field--assignees,' +
+      '.documents-modal--document-form .documents-form__field--file{' +
+      'padding-top:0;border-top:0;' +
+      '}' +
+      '.documents-modal--document-form .documents-form__field--correspondent{' +
+      'grid-column:span 3;' +
+      '}' +
+      '.documents-modal--document-form .documents-form__field--assignees{' +
+      'grid-column:1 / -1;' +
+      '}' +
+      '.documents-modal--document-form .documents-form__field--overall-due-date{' +
+      'grid-column:1 / -1;padding-top:0;border-top:0;' +
+      '}' +
+      '.documents-modal--document-form .documents-form__field > label,' +
+      '.documents-modal--document-form .documents-form__group-label{' +
+      'margin:0;color:#475569;font-size:11.5px;font-weight:700;line-height:1.3;' +
+      '}' +
+      '.documents-modal--document-form .documents-form__field > input:not([type="file"]),' +
+      '.documents-modal--document-form .documents-form__field > select,' +
+      '.documents-modal--document-form .documents-correspondent-picker > input,' +
+      '.documents-modal--document-form .documents-form__field > textarea{' +
+      'width:100%;min-width:0;min-height:40px;margin:0;border:1px solid #cbd5e1;border-radius:9px;background:#fbfdff;color:#0f172a;padding:0 11px;font:inherit;font-size:13px;font-weight:500;line-height:1.4;box-shadow:inset 0 1px 2px rgba(15,23,42,.035);box-sizing:border-box;transition:border-color .16s ease,box-shadow .16s ease,background .16s ease;' +
+      '}' +
+      '.documents-modal--document-form .documents-form__field > textarea{' +
+      'min-height:90px;padding:9px 11px;resize:vertical;' +
+      '}' +
+      '.documents-modal--document-form .documents-form__field input::placeholder,' +
+      '.documents-modal--document-form .documents-form__field textarea::placeholder{' +
+      'color:#94a3b8;font-weight:500;opacity:1;' +
+      '}' +
+      '.documents-modal--document-form .documents-form__field input:hover:not(:disabled),' +
+      '.documents-modal--document-form .documents-form__field select:hover:not(:disabled),' +
+      '.documents-modal--document-form .documents-form__field textarea:hover:not(:disabled){' +
+      'border-color:#94a3b8;' +
+      '}' +
+      '.documents-modal--document-form .documents-form__field input:focus,' +
+      '.documents-modal--document-form .documents-form__field select:focus,' +
+      '.documents-modal--document-form .documents-form__field textarea:focus{' +
+      'border-color:#3b82f6;background:#fff;box-shadow:0 0 0 3px rgba(59,130,246,.12);outline:none;' +
+      '}' +
+      '.documents-modal--document-form .documents-form__field input:disabled,' +
+      '.documents-modal--document-form .documents-form__field select:disabled,' +
+      '.documents-modal--document-form .documents-form__field textarea:disabled{' +
+      'border-color:#e2e8f0;background:#f1f5f9;color:#94a3b8;cursor:not-allowed;' +
+      '}' +
+      '.documents-modal--document-form .documents-correspondent-picker__hint{' +
+      'margin-top:4px;color:#718096;font-size:10px;font-weight:500;line-height:1.35;' +
+      '}' +
+      '.documents-modal--document-form .documents-assignees{' +
+      'display:grid;gap:10px;min-width:0;' +
+      '}' +
+      '.documents-modal--document-form .documents-assignees__list{' +
+      'display:grid;gap:10px;min-width:0;' +
+      '}' +
+      '.documents-modal--document-form .documents-assignees__row{' +
+      'display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 10px;align-items:end;min-width:0;padding:10px;border:1px solid #e2e8f0;border-radius:11px;background:#f8fafc;box-sizing:border-box;transition:border-color .16s ease,background .16s ease,box-shadow .16s ease;' +
+      '}' +
+      '.documents-modal--document-form .documents-assignees__row:focus-within{' +
+      'border-color:#bfdbfe;background:#fbfdff;box-shadow:0 0 0 3px rgba(59,130,246,.07);' +
+      '}' +
+      '.documents-modal--document-form .documents-assignees__select,' +
+      '.documents-modal--document-form .documents-assignees__comment,' +
+      '.documents-modal--document-form .documents-assignees__deadline,' +
+      '.documents-modal--document-form .documents-assignees__instruction,' +
+      '.documents-modal--document-form .documents-assignees__status{' +
+      'display:grid;gap:6px;min-width:0;margin:0;' +
+      '}' +
+      '.documents-modal--document-form .documents-assignees__comment{' +
+      'grid-column:span 2;' +
+      '}' +
+      '.documents-modal--document-form .documents-assignees__field-label,' +
+      '.documents-modal--document-form .documents-assignees__deadline-label,' +
+      '.documents-modal--document-form .documents-assignees__instruction-label{' +
+      'color:#64748b;font-size:10px;font-weight:700;line-height:1.25;' +
+      '}' +
+      '.documents-modal--document-form .documents-assignees select,' +
+      '.documents-modal--document-form .documents-assignees input,' +
+      '.documents-modal--document-form .documents-assignees textarea{' +
+      'width:100%;min-width:0;min-height:40px;margin:0;border:1px solid #cbd5e1;border-radius:8px;background:#fff;color:#0f172a;padding:0 10px;font:inherit;font-size:13px;font-weight:500;box-sizing:border-box;' +
+      '}' +
+      '.documents-modal--document-form .documents-assignees textarea{' +
+      'min-height:58px;padding:8px 10px;resize:vertical;font-weight:500;' +
+      '}' +
+      '.documents-modal--document-form .documents-assignees select:focus,' +
+      '.documents-modal--document-form .documents-assignees input:focus,' +
+      '.documents-modal--document-form .documents-assignees textarea:focus{' +
+      'border-color:#2563eb;box-shadow:0 0 0 2px rgba(37,99,235,.11);outline:none;' +
+      '}' +
+      '.documents-modal--document-form .documents-assignees__remove{' +
+      'display:inline-flex;align-items:center;justify-content:center;justify-self:end;min-width:82px;min-height:38px;margin:0;border:1px solid #fecaca;border-radius:8px;background:#fff;color:#dc2626;padding:0 11px;font:inherit;font-size:12px;font-weight:700;cursor:pointer;' +
+      '}' +
+      '.documents-modal--document-form .documents-assignees__remove:hover:not(:disabled),' +
+      '.documents-modal--document-form .documents-assignees__remove:focus-visible:not(:disabled){' +
+      'border-color:#fca5a5;background:#fef2f2;outline:none;' +
+      '}' +
+      '.documents-modal--document-form .documents-assignees__remove:disabled{' +
+      'border-color:#e2e8f0;background:#f8fafc;color:#94a3b8;cursor:not-allowed;' +
+      '}' +
+      '.documents-modal--document-form .documents-assignees__add{' +
+      'display:inline-flex;align-items:center;justify-content:center;justify-self:start;min-height:38px;margin:0;border:1px solid #bfdbfe;border-radius:8px;background:#eff6ff;color:#1d4ed8;padding:0 14px;font:inherit;font-size:12px;font-weight:700;cursor:pointer;' +
+      '}' +
+      '.documents-modal--document-form .documents-assignees__add:hover,' +
+      '.documents-modal--document-form .documents-assignees__add:focus-visible{' +
+      'background:#dbeafe;outline:none;' +
+      '}' +
+      '.documents-modal--document-form .documents-assignee__hint{' +
+      'grid-column:1 / -1;color:#64748b;font-size:11px;font-weight:600;line-height:1.4;' +
+      '}' +
+      '.documents-modal--document-form .documents-form__field--file{' +
+      'grid-column:1 / -1;gap:7px;' +
+      '}' +
+      '.documents-modal--document-form .documents-file{' +
+      'display:grid;gap:9px;min-width:0;padding:12px;border:1px dashed #93b4e8;border-radius:11px;background:linear-gradient(145deg,#f8fbff,#f1f7ff);box-sizing:border-box;transition:border-color .16s ease,background .16s ease,box-shadow .16s ease;' +
+      '}' +
+      '.documents-modal--document-form .documents-file:hover,.documents-modal--document-form .documents-file:focus-within{' +
+      'border-color:#3b82f6;background:#f5f9ff;box-shadow:0 0 0 3px rgba(59,130,246,.08);' +
+      '}' +
+      '.documents-modal--document-form .documents-file-input{' +
+      'display:block;width:100%;min-width:0;min-height:44px;margin:0;border:1px solid #cbd5e1;border-radius:8px;background:#fff;color:#475569;padding:5px;font:inherit;font-size:12px;font-weight:600;box-sizing:border-box;cursor:pointer;' +
+      '}' +
+      '.documents-modal--document-form .documents-file-input::file-selector-button{' +
+      'min-height:32px;margin:0 10px 0 0;border:0;border-radius:6px;background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;padding:0 13px;font:inherit;font-size:12px;font-weight:700;box-shadow:0 5px 12px rgba(37,99,235,.18);cursor:pointer;transition:background .16s ease,box-shadow .16s ease;' +
+      '}' +
+      '.documents-modal--document-form .documents-file-input:hover::file-selector-button{' +
+      'background:linear-gradient(135deg,#1d4ed8,#1e40af);box-shadow:0 7px 15px rgba(37,99,235,.24);' +
+      '}' +
+      '.documents-modal--document-form .documents-file__meta{' +
+      'display:grid;gap:10px;min-width:0;' +
+      '}' +
+      '.documents-modal--document-form .documents-file__hint{' +
+      'margin:0;color:#52627a;font-size:11px;font-weight:600;line-height:1.4;' +
+      '}' +
+      '.documents-modal--document-form .documents-file__summary{' +
+      'display:grid;gap:8px;min-width:0;' +
+      '}' +
+      '.documents-modal--document-form .documents-file__summary--empty{' +
+      'padding:7px 9px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;color:#64748b;font-size:11px;font-weight:600;' +
+      '}' +
+      '.documents-modal--document-form .documents-document-form__areas .documents-form__field{' +
+      'grid-column:auto;' +
+      '}' +
+      '.documents-modal--document-form .documents-document-form__areas .documents-form__field--wide{' +
+      'grid-column:1 / -1;' +
+      '}' +
+      '.documents-modal--document-form .documents-form__field--wide textarea{' +
+      'min-height:96px;' +
+      '}' +
+      '@media (max-width:1100px){' +
+      '.documents-document-form{display:block;padding:14px 16px calc(18px + env(safe-area-inset-bottom));overflow-x:hidden;overflow-y:auto;scrollbar-gutter:stable;}' +
+      '.documents-document-form__section{min-height:auto;margin-bottom:14px;overflow:visible;}' +
+      '.documents-document-form__section:last-child{margin-bottom:0;}' +
+      '.documents-document-form__grid--registration,.documents-document-form__grid--execution,.documents-document-form__files,.documents-document-form__areas{min-height:auto;overflow:visible;padding:1px;}' +
+      '.documents-document-form__grid--registration{grid-template-columns:repeat(2,minmax(0,1fr));}' +
+      '.documents-modal--document-form .documents-document-form__grid--registration .documents-form__field{grid-column:span 1;}' +
+      '.documents-modal--document-form .documents-form__field--assignees,' +
+      '.documents-modal--document-form .documents-form__field--file,' +
+      '.documents-modal--document-form .documents-form__field--wide{grid-column:1 / -1;}' +
+      '.documents-modal--document-form .documents-form__field--overall-due-date{grid-column:1 / -1;}' +
+      '}' +
+      '@media (max-width:900px){' +
+      '.documents-document-form__areas{grid-template-columns:minmax(0,1fr);}' +
+      '.documents-modal--document-form .documents-document-form__areas .documents-form__field{grid-column:1;}' +
+      '}' +
+      '@media (max-width:720px){' +
+      '.documents-modal--document-form .documents-modal__header{flex-direction:column;gap:14px;padding:16px;}' +
+      '.documents-modal--document-form .documents-modal__title{font-size:19px;}' +
+      '.documents-modal--document-form .documents-modal__actions{width:100%;}' +
+      '.documents-modal--document-form .documents-modal__actions .documents-button{flex:1 1 0;min-width:0;}' +
+      '.documents-document-form{padding:12px 10px calc(16px + env(safe-area-inset-bottom));}' +
+      '.documents-document-form__section{margin-bottom:10px;padding:13px 12px;border-radius:12px;}' +
+      '.documents-document-form__section-header{gap:9px;margin-bottom:11px;padding-bottom:10px;}' +
+      '.documents-document-form__section-header::before{width:26px;height:26px;min-width:26px;border-radius:8px;}' +
+      '.documents-document-form__grid--registration{grid-template-columns:minmax(0,1fr);}' +
+      '.documents-modal--document-form .documents-form__field,' +
+      '.documents-modal--document-form .documents-document-form__grid--registration .documents-form__field,' +
+      '.documents-modal--document-form .documents-form__field--correspondent,' +
+      '.documents-modal--document-form .documents-form__field--assignees,' +
+      '.documents-modal--document-form .documents-form__field--overall-due-date,' +
+      '.documents-modal--document-form .documents-form__field--file,' +
+      '.documents-modal--document-form .documents-form__field--wide{grid-column:1;}' +
+      '.documents-modal--document-form .documents-assignees__row{grid-template-columns:minmax(0,1fr);padding:10px;}' +
+      '.documents-modal--document-form .documents-assignees__comment{grid-column:1;}' +
+      '.documents-modal--document-form .documents-assignees__remove,.documents-modal--document-form .documents-assignees__add{width:100%;justify-self:stretch;}' +
+      '.documents-correspondent-suggestions{max-height:210px;}' +
       '}';
     document.head.appendChild(style);
   }
@@ -24051,36 +25374,6 @@
     };
   }
 
-  function delay(ms) {
-    return new Promise(function(resolve) {
-      setTimeout(resolve, Math.max(0, Number(ms) || 0));
-    });
-  }
-
-  function waitForBrowserFrame() {
-    return new Promise(function(resolve) {
-      if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
-        window.requestAnimationFrame(function() {
-          resolve();
-        });
-        return;
-      }
-      setTimeout(resolve, 0);
-    });
-  }
-
-  function runSequentialUploadStep(stepFactory) {
-    return Promise.resolve().then(stepFactory).then(function(result) {
-      return waitForBrowserFrame()
-        .then(function() {
-          return DOCUMENTS_UPLOAD_STEP_DELAY > 0 ? delay(DOCUMENTS_UPLOAD_STEP_DELAY) : null;
-        })
-        .then(function() {
-          return result;
-        });
-    });
-  }
-
   function resolveDocumentsCollection(payload) {
     if (!payload || payload.documents === undefined || payload.documents === null) {
       return [];
@@ -24298,6 +25591,10 @@
     refreshDocumentTabsIfNeeded();
     updateClockUserDisplay();
     updateTable();
+    if (state.admin && state.admin.ocr && state.admin.ocr.visible) {
+      state.admin.ocr.files = collectAdminOcrFiles();
+      renderAdminOcrFiles();
+    }
     syncRealtimeRegistryMetaSignature(data);
     syncRealtimeRegistrySignature();
     return state.documents;
@@ -28400,6 +29697,7 @@
         state.registryLoaded = true;
         state.registryLoadError = '';
         var documents = updateStateFromPayload(data);
+        ensureAdminOcrBaseline();
         var summary = {
           count: documents.length
         };
@@ -29263,36 +30561,22 @@
       addButton.disabled = true;
       aiButton.disabled = true;
       closeButton.disabled = true;
-      var uploadBatches = pendingFiles.length
-        ? splitFilesToBatches(pendingFiles, DOCUMENTS_UPLOAD_BATCH_SIZE)
-        : [[]];
+      var formData = new FormData();
+      formData.append('action', 'response_upload');
+      formData.append('organization', state.organization);
+      formData.append('documentId', currentDoc.id);
+      if (responseMessage) {
+        formData.append('responseMessage', responseMessage);
+      }
+      pendingFiles.forEach(function(file) {
+        formData.append('attachments[]', file);
+      });
+      appendTelegramUserIdToFormData(formData);
       var latestData = null;
-      return uploadBatches.reduce(function(chain, batch, batchIndex) {
-        return chain.then(function() {
-          return runSequentialUploadStep(function() {
-            var formData = new FormData();
-            formData.append('action', 'response_upload');
-            formData.append('organization', state.organization);
-            formData.append('documentId', currentDoc.id);
-            if (responseMessage && batchIndex === 0) {
-              formData.append('responseMessage', responseMessage);
-            }
-            batch.forEach(function(file) {
-              formData.append('attachments[]', file);
-            });
-            appendTelegramUserIdToFormData(formData);
-            return uploadFormDataWithProgress(buildApiUrl('response_upload', { organization: state.organization }), formData)
-              .then(function(data) {
-                latestData = data;
-                return data;
-              });
-          });
-        });
-      }, Promise.resolve())
-        .then(function() {
-          if (latestData) {
-            updateStateFromPayload(latestData);
-          }
+      return uploadFormDataWithProgress(buildApiUrl('response_upload', { organization: state.organization }), formData)
+        .then(function(data) {
+          latestData = data;
+          updateStateFromPayload(data);
           pendingFiles = [];
           messageInput.value = '';
           editingResponse = null;
@@ -29862,9 +31146,33 @@
       ensureDocumentDraftUploadStyle();
       var modal = createElement('div', 'documents-modal');
       modal.classList.add('documents-modal--document-form');
-      var shell = createElement('div', 'documents-modal__shell');
-      var title = createElement('h3', 'documents-modal__title', 'Добавить документ');
-      var form = createElement('form', 'documents-form');
+      modal.setAttribute('role', 'dialog');
+      modal.setAttribute('aria-modal', 'true');
+      var shell = createElement('div', 'documents-modal__shell documents-modal__shell--document-form');
+      var titleWrap = createElement('div', 'documents-document-form__title-wrap');
+      var title = createElement(
+        'h3',
+        'documents-modal__title',
+        isEditMode ? 'Редактировать документ' : 'Добавить документ'
+      );
+      title.id = 'documents-document-form-title';
+      modal.setAttribute('aria-labelledby', title.id);
+      var subtitle = createElement(
+        'p',
+        'documents-document-form__subtitle',
+        isEditMode
+          ? 'Проверьте реквизиты, исполнителей и файлы перед сохранением.'
+          : 'Заполните обязательные поля, назначьте директора и прикрепите файлы.'
+      );
+      titleWrap.appendChild(title);
+      titleWrap.appendChild(subtitle);
+      var heading = createElement('div', 'documents-document-form__heading');
+      var headingIcon = createElement('span', 'documents-document-form__heading-icon');
+      headingIcon.appendChild(createSvgIcon('file-plus', 'documents-document-form__heading-icon-svg'));
+      heading.appendChild(headingIcon);
+      heading.appendChild(titleWrap);
+
+      var form = createElement('form', 'documents-form documents-document-form');
       var formId = 'documents-form-' + Date.now();
       form.id = formId;
       form.setAttribute('autocomplete', 'off');
@@ -29872,6 +31180,7 @@
 
       var cancelButton = createElement('button', 'documents-button documents-button--secondary', 'Отмена');
       cancelButton.type = 'button';
+      cancelButton.insertBefore(createSvgIcon('x', 'documents-document-form__button-icon'), cancelButton.firstChild);
       cancelButton.addEventListener('click', function() {
         closeModal(modal);
       });
@@ -29879,19 +31188,71 @@
       var submitButton = createElement(
         'button',
         'documents-button documents-button--primary',
-        isEditMode ? 'Сохранить' : 'Добавить'
+        isEditMode ? 'Сохранить изменения' : 'Создать документ'
       );
       submitButton.type = 'submit';
       submitButton.setAttribute('form', formId);
+      submitButton.insertBefore(createSvgIcon('check', 'documents-document-form__button-icon'), submitButton.firstChild);
 
       var header = createElement('div', 'documents-modal__header documents-modal__header--compact');
       var actions = createElement('div', 'documents-modal__actions');
       actions.appendChild(cancelButton);
       actions.appendChild(submitButton);
-      header.appendChild(title);
+      header.appendChild(heading);
       header.appendChild(actions);
 
-      var grid = createElement('div', 'documents-form__grid');
+      function createDocumentFormSection(sectionKey, sectionTitle, description, bodyClassName) {
+        var section = createElement(
+          'section',
+          'documents-document-form__section documents-document-form__section--' + sectionKey
+        );
+        var sectionHeader = createElement('div', 'documents-document-form__section-header');
+        var sectionCopy = createElement('div', 'documents-document-form__section-copy');
+        var heading = createElement('h4', 'documents-document-form__section-title', sectionTitle);
+        var descriptionNode = createElement('p', 'documents-document-form__section-description', description);
+        var body = createElement('div', bodyClassName || '');
+        heading.id = formId + '-section-' + sectionKey + '-title';
+        descriptionNode.id = formId + '-section-' + sectionKey + '-description';
+        section.setAttribute('aria-labelledby', heading.id);
+        section.setAttribute('aria-describedby', descriptionNode.id);
+        sectionCopy.appendChild(heading);
+        sectionCopy.appendChild(descriptionNode);
+        sectionHeader.appendChild(sectionCopy);
+        section.appendChild(sectionHeader);
+        section.appendChild(body);
+        return {
+          element: section,
+          body: body
+        };
+      }
+
+      var registrationSection = createDocumentFormSection(
+        'registration',
+        'Реквизиты документа',
+        'Номер, тип, даты и участники переписки. Поля со звёздочкой обязательны.',
+        'documents-form__grid documents-document-form__grid--registration'
+      );
+      var executionSection = createDocumentFormSection(
+        'execution',
+        'Исполнение и контроль',
+        'Назначьте ответственных, поручения и срок исполнения.',
+        'documents-form__grid documents-document-form__grid--execution'
+      );
+      var filesSection = createDocumentFormSection(
+        'files',
+        'Файлы',
+        'Добавьте письмо и приложения. Можно выбрать несколько файлов или вставить их из буфера.',
+        'documents-document-form__files'
+      );
+      var detailsSection = createDocumentFormSection(
+        'details',
+        'Содержание и комментарии',
+        'Кратко опишите суть письма, резолюцию и внутренние заметки.',
+        'documents-form__areas documents-document-form__areas'
+      );
+      var grid = registrationSection.body;
+      var executionGrid = executionSection.body;
+      var formFieldSequence = 0;
 
       function addField(options) {
         var field = createElement('div', 'documents-form__field');
@@ -29910,7 +31271,10 @@
           input = document.createElement('input');
           input.type = options.type || 'text';
         }
+        formFieldSequence += 1;
+        input.id = formId + '-field-' + formFieldSequence;
         input.name = options.name;
+        label.htmlFor = input.id;
         if (options.required) {
           input.required = true;
         }
@@ -29938,6 +31302,7 @@
       grid.appendChild(directionField.field);
 
       var correspondentField = addField({ name: 'correspondent', label: 'Отправитель / получатель *', required: true });
+      attachCorrespondentSuggestions(correspondentField);
       grid.appendChild(correspondentField.field);
 
       var documentNumberField = addField({ name: 'document_number', label: 'Номер документа', placeholder: 'Например, № 45/1' });
@@ -29975,8 +31340,11 @@
       }
       grid.appendChild(directorField.field);
 
-      var assigneesField = createElement('div', 'documents-form__field');
-      var assigneesLabel = createElement('label', '', 'Ответственные');
+      var assigneesField = createElement('div', 'documents-form__field documents-form__field--assignees');
+      var assigneesLabel = createElement('div', 'documents-form__group-label', 'Ответственные');
+      assigneesLabel.id = formId + '-assignees-label';
+      assigneesField.setAttribute('role', 'group');
+      assigneesField.setAttribute('aria-labelledby', assigneesLabel.id);
       assigneesField.appendChild(assigneesLabel);
       var currentAssignees = [];
       var preservedSubordinates = [];
@@ -29996,12 +31364,13 @@
           }
         }
       }
-      var assigneesEditor = createAssigneesEditor(currentAssignees);
+      var assigneesEditor = createAssigneesEditor(currentAssignees, { showFieldLabels: true });
       assigneesField.appendChild(assigneesEditor.element);
-      grid.appendChild(assigneesField);
+      executionGrid.appendChild(assigneesField);
 
       var dueDateField = addField({ name: 'due_date', label: 'Срок исполнения', type: 'date' });
-      grid.appendChild(dueDateField.field);
+      dueDateField.field.classList.add('documents-form__field--overall-due-date');
+      executionGrid.appendChild(dueDateField.field);
 
       var attachmentsField = addField({ name: 'attachments[]', label: 'Файлы', type: 'file' });
       attachmentsField.input.multiple = true;
@@ -30680,11 +32049,9 @@
       attachmentsWrapper.addEventListener('paste', handleAttachmentsPaste);
       attachmentsField.input.addEventListener('paste', handleAttachmentsPaste);
 
-      grid.appendChild(attachmentsField.field);
+      filesSection.body.appendChild(attachmentsField.field);
 
-      form.appendChild(grid);
-
-      var areas = createElement('div', 'documents-form__areas');
+      var areas = detailsSection.body;
 
       var summaryField = addField({ name: 'summary', label: 'Содержание', type: 'textarea' });
       summaryField.field.classList.add('documents-form__field--wide');
@@ -30696,7 +32063,10 @@
       var notesField = addField({ name: 'notes', label: 'Примечания', type: 'textarea' });
       areas.appendChild(notesField.field);
 
-      form.appendChild(areas);
+      form.appendChild(registrationSection.element);
+      form.appendChild(detailsSection.element);
+      form.appendChild(executionSection.element);
+      form.appendChild(filesSection.element);
 
       function fillFieldsFromForm() {
         return {
@@ -30812,12 +32182,6 @@
         updateUploadProgress(5, 'Подготавливаем данные формы…', 'is-stage-preparing');
         var formData = new FormData();
         var attachmentFiles = attachmentsStore.slice();
-        var initialCreateAttachmentFiles = !isEditMode && attachmentFiles.length
-          ? attachmentFiles.slice(0, DOCUMENTS_UPLOAD_BATCH_SIZE)
-          : [];
-        var remainingCreateAttachmentFiles = !isEditMode && attachmentFiles.length > initialCreateAttachmentFiles.length
-          ? attachmentFiles.slice(initialCreateAttachmentFiles.length)
-          : [];
         var attachmentErrors = validateAttachmentFiles(attachmentFiles, existingAttachments.filter(function(file) {
           var keys = collectAttachmentKeys(file);
           if (!keys.length) {
@@ -30905,6 +32269,9 @@
               formData.append('filesRemaining[]', key);
             });
           }
+          attachmentFiles.forEach(function(file) {
+            formData.append('attachments[]', file);
+          });
           formData.append('fields', new Blob([JSON.stringify(updateFields)], { type: 'application/json; charset=utf-8' }));
           logFilesDiagnostics('submit-update', {
             documentId: doc && doc.id ? doc.id : null,
@@ -30930,11 +32297,9 @@
           if (typeof formData.delete === 'function') {
             formData.delete('attachments[]');
           }
-          if (initialCreateAttachmentFiles.length) {
-            initialCreateAttachmentFiles.forEach(function(file) {
-              formData.append('attachments[]', file);
-            });
-          }
+          attachmentFiles.forEach(function(file) {
+            formData.append('attachments[]', file);
+          });
 
           if (typeof formData.delete === 'function') {
             formData.delete('assignee_name');
@@ -30981,144 +32346,50 @@
           }
           logFilesDiagnostics('submit-create', {
             newFilesCount: attachmentFiles.length,
-            newFileNames: attachmentFiles.map(function(file) { return file.name; }).slice(0, 10),
-            directUploadCount: initialCreateAttachmentFiles.length,
-            deferredUploadCount: remainingCreateAttachmentFiles.length
+            newFileNames: attachmentFiles.map(function(file) { return file.name; }).slice(0, 10)
           });
         }
 
         appendTelegramUserIdToFormData(formData);
-
-        var directCreateUploadActive = !isEditMode && initialCreateAttachmentFiles.length > 0;
-        var deferredCreateUploadActive = !isEditMode && remainingCreateAttachmentFiles.length > 0;
-        var backgroundUploadActive = attachmentFiles.length > 0;
-        var backgroundTitleFields = updateFields || createFields || fillFieldsFromForm();
-        var backgroundUploadJob = backgroundUploadActive
-          ? createDocumentBackgroundUploadJob(attachmentFiles, {
-            title: buildBackgroundUploadTitle(
-              'Основная деятельность',
-              backgroundTitleFields.registryNumber || (doc && doc.registryNumber) || '',
-              backgroundTitleFields.summary || backgroundTitleFields.correspondent || backgroundTitleFields.documentNumber
-            ),
-            initialStatus: isEditMode ? 'Обновление' : 'Создание'
-          })
-          : null;
-        var backgroundTaskSaved = false;
-        var backgroundTaskCreated = false;
-        var backgroundCreatedDocumentId = '';
-        var backgroundPendingFiles = attachmentFiles.slice();
-        var backgroundFormClosed = false;
-        function closeBackgroundDocumentForm() {
-          if (backgroundFormClosed) {
-            return;
-          }
-          backgroundFormClosed = true;
-          setDocumentFormSubmitting(false);
-          closeModal(modal);
-        }
         if (attachmentFiles.length) {
-          setSelectedAttachmentStates(
-            attachmentFiles,
-            'queued',
-            0,
-            isEditMode ? 'Ожидает сохранения карточки' : 'Ожидает отправки в задачу'
-          );
-          if (backgroundUploadJob) {
-            backgroundUploadJob.setFilesState(attachmentFiles, 'queued', 0, 'Ожидает');
-          }
+          setSelectedAttachmentStates(attachmentFiles, 'uploading', 0, 'Загружается: 0%');
         }
 
         submitButton.textContent = isEditMode ? 'Сохраняем...' : 'Добавляем...';
-        if (directCreateUploadActive) {
-          setSelectedAttachmentStates(initialCreateAttachmentFiles, 'uploading', 0, 'Загружается: 0%');
-          if (backgroundUploadJob) {
-            backgroundUploadJob.setFilesState(initialCreateAttachmentFiles, 'uploading', 0, '0%');
-          }
-        }
         updateUploadProgress(
           12,
-          directCreateUploadActive
-            ? (deferredCreateUploadActive ? 'Загружаем первую часть файлов…' : 'Загружаем файлы сразу в задачу…')
-            : 'Сохраняем карточку документа…',
+          attachmentFiles.length ? 'Сохраняем задачу и загружаем файлы…' : 'Сохраняем карточку документа…',
           'is-stage-uploading'
         );
-        if (backgroundUploadJob) {
-          backgroundUploadJob.update(
-            12,
-            directCreateUploadActive
-              ? (deferredCreateUploadActive ? 'Создаём задачу и загружаем первую часть файлов…' : 'Создаём задачу и загружаем файлы…')
-              : (isEditMode ? 'Обновляем задачу…' : 'Создаём задачу…')
-          );
-        }
 
         var saveRequest = uploadFormDataWithProgress(buildApiUrl(isEditMode ? 'update' : 'create'), formData, function(progress) {
           var progressInsideRequest = 0;
           if (progress && progress.lengthComputable && progress.total > 0) {
             progressInsideRequest = progress.loaded / progress.total;
           }
-          var uploadPercent = directCreateUploadActive
-            ? 12 + Math.round(progressInsideRequest * 73)
-            : 12 + Math.round(progressInsideRequest * 18);
-          uploadPercent = Math.max(12, Math.min(directCreateUploadActive ? 85 : 30, uploadPercent));
-          if (directCreateUploadActive) {
+          var uploadPercent = Math.max(12, Math.min(90, 12 + Math.round(progressInsideRequest * 78)));
+          if (attachmentFiles.length) {
             var attachmentPercent = Math.max(1, Math.min(99, Math.round(progressInsideRequest * 100)));
             setSelectedAttachmentStates(
-              initialCreateAttachmentFiles,
+              attachmentFiles,
               'uploading',
               attachmentPercent,
               'Загружается: ' + attachmentPercent + '%'
             );
-            if (backgroundUploadJob) {
-              backgroundUploadJob.setFilesState(initialCreateAttachmentFiles, 'uploading', attachmentPercent, attachmentPercent + '%');
-            }
           }
           updateUploadProgress(
             uploadPercent,
-            directCreateUploadActive
-              ? (deferredCreateUploadActive ? 'Загружаем первую часть файлов…' : 'Загружаем файлы сразу в задачу…')
-              : 'Сохраняем карточку документа…',
+            attachmentFiles.length ? 'Сохраняем задачу и загружаем файлы…' : 'Сохраняем карточку документа…',
             'is-stage-uploading'
           );
-          if (backgroundUploadJob) {
-            backgroundUploadJob.update(
-              uploadPercent,
-              directCreateUploadActive
-                ? (deferredCreateUploadActive ? 'Загружаем первую часть файлов…' : 'Загружаем файлы в задачу…')
-                : (isEditMode ? 'Обновляем задачу…' : 'Создаём задачу…')
-            );
-          }
         });
-
-        if (backgroundUploadActive) {
-          closeBackgroundDocumentForm();
-        }
 
         saveRequest
           .then(function(data) {
-            if (directCreateUploadActive) {
-              setSelectedAttachmentStates(initialCreateAttachmentFiles, 'ready', 100, 'Загружен в задачу');
-              if (backgroundUploadJob) {
-                backgroundUploadJob.setFilesState(initialCreateAttachmentFiles, 'ready', 100, 'Готово');
-              }
-              backgroundPendingFiles = remainingCreateAttachmentFiles.slice();
+            if (attachmentFiles.length) {
+              setSelectedAttachmentStates(attachmentFiles, 'ready', 100, 'Загружен в задачу');
             }
-            updateUploadProgress(
-              isEditMode || deferredCreateUploadActive ? 34 : 95,
-              isEditMode || deferredCreateUploadActive
-                ? 'Документ сохранён. Готовим загрузку файлов…'
-                : 'Документ и файлы сохранены. Обновляем таблицу…',
-              'is-stage-processing'
-            );
-            if (backgroundUploadJob) {
-              backgroundUploadJob.update(
-                isEditMode || deferredCreateUploadActive ? 70 : 95,
-                isEditMode
-                  ? 'Задача обновлена. Загружаем файлы…'
-                  : (deferredCreateUploadActive
-                    ? 'Задача создана. Догружаем оставшиеся файлы…'
-                    : 'Задача создана. Обновляем таблицу…')
-              );
-            }
+            updateUploadProgress(95, 'Документ и файлы сохранены. Обновляем таблицу…', 'is-stage-processing');
             if (isEditMode) {
               docsLogger.log('Перезапись', {
                 action: 'submit-update-response',
@@ -31148,130 +32419,20 @@
                 updateTable();
               }
             }
-            var createdOrUpdatedDocumentId = null;
-            if (isEditMode) {
-              createdOrUpdatedDocumentId = doc && doc.id ? String(doc.id) : '';
-            } else if (data && data.createdDocument && data.createdDocument.id) {
-              createdOrUpdatedDocumentId = String(data.createdDocument.id);
-            }
-            if (!isEditMode && createdOrUpdatedDocumentId) {
-              backgroundTaskCreated = true;
-              backgroundCreatedDocumentId = createdOrUpdatedDocumentId;
-              if (backgroundUploadActive) {
-                closeBackgroundDocumentForm();
-              }
-            }
-            if (createdOrUpdatedDocumentId) {
-              backgroundTaskSaved = true;
-            }
-
-            var uploadPromise = Promise.resolve();
-            var latestUploadData = null;
-            var deferredAttachmentFiles = isEditMode ? attachmentFiles : remainingCreateAttachmentFiles;
-            if (deferredAttachmentFiles.length && !createdOrUpdatedDocumentId) {
-              throw new Error('Сервер не вернул ID задачи для догрузки файлов.');
-            }
-            if (deferredAttachmentFiles.length && createdOrUpdatedDocumentId) {
-              var batches = splitFilesToBatches(deferredAttachmentFiles, DOCUMENTS_UPLOAD_BATCH_SIZE);
-              uploadPromise = batches.reduce(function(chain, batch, batchIndex) {
-                return chain.then(function() {
-                  return runSequentialUploadStep(function() {
-                    var batchFormData = new FormData();
-                    batchFormData.append('action', 'update');
-                    batchFormData.append('organization', state.organization);
-                    batchFormData.append('documentId', createdOrUpdatedDocumentId);
-                    batch.forEach(function(file) {
-                      batchFormData.append('attachments[]', file);
-                    });
-                    appendTelegramUserIdToFormData(batchFormData);
-                    batch.forEach(function(file) {
-                      setSelectedAttachmentState(file, 'uploading', 0, 'Загружается: 0%');
-                    });
-                    if (backgroundUploadJob) {
-                      backgroundUploadJob.setFilesState(batch, 'uploading', 0, '0%');
-                    }
-
-                    return uploadFormDataWithProgress(buildApiUrl('update'), batchFormData, function(progress) {
-                      var progressInsideBatch = 0;
-                      if (progress && progress.lengthComputable && progress.total > 0) {
-                        progressInsideBatch = progress.loaded / progress.total;
-                      }
-                      var attachmentPercent = Math.max(1, Math.min(99, Math.round(progressInsideBatch * 100)));
-                      batch.forEach(function(file) {
-                        setSelectedAttachmentState(
-                          file,
-                          'uploading',
-                          attachmentPercent,
-                          'Загружается: ' + attachmentPercent + '%'
-                        );
-                      });
-                      if (backgroundUploadJob) {
-                        backgroundUploadJob.setFilesState(batch, 'uploading', attachmentPercent, attachmentPercent + '%');
-                      }
-                      var overallProgress = (batchIndex + progressInsideBatch) / batches.length;
-                      var uploadPercent = 65 + Math.round(overallProgress * 30);
-                      uploadPercent = Math.max(65, Math.min(95, uploadPercent));
-                      updateUploadProgress(uploadPercent, 'Загружаем файлы: ' + (batchIndex + 1) + '/' + batches.length, 'is-stage-uploading');
-                  if (backgroundUploadJob) {
-                    backgroundUploadJob.update(uploadPercent, 'Загружаем файлы: ' + (batchIndex + 1) + '/' + batches.length);
-                  }
-                    }).then(function(batchData) {
-                      batch.forEach(function(file) {
-                        setSelectedAttachmentState(file, 'ready', 100, 'Загружен в задачу');
-                      });
-                      if (backgroundUploadJob) {
-                        backgroundUploadJob.setFilesState(batch, 'ready', 100, 'Готово');
-                      }
-                      backgroundPendingFiles = backgroundPendingFiles.filter(function(file) {
-                        return batch.indexOf(file) === -1;
-                      });
-                      latestUploadData = batchData;
-                      return batchData;
-                    });
-                  });
-                });
-              }, Promise.resolve());
-            }
-
-            return uploadPromise.then(function() {
-              if (latestUploadData) {
-                updateStateFromPayload(latestUploadData);
-              }
-              if (!backgroundUploadActive) {
-                setDocumentFormSubmitting(false);
-                closeModal(modal);
-              }
-              if (backgroundUploadJob) {
-                backgroundUploadJob.complete(isEditMode ? 'Готово. Задача обновлена.' : 'Готово. Задача и файлы сохранены.');
-              } else if (data && data.message) {
-                showMessage('success', data.message);
-              } else {
-                showMessage('success', isEditMode ? 'Документ обновлён.' : 'Документ добавлен.');
-              }
-              updateUploadProgress(100, 'Готово. Документ и файлы успешно сохранены.', 'is-stage-success');
-              return null;
-            });
+            setDocumentFormSubmitting(false);
+            closeModal(modal);
+            showMessage('success', data && data.message ? data.message : (isEditMode ? 'Документ обновлён.' : 'Документ добавлен.'));
+            updateUploadProgress(100, 'Готово. Документ и файлы успешно сохранены.', 'is-stage-success');
           })
           .catch(function(error) {
             var errorMessage = error && error.message ? error.message : 'повторите попытку.';
-            if (!backgroundFormClosed) {
-              setDocumentFormSubmitting(false);
-            }
+            setDocumentFormSubmitting(false);
             updateSubmitButtonForDraftUploads();
             if (attachmentFiles.length) {
               markPendingSelectedAttachmentsError(attachmentFiles, 'Не загружен: ' + errorMessage);
             }
             setUploadProgressActive(true);
             updateUploadProgress(Math.max(uploadState.percent, 12), 'Ошибка загрузки: ' + errorMessage, 'is-stage-error');
-            if (backgroundUploadJob) {
-              var backgroundHadSavedTask = backgroundTaskSaved || backgroundTaskCreated || backgroundCreatedDocumentId;
-              backgroundUploadJob.fail(
-                backgroundHadSavedTask
-                  ? (isEditMode ? 'Задача обновлена, но часть файлов не загрузилась: ' : 'Задача создана, но часть файлов не загрузилась: ') + errorMessage
-                  : (isEditMode ? 'Задача не обновлена: ' : 'Задача не создана: ') + errorMessage,
-                backgroundHadSavedTask ? backgroundPendingFiles : attachmentFiles
-              );
-            }
             if (isEditMode) {
               docsLogger.warn('Перезапись', {
                 action: 'submit-update-error',
@@ -31279,9 +32440,7 @@
                 message: errorMessage
               });
             }
-            if (!backgroundUploadActive || !backgroundFormClosed) {
-              showMessage('error', 'Не удалось сохранить документ: ' + errorMessage);
-            }
+            showMessage('error', 'Не удалось сохранить документ: ' + errorMessage);
           });
       });
 
@@ -32659,7 +33818,8 @@
     var prefixes = [
       TABLE_PREFERENCES_STORAGE_PREFIX + organization + ':',
       COLUMN_ORDER_STORAGE_PREFIX + organization + ':',
-      DOCUMENT_TABS_STORAGE_PREFIX + organization + ':'
+      DOCUMENT_TABS_STORAGE_PREFIX + organization + ':',
+      ADMIN_OCR_BASELINE_STORAGE_PREFIX + organization + ':'
     ];
     try {
       var keys = [];

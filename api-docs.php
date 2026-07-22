@@ -88,6 +88,18 @@ if ($method !== 'POST') {
     jsonResponse(405, ['ok' => false, 'error' => 'Method Not Allowed']);
 }
 
+$earlyAction = trim((string)($_POST['action'] ?? ''));
+if ($earlyAction === 'groq_paid_proxy') {
+    $groqAction = trim((string)($_POST['groq_action'] ?? ''));
+    $allowedGroqActions = ['analyze_paid', 'generate_summary', 'generate_response'];
+    if (!in_array($groqAction, $allowedGroqActions, true)) {
+        jsonResponse(422, ['ok' => false, 'error' => 'Некорректное действие paid AI.']);
+    }
+    $_POST['action'] = $groqAction;
+    require __DIR__ . '/api-groq-paid.php';
+    exit;
+}
+
 function loadEnv(array $paths): array
 {
     $env = [];
@@ -522,17 +534,183 @@ function extractDocxText(string $tmpFile): string
     return trim(implode("\n\n", $parts));
 }
 
-function shellCommandExists(string $command): bool
+function resolveExecutablePath(string $command): string
 {
-    $output = [];
-    $code = 1;
-    @exec('command -v ' . escapeshellarg($command) . ' 2>/dev/null', $output, $code);
-    return $code === 0 && !empty($output);
+    $candidate = trim($command);
+    if ($candidate === '') {
+        return '';
+    }
+    if (str_contains($candidate, '/') || str_contains($candidate, '\\')) {
+        return $candidate;
+    }
+
+    if (function_exists('exec')) {
+        $output = [];
+        $code = 1;
+        @exec('command -v ' . escapeshellarg($candidate) . ' 2>/dev/null', $output, $code);
+        if ($code === 0 && $output) {
+            $resolved = trim((string)$output[0]);
+            if ($resolved !== '') {
+                return $resolved;
+            }
+        }
+    }
+
+    $binaryDirectories = [];
+    $runtimePath = getenv('PATH');
+    if (is_string($runtimePath) && $runtimePath !== '') {
+        $binaryDirectories = explode(PATH_SEPARATOR, $runtimePath);
+    }
+    $binaryDirectories = array_merge(
+        $binaryDirectories,
+        ['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin', '/snap/bin']
+    );
+    foreach (array_values(array_unique($binaryDirectories)) as $binaryDirectory) {
+        $directory = rtrim(trim((string)$binaryDirectory), '/\\');
+        if ($directory === '') {
+            continue;
+        }
+        $resolved = $directory . DIRECTORY_SEPARATOR . $candidate;
+        if (@is_file($resolved) && @is_executable($resolved)) {
+            return $resolved;
+        }
+    }
+
+    // proc_open resolves a bare command using the environment of the PHP worker.
+    // This fallback is important when open_basedir blocks file checks outside the app directory.
+    return $candidate;
+}
+
+function readRuntimeSetting(array $env, string $key, string $default = ''): string
+{
+    $runtimeValue = getenv($key);
+    if (is_string($runtimeValue) && trim($runtimeValue) !== '') {
+        return trim($runtimeValue);
+    }
+    if (isset($env[$key]) && trim((string)$env[$key]) !== '') {
+        return trim((string)$env[$key]);
+    }
+    return $default;
+}
+
+function readBoundedRuntimeInteger(array $env, string $key, int $default, int $minimum, int $maximum): int
+{
+    $rawValue = readRuntimeSetting($env, $key, (string)$default);
+    $parsedValue = filter_var($rawValue, FILTER_VALIDATE_INT);
+    if ($parsedValue === false) {
+        return $default;
+    }
+    return max($minimum, min($maximum, (int)$parsedValue));
+}
+
+function runLocalProcess(array $command, int $timeoutSeconds, int $maxOutputBytes = 8388608): array
+{
+    if (!$command || !function_exists('proc_open')) {
+        return [
+            'ok' => false,
+            'exit_code' => -1,
+            'stdout' => '',
+            'stderr' => 'proc_open недоступен',
+            'timed_out' => false,
+            'output_limit' => false,
+            'duration_ms' => 0,
+        ];
+    }
+
+    $descriptors = [
+        0 => ['pipe', 'r'],
+        1 => ['pipe', 'w'],
+        2 => ['pipe', 'w'],
+    ];
+    $pipes = [];
+    $startedAt = microtime(true);
+    $process = @proc_open($command, $descriptors, $pipes, null, null, ['bypass_shell' => true]);
+    if (!is_resource($process)) {
+        return [
+            'ok' => false,
+            'exit_code' => -1,
+            'stdout' => '',
+            'stderr' => 'Не удалось запустить локальный процесс',
+            'timed_out' => false,
+            'output_limit' => false,
+            'duration_ms' => 0,
+        ];
+    }
+
+    @fclose($pipes[0]);
+    stream_set_blocking($pipes[1], false);
+    stream_set_blocking($pipes[2], false);
+    $stdout = '';
+    $stderr = '';
+    $timedOut = false;
+    $outputLimitReached = false;
+    $exitCode = -1;
+    $deadline = $startedAt + max(1, $timeoutSeconds);
+
+    while (true) {
+        $stdoutChunk = stream_get_contents($pipes[1]);
+        $stderrChunk = stream_get_contents($pipes[2]);
+        if (is_string($stdoutChunk) && $stdoutChunk !== '') {
+            $stdout .= $stdoutChunk;
+        }
+        if (is_string($stderrChunk) && $stderrChunk !== '') {
+            $stderr .= $stderrChunk;
+        }
+
+        if ((strlen($stdout) + strlen($stderr)) > $maxOutputBytes) {
+            $outputLimitReached = true;
+            @proc_terminate($process);
+            break;
+        }
+
+        $status = proc_get_status($process);
+        if (!is_array($status) || ($status['running'] ?? false) !== true) {
+            $exitCode = is_array($status) ? (int)($status['exitcode'] ?? -1) : -1;
+            break;
+        }
+        if (microtime(true) >= $deadline) {
+            $timedOut = true;
+            @proc_terminate($process);
+            usleep(100000);
+            $statusAfterTerminate = proc_get_status($process);
+            if (is_array($statusAfterTerminate) && ($statusAfterTerminate['running'] ?? false) === true) {
+                @proc_terminate($process, 9);
+            }
+            break;
+        }
+        usleep(20000);
+    }
+
+    $remainingStdout = stream_get_contents($pipes[1]);
+    $remainingStderr = stream_get_contents($pipes[2]);
+    if (is_string($remainingStdout) && $remainingStdout !== '') {
+        $stdout .= $remainingStdout;
+    }
+    if (is_string($remainingStderr) && $remainingStderr !== '') {
+        $stderr .= $remainingStderr;
+    }
+    @fclose($pipes[1]);
+    @fclose($pipes[2]);
+    $closeCode = proc_close($process);
+    if ($exitCode < 0 && is_int($closeCode) && $closeCode >= 0) {
+        $exitCode = $closeCode;
+    }
+
+    return [
+        'ok' => !$timedOut && !$outputLimitReached && $exitCode === 0,
+        'exit_code' => $exitCode,
+        'stdout' => $stdout,
+        'stderr' => $stderr,
+        'timed_out' => $timedOut,
+        'output_limit' => $outputLimitReached,
+        'duration_ms' => (int)round((microtime(true) - $startedAt) * 1000),
+    ];
 }
 
 function extractPdfTextFast(string $pdfPath): string
 {
-    if ($pdfPath === '' || !is_file($pdfPath) || !shellCommandExists('pdftotext')) {
+    $pdfToTextPath = resolveExecutablePath('pdftotext');
+    if ($pdfPath === '' || !is_file($pdfPath) || $pdfToTextPath === '') {
         return '';
     }
 
@@ -542,14 +720,22 @@ function extractPdfTextFast(string $pdfPath): string
     }
 
     try {
-        $cmd = 'pdftotext -enc UTF-8 -f 1 -l 25 '
-            . escapeshellarg($pdfPath) . ' ' . escapeshellarg($tmpTextPath) . ' 2>/dev/null';
-        @exec($cmd, $out, $code);
-        if ($code !== 0 || !is_file($tmpTextPath)) {
+        $result = runLocalProcess([
+            $pdfToTextPath,
+            '-enc',
+            'UTF-8',
+            '-f',
+            '1',
+            '-l',
+            '25',
+            $pdfPath,
+            $tmpTextPath,
+        ], 30, 524288);
+        if (!is_file($tmpTextPath)) {
             return '';
         }
         $raw = @file_get_contents($tmpTextPath);
-        return is_string($raw) ? trim($raw) : '';
+        return is_string($raw) ? normalizeLocalOcrText($raw) : '';
     } finally {
         @unlink($tmpTextPath);
     }
@@ -581,51 +767,370 @@ function extractTextWithoutOcr(array $file): string
     return '';
 }
 
-function performOcrRequest(string $endpoint, string $apiKey, array $file, string $language = 'rus', ?string $fileUrl = null): array
+function normalizeLocalOcrText(string $text): string
 {
-    $ch = curl_init($endpoint);
-    if ($ch === false) {
-        return ['status' => 500, 'body' => false, 'curl_error' => 'Не удалось инициализировать cURL'];
+    $normalized = str_replace(["\r\n", "\r"], "\n", $text);
+    $normalized = preg_replace('/[^\P{C}\n\t]+/u', '', $normalized);
+    $normalized = preg_replace('/[ \t]+\n/u', "\n", (string)$normalized);
+    $normalized = preg_replace('/\n{4,}/u', "\n\n\n", (string)$normalized);
+    return trim((string)$normalized);
+}
+
+function resolveTesseractLanguage(string $tesseractPath, string $requestedLanguage, string $configuredLanguages): array
+{
+    $requested = strtolower(trim($requestedLanguage));
+    if (!preg_match('/^[a-z]{3}$/', $requested)) {
+        $requested = 'rus';
+    }
+    $configured = strtolower(trim($configuredLanguages));
+    $candidateLanguages = preg_split('/[+,;|\s]+/u', $configured !== '' ? $configured : ($requested . '+eng')) ?: [];
+    $candidateLanguages = array_values(array_unique(array_filter(array_map(static function ($language): string {
+        $value = strtolower(trim((string)$language));
+        return preg_match('/^[a-z0-9_]+$/', $value) ? $value : '';
+    }, $candidateLanguages))));
+
+    $languageResult = runLocalProcess([$tesseractPath, '--list-langs'], 10, 262144);
+    $languageOutput = (string)($languageResult['stdout'] ?? '') . "\n" . (string)($languageResult['stderr'] ?? '');
+    $availableLanguages = [];
+    foreach (preg_split('/\R/u', $languageOutput) ?: [] as $line) {
+        $value = strtolower(trim((string)$line));
+        if ($value !== '' && preg_match('/^[a-z0-9_]+$/', $value)) {
+            $availableLanguages[$value] = true;
+        }
     }
 
-    $postFields = [
-        'language' => $language,
+    if (!$availableLanguages) {
+        return [
+            'language' => implode('+', $candidateLanguages ?: [$requested]),
+            'warning' => '',
+            'available' => [],
+        ];
+    }
+
+    $selected = [];
+    foreach ($candidateLanguages as $candidate) {
+        if (isset($availableLanguages[$candidate])) {
+            $selected[] = $candidate;
+        }
+    }
+    if (!$selected && isset($availableLanguages[$requested])) {
+        $selected[] = $requested;
+    }
+    if (!$selected && isset($availableLanguages['eng'])) {
+        $selected[] = 'eng';
+    }
+    if (!$selected) {
+        $selected[] = (string)array_key_first($availableLanguages);
+    }
+
+    $warning = '';
+    if (!isset($availableLanguages[$requested])) {
+        $warning = 'Языковой пакет Tesseract «' . $requested . '» не установлен; использован «' . implode('+', $selected) . '».';
+    }
+
+    return [
+        'language' => implode('+', array_values(array_unique($selected))),
+        'warning' => $warning,
+        'available' => array_keys($availableLanguages),
     ];
-    if (is_string($fileUrl) && trim($fileUrl) !== '') {
-        $postFields['url'] = trim($fileUrl);
-    } else {
-        $tmpName = (string)($file['tmp_name'] ?? '');
-        if ($tmpName === '' || !is_file($tmpName)) {
-            curl_close($ch);
-            return ['status' => 400, 'body' => false, 'curl_error' => 'Файл для OCR не найден'];
-        }
-        $mime = detectMimeType($file);
-        $extension = detectFileExtension($file);
-        $name = ensureFileNameWithExtension((string)($file['name'] ?? 'document'), $extension);
-        $postFields['file'] = curl_file_create($tmpName, $mime, $name);
-        if ($extension !== '') {
-            $postFields['filetype'] = strtoupper($extension);
-        }
+}
+
+function runTesseractForImage(
+    string $tesseractPath,
+    string $imagePath,
+    string $language,
+    int $timeoutSeconds,
+    int $pageSegmentationMode,
+    int $ocrEngineMode
+): array {
+    $result = runLocalProcess([
+        $tesseractPath,
+        $imagePath,
+        'stdout',
+        '-l',
+        $language,
+        '--oem',
+        (string)$ocrEngineMode,
+        '--psm',
+        (string)$pageSegmentationMode,
+    ], $timeoutSeconds);
+    $text = normalizeLocalOcrText((string)($result['stdout'] ?? ''));
+    if ($text !== '') {
+        return ['ok' => true, 'text' => $text, 'error' => '', 'timed_out' => false];
     }
 
-    curl_setopt_array($ch, [
-        CURLOPT_POST => true,
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_HTTPHEADER => [
-            'apikey: ' . $apiKey,
-        ],
-        CURLOPT_POSTFIELDS => $postFields,
-        CURLOPT_CONNECTTIMEOUT => 15,
-        CURLOPT_TIMEOUT => 60,
-        CURLOPT_NOSIGNAL => 1,
-    ]);
+    $error = trim((string)($result['stderr'] ?? ''));
+    if (($result['timed_out'] ?? false) === true) {
+        $error = 'Превышено время распознавания страницы';
+    } elseif (($result['output_limit'] ?? false) === true) {
+        $error = 'Превышен лимит вывода Tesseract';
+    } elseif ($error === '') {
+        $error = 'Tesseract не нашёл текст';
+    }
+    return [
+        'ok' => false,
+        'text' => '',
+        'error' => mb_substr($error, 0, 700),
+        'timed_out' => ($result['timed_out'] ?? false) === true,
+    ];
+}
 
-    $responseBody = curl_exec($ch);
-    $curlError = curl_error($ch);
-    $statusCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
+function detectPdfPageCount(string $pdfInfoPath, string $pdfPath): int
+{
+    if ($pdfInfoPath === '') {
+        return 0;
+    }
+    $result = runLocalProcess([$pdfInfoPath, $pdfPath], 15, 524288);
+    $output = (string)($result['stdout'] ?? '') . "\n" . (string)($result['stderr'] ?? '');
+    if (preg_match('/^Pages:\s*(\d+)\s*$/mi', $output, $matches)) {
+        return max(0, (int)$matches[1]);
+    }
+    return 0;
+}
 
-    return ['status' => $statusCode, 'body' => $responseBody, 'curl_error' => $curlError];
+function cleanupLocalOcrDirectory(string $directory): void
+{
+    if ($directory === '' || !is_dir($directory)) {
+        return;
+    }
+    foreach ((array)glob($directory . '/*') as $filePath) {
+        if (is_string($filePath) && is_file($filePath)) {
+            @unlink($filePath);
+        }
+    }
+    @rmdir($directory);
+}
+
+function performLocalTesseractOcr(array $file, array $env, string $requestedLanguage = 'rus'): array
+{
+    $startedAt = microtime(true);
+    $tesseractCommand = readRuntimeSetting($env, 'TESSERACT_BIN', 'tesseract');
+    $tesseractPath = resolveExecutablePath($tesseractCommand);
+    if (!function_exists('proc_open')) {
+        return [
+            'ok' => false,
+            'error' => 'PHP не разрешает запуск локального OCR: функция proc_open отключена.',
+            'status' => 503,
+            'diagnostics' => [
+                'phpSapi' => PHP_SAPI,
+                'procOpenAvailable' => false,
+                'configuredCommand' => $tesseractCommand,
+            ],
+        ];
+    }
+
+    $tesseractProbe = runLocalProcess([$tesseractPath, '--version'], 10, 262144);
+    $tesseractProbeOutput = trim(
+        (string)($tesseractProbe['stdout'] ?? '') . "\n" . (string)($tesseractProbe['stderr'] ?? '')
+    );
+    $tesseractVersionDetected = preg_match('/\btesseract\s+v?\d+(?:\.\d+)+/iu', $tesseractProbeOutput) === 1;
+    if (($tesseractProbe['ok'] ?? false) !== true && !$tesseractVersionDetected) {
+        $probeError = trim((string)($tesseractProbe['stderr'] ?? ''));
+        return [
+            'ok' => false,
+            'error' => 'PHP-процесс не может запустить Tesseract. '
+                . 'Укажите TESSERACT_BIN=/usr/bin/tesseract в app/env.txt и перезапустите PHP-FPM. '
+                . 'Если PHP работает в Docker, Tesseract нужно установить внутри контейнера.',
+            'status' => 503,
+            'diagnostics' => [
+                'phpSapi' => PHP_SAPI,
+                'procOpenAvailable' => true,
+                'configuredCommand' => $tesseractCommand,
+                'resolvedCommand' => $tesseractPath,
+                'runtimePath' => mb_substr((string)(getenv('PATH') ?: ''), 0, 1000),
+                'exitCode' => (int)($tesseractProbe['exit_code'] ?? -1),
+                'message' => mb_substr($probeError, 0, 1000),
+            ],
+        ];
+    }
+
+    $tmpFile = (string)($file['tmp_name'] ?? '');
+    if ($tmpFile === '' || !is_file($tmpFile) || !is_readable($tmpFile) || (int)@filesize($tmpFile) <= 0) {
+        return ['ok' => false, 'error' => 'Файл для Tesseract не найден или пуст.', 'status' => 400];
+    }
+
+    $extension = detectFileExtension($file);
+    $supportedImages = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'tif', 'tiff', 'webp'];
+    if ($extension !== 'pdf' && !in_array($extension, $supportedImages, true)) {
+        return [
+            'ok' => false,
+            'error' => 'Локальный OCR поддерживает PDF, PNG, JPG, WEBP, GIF, BMP и TIFF.',
+            'status' => 415,
+        ];
+    }
+
+    $configuredLanguages = readRuntimeSetting($env, 'OCR_TESSERACT_LANGUAGES', $requestedLanguage . '+eng');
+    $languageInfo = resolveTesseractLanguage($tesseractPath, $requestedLanguage, $configuredLanguages);
+    $language = (string)($languageInfo['language'] ?? $requestedLanguage);
+    $totalTimeout = readBoundedRuntimeInteger($env, 'OCR_LOCAL_TIMEOUT', 180, 30, 600);
+    $pageTimeout = readBoundedRuntimeInteger($env, 'OCR_TESSERACT_PAGE_TIMEOUT', 45, 10, 180);
+    $maxPages = readBoundedRuntimeInteger($env, 'OCR_LOCAL_MAX_PAGES', 25, 1, 100);
+    $dpi = readBoundedRuntimeInteger($env, 'OCR_LOCAL_DPI', 220, 120, 400);
+    $pageSegmentationMode = readBoundedRuntimeInteger($env, 'OCR_TESSERACT_PSM', 3, 0, 13);
+    $ocrEngineMode = readBoundedRuntimeInteger($env, 'OCR_TESSERACT_OEM', 1, 0, 3);
+    $deadline = microtime(true) + $totalTimeout;
+    $warnings = [];
+    if (trim((string)($languageInfo['warning'] ?? '')) !== '') {
+        $warnings[] = trim((string)$languageInfo['warning']);
+    }
+
+    if ($extension !== 'pdf') {
+        $pageResult = runTesseractForImage(
+            $tesseractPath,
+            $tmpFile,
+            $language,
+            min($pageTimeout, $totalTimeout),
+            $pageSegmentationMode,
+            $ocrEngineMode
+        );
+        if (($pageResult['ok'] ?? false) !== true) {
+            return [
+                'ok' => false,
+                'error' => (string)($pageResult['error'] ?? 'Tesseract не смог извлечь текст.'),
+                'status' => ($pageResult['timed_out'] ?? false) === true ? 504 : 422,
+            ];
+        }
+        return [
+            'ok' => true,
+            'text' => (string)$pageResult['text'],
+            'engine' => 'tesseract',
+            'language' => $language,
+            'pages_processed' => 1,
+            'partial' => false,
+            'warning' => implode(' ', $warnings),
+            'duration_ms' => (int)round((microtime(true) - $startedAt) * 1000),
+        ];
+    }
+
+    $pdfToPpmCommand = readRuntimeSetting($env, 'PDFTOPPM_BIN', 'pdftoppm');
+    $pdfToPpmPath = resolveExecutablePath($pdfToPpmCommand);
+    $pdfToPpmProbe = runLocalProcess([$pdfToPpmPath, '-v'], 10, 262144);
+    $pdfToPpmProbeOutput = trim(
+        (string)($pdfToPpmProbe['stdout'] ?? '') . "\n" . (string)($pdfToPpmProbe['stderr'] ?? '')
+    );
+    $pdfToPpmVersionDetected = preg_match('/\bpdftoppm\s+version\s+\d+(?:\.\d+)+/iu', $pdfToPpmProbeOutput) === 1;
+    if (($pdfToPpmProbe['ok'] ?? false) !== true && !$pdfToPpmVersionDetected) {
+        return [
+            'ok' => false,
+            'error' => 'PHP-процесс не может запустить pdftoppm. '
+                . 'Укажите PDFTOPPM_BIN=/usr/bin/pdftoppm в app/env.txt или установите poppler внутри PHP-контейнера.',
+            'status' => 503,
+            'diagnostics' => [
+                'phpSapi' => PHP_SAPI,
+                'configuredCommand' => $pdfToPpmCommand,
+                'resolvedCommand' => $pdfToPpmPath,
+                'exitCode' => (int)($pdfToPpmProbe['exit_code'] ?? -1),
+                'message' => mb_substr(trim((string)($pdfToPpmProbe['stderr'] ?? '')), 0, 1000),
+            ],
+        ];
+    }
+
+    try {
+        $randomSuffix = bin2hex(random_bytes(6));
+    } catch (Throwable) {
+        $randomSuffix = substr(hash('sha256', uniqid('ocr_pdf', true)), 0, 12);
+    }
+    $workingDirectory = sys_get_temp_dir() . '/ocr_tesseract_' . $randomSuffix;
+    if (!@mkdir($workingDirectory, 0700, true) && !is_dir($workingDirectory)) {
+        return ['ok' => false, 'error' => 'Не удалось создать временную папку OCR.', 'status' => 500];
+    }
+
+    $pagePrefix = $workingDirectory . '/page';
+    try {
+        $conversionTimeout = max(15, min(90, $totalTimeout));
+        $conversionResult = runLocalProcess([
+            $pdfToPpmPath,
+            '-f',
+            '1',
+            '-l',
+            (string)$maxPages,
+            '-r',
+            (string)$dpi,
+            '-png',
+            $tmpFile,
+            $pagePrefix,
+        ], $conversionTimeout, 1048576);
+        $pageFiles = array_values(array_filter((array)glob($pagePrefix . '-*.png'), 'is_file'));
+        natsort($pageFiles);
+        $pageFiles = array_values($pageFiles);
+        if (!$pageFiles) {
+            $conversionError = trim((string)($conversionResult['stderr'] ?? ''));
+            if (($conversionResult['timed_out'] ?? false) === true) {
+                $conversionError = 'Превышено время подготовки страниц PDF.';
+            } elseif ($conversionError === '') {
+                $conversionError = 'Не удалось преобразовать PDF в изображения.';
+            }
+            return ['ok' => false, 'error' => mb_substr($conversionError, 0, 700), 'status' => 422];
+        }
+
+        $pdfInfoCommand = readRuntimeSetting($env, 'PDFINFO_BIN', 'pdfinfo');
+        $pdfInfoPath = resolveExecutablePath($pdfInfoCommand);
+        $totalPages = detectPdfPageCount($pdfInfoPath, $tmpFile);
+        $textParts = [];
+        $pageErrors = [];
+        $processedPages = 0;
+        $timedOut = false;
+        foreach ($pageFiles as $pageIndex => $pagePath) {
+            $remainingSeconds = (int)floor($deadline - microtime(true));
+            if ($remainingSeconds <= 0) {
+                $timedOut = true;
+                break;
+            }
+            $pageResult = runTesseractForImage(
+                $tesseractPath,
+                $pagePath,
+                $language,
+                max(1, min($pageTimeout, $remainingSeconds)),
+                $pageSegmentationMode,
+                $ocrEngineMode
+            );
+            if (($pageResult['ok'] ?? false) === true) {
+                $textParts[] = (string)$pageResult['text'];
+            } else {
+                $pageErrors[] = 'Страница ' . ($pageIndex + 1) . ': ' . (string)($pageResult['error'] ?? 'текст не найден');
+                if (($pageResult['timed_out'] ?? false) === true) {
+                    $timedOut = true;
+                    break;
+                }
+            }
+            $processedPages += 1;
+        }
+
+        $text = normalizeLocalOcrText(implode("\n\n", $textParts));
+        if ($text === '') {
+            $error = $pageErrors ? implode('; ', $pageErrors) : 'Tesseract не смог извлечь текст из PDF.';
+            return ['ok' => false, 'error' => mb_substr($error, 0, 900), 'status' => $timedOut ? 504 : 422];
+        }
+
+        $conversionWasPartial = ($conversionResult['timed_out'] ?? false) === true;
+        $partial = $conversionWasPartial || $timedOut || $pageErrors || ($totalPages > 0 && $totalPages > $processedPages);
+        if ($conversionWasPartial) {
+            $warnings[] = 'Подготовка PDF достигла лимита времени; обработаны успевшие создаться страницы.';
+        }
+        if ($timedOut) {
+            $warnings[] = 'Общее время локального OCR истекло; возвращён уже полученный текст.';
+        }
+        if ($totalPages > $maxPages) {
+            $warnings[] = 'Обработаны первые ' . $maxPages . ' из ' . $totalPages . ' страниц.';
+        }
+        if ($pageErrors) {
+            $warnings[] = implode('; ', $pageErrors);
+        }
+
+        return [
+            'ok' => true,
+            'text' => $text,
+            'engine' => 'tesseract',
+            'language' => $language,
+            'pages_processed' => $processedPages,
+            'total_pages' => $totalPages,
+            'partial' => $partial,
+            'warning' => implode(' ', $warnings),
+            'duration_ms' => (int)round((microtime(true) - $startedAt) * 1000),
+        ];
+    } finally {
+        cleanupLocalOcrDirectory($workingDirectory);
+    }
 }
 
 function guessExtensionFromUrl(string $url): string
@@ -719,7 +1224,6 @@ function downloadRemoteFileForOcr(string $url): ?array
     $execResult = curl_exec($ch);
     $httpStatus = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
     $curlError = (string)curl_error($ch);
-    curl_close($ch);
     @fclose($fp);
 
     if ($execResult === false || $httpStatus < 200 || $httpStatus >= 300) {
@@ -1932,112 +2436,125 @@ $ocrFile = normalizeUploadedFiles('file');
 $files = array_merge($attachments, $singleAttachment, $ocrFile);
 
 if ($action === 'ocr_extract') {
-    $ocrApiKey = trim((string)($env['OCR_API_KEY'] ?? ''));
-    $ocrBaseUrl = trim((string)($env['OCR_BASE_URL'] ?? 'https://api.ocr.space/parse/image'));
-    $ocrLanguage = trim((string)($_POST['language'] ?? 'rus'));
+    try {
+        $ocrRequestId = bin2hex(random_bytes(6));
+    } catch (Throwable) {
+        $ocrRequestId = substr(hash('sha256', uniqid('ocr', true)), 0, 12);
+    }
+
+    $ocrLanguage = strtolower(trim((string)($_POST['language'] ?? 'rus')));
+    if (in_array($ocrLanguage, ['rus+eng', 'ru', 'ru-ru', 'russian'], true)) {
+        $ocrLanguage = 'rus';
+    } elseif (!preg_match('/^[a-z]{3}$/', $ocrLanguage)) {
+        $ocrLanguage = 'rus';
+    }
     $ocrFileUrl = trim((string)($_POST['file_url'] ?? ''));
 
     if (!$files && $ocrFileUrl === '') {
-        jsonResponse(400, ['ok' => false, 'error' => 'Файл для OCR не передан']);
+        jsonResponse(400, ['ok' => false, 'error' => 'Файл для OCR не передан', 'requestId' => $ocrRequestId]);
     }
 
-    if ($files) {
-        $directText = extractTextWithoutOcr($files[0]);
-        if ($directText !== '') {
-            jsonResponse(200, [
-                'ok' => true,
-                'text' => $directText,
-                'raw' => [
-                    'source' => 'direct_text',
-                    'extension' => detectFileExtension($files[0])
-                ],
-            ]);
-        }
-    }
-
-    if ($ocrApiKey === '') {
-        jsonResponse(500, ['ok' => false, 'error' => 'OCR_API_KEY не найден в .env']);
-    }
-
-    $ocrUploadFile = $files ? $files[0] : [];
-    $ocrUrlUsed = '';
-    if (!$ocrUploadFile && $ocrFileUrl !== '') {
+    $ocrInputFile = $files ? $files[0] : [];
+    if (!$ocrInputFile && $ocrFileUrl !== '') {
         $downloadedFile = downloadRemoteFileForOcr($ocrFileUrl);
-        if (is_array($downloadedFile)) {
-            $ocrUploadFile = $downloadedFile;
-            logApiDocs('info', 'OCR file_url downloaded and sent as multipart file', [
+        if (!is_array($downloadedFile)) {
+            logApiDocs('warn', 'Local OCR source download failed', [
+                'requestId' => $ocrRequestId,
                 'url' => $ocrFileUrl,
-                'size' => (int)($downloadedFile['size'] ?? 0),
-                'name' => (string)($downloadedFile['name'] ?? ''),
             ]);
-        } else {
-            $ocrUrlUsed = $ocrFileUrl;
-            logApiDocs('warn', 'OCR file_url download failed, fallback to OCR url mode', ['url' => $ocrFileUrl]);
+            jsonResponse(502, [
+                'ok' => false,
+                'error' => 'Не удалось локально загрузить файл для OCR.',
+                'requestId' => $ocrRequestId,
+            ]);
         }
+        $ocrInputFile = $downloadedFile;
     }
 
-    $cleanupRemoteOcrTemp = static function () use ($ocrUploadFile): void {
-        if (!is_array($ocrUploadFile) || (($ocrUploadFile['_from_remote_url'] ?? false) !== true)) {
+    $cleanupRemoteOcrTemp = static function () use ($ocrInputFile): void {
+        if (!is_array($ocrInputFile) || (($ocrInputFile['_from_remote_url'] ?? false) !== true)) {
             return;
         }
-        $tmpRemoteFile = (string)($ocrUploadFile['tmp_name'] ?? '');
+        $tmpRemoteFile = (string)($ocrInputFile['tmp_name'] ?? '');
         if ($tmpRemoteFile !== '') {
             @unlink($tmpRemoteFile);
         }
     };
 
-    $ocrResult = performOcrRequest($ocrBaseUrl, $ocrApiKey, $ocrUploadFile, $ocrLanguage !== '' ? $ocrLanguage : 'rus', $ocrUrlUsed !== '' ? $ocrUrlUsed : null);
-    $ocrResponseBody = $ocrResult['body'];
-    $ocrCurlError = (string)$ocrResult['curl_error'];
-    $ocrStatusCode = (int)$ocrResult['status'];
-
-    if ($ocrResponseBody === false) {
+    $directText = extractTextWithoutOcr($ocrInputFile);
+    if ($directText !== '') {
         $cleanupRemoteOcrTemp();
-        logApiDocs('error', 'OCR request failed', ['curlError' => $ocrCurlError]);
-        jsonResponse(502, ['ok' => false, 'error' => 'Ошибка запроса к OCR API: ' . $ocrCurlError]);
+        jsonResponse(200, [
+            'ok' => true,
+            'text' => $directText,
+            'engine' => 'direct',
+            'raw' => [
+                'source' => 'direct_text',
+                'extension' => detectFileExtension($ocrInputFile),
+            ],
+            'requestId' => $ocrRequestId,
+        ]);
     }
 
-    $ocrJson = json_decode((string)$ocrResponseBody, true);
-    if (!is_array($ocrJson)) {
+    $localOcrResult = performLocalTesseractOcr($ocrInputFile, $env, $ocrLanguage);
+    if (($localOcrResult['ok'] ?? false) !== true) {
         $cleanupRemoteOcrTemp();
-        logApiDocs('error', 'OCR API returned non-JSON', ['response' => mb_substr((string)$ocrResponseBody, 0, 500)]);
-        jsonResponse(502, ['ok' => false, 'error' => 'Некорректный ответ OCR API']);
+        $status = (int)($localOcrResult['status'] ?? 422);
+        $errorMessage = trim((string)($localOcrResult['error'] ?? 'Локальный Tesseract не смог извлечь текст.'));
+        logApiDocs('error', 'Local Tesseract OCR failed', [
+            'requestId' => $ocrRequestId,
+            'status' => $status,
+            'fileName' => (string)($ocrInputFile['name'] ?? ''),
+            'extension' => detectFileExtension($ocrInputFile),
+            'message' => $errorMessage,
+            'runtime' => is_array($localOcrResult['diagnostics'] ?? null)
+                ? $localOcrResult['diagnostics']
+                : [],
+        ]);
+        jsonResponse($status, [
+            'ok' => false,
+            'error' => $errorMessage,
+            'engine' => 'tesseract',
+            'requestId' => $ocrRequestId,
+        ]);
     }
 
-    if ($ocrStatusCode >= 400) {
+    $ocrText = trim((string)($localOcrResult['text'] ?? ''));
+    if ($ocrText === '') {
         $cleanupRemoteOcrTemp();
-        $message = textFromMixed($ocrJson['ErrorMessage'] ?? '');
-        if ($message === '') {
-            $message = 'OCR API error';
-        }
-        jsonResponse(502, ['ok' => false, 'error' => $message, 'status' => $ocrStatusCode]);
+        jsonResponse(422, [
+            'ok' => false,
+            'error' => 'Локальный Tesseract завершил обработку, но не нашёл текст.',
+            'engine' => 'tesseract',
+            'requestId' => $ocrRequestId,
+        ]);
     }
 
-    $hasErrorOnProcessing = isset($ocrJson['IsErroredOnProcessing']) && $ocrJson['IsErroredOnProcessing'] === true;
-    if ($hasErrorOnProcessing) {
-        $cleanupRemoteOcrTemp();
-        $errorMessage = textFromMixed($ocrJson['ErrorMessage'] ?? '');
-        jsonResponse(400, ['ok' => false, 'error' => $errorMessage !== '' ? $errorMessage : 'OCR не смог обработать файл']);
-    }
-
-    $parsedResults = isset($ocrJson['ParsedResults']) && is_array($ocrJson['ParsedResults']) ? $ocrJson['ParsedResults'] : [];
-    $parts = [];
-    foreach ($parsedResults as $entry) {
-        if (is_array($entry) && isset($entry['ParsedText']) && is_string($entry['ParsedText'])) {
-            $textPart = trim($entry['ParsedText']);
-            if ($textPart !== '') {
-                $parts[] = $textPart;
-            }
-        }
-    }
-
-    $ocrText = trim(implode("\n\n", $parts));
-    $cleanupRemoteOcrTemp();
-    jsonResponse(200, [
+    $response = [
         'ok' => true,
         'text' => $ocrText,
-        'raw' => $ocrJson,
-    ]);
+        'engine' => 'tesseract',
+        'language' => (string)($localOcrResult['language'] ?? $ocrLanguage),
+        'pagesProcessed' => (int)($localOcrResult['pages_processed'] ?? 1),
+        'durationMs' => (int)($localOcrResult['duration_ms'] ?? 0),
+        'raw' => [
+            'source' => 'local_tesseract',
+            'extension' => detectFileExtension($ocrInputFile),
+        ],
+        'requestId' => $ocrRequestId,
+    ];
+    $totalPages = (int)($localOcrResult['total_pages'] ?? 0);
+    if ($totalPages > 0) {
+        $response['totalPages'] = $totalPages;
+    }
+    $warning = trim((string)($localOcrResult['warning'] ?? ''));
+    if (($localOcrResult['partial'] ?? false) === true || $warning !== '') {
+        $response['partial'] = true;
+        $response['warning'] = $warning !== '' ? $warning : 'Распознана только часть документа.';
+    }
+
+    $cleanupRemoteOcrTemp();
+    jsonResponse(200, $response);
 }
 
 $apiKey = resolveAiApiKey($env);

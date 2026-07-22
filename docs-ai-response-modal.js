@@ -41,13 +41,65 @@
     { value: 'detailed', label: 'Подробно' },
     { value: 'brief', label: 'Кратко (ИИ анализирует только первые 5 страниц PDF)' }
   ];
-    var DOCS_AI_FALLBACK_ENDPOINTS = ['/js/documents/api-docs.php', '/api-docs.php'];
+  var DOCS_AI_FALLBACK_ENDPOINTS = ['/js/documents/api-docs.php', '/api-docs.php'];
   var GROQ_PAID_ENDPOINTS = ['/js/documents/api-groq-paid.php', '/api-groq-paid.php'];
   var GROQ_PDF_UNSUPPORTED_MODELS = ['llama-3.1-8b-instant'];
-  var VISION_BATCH_SIZE = 4;
+  var PAID_VISION_MODEL = 'qwen/qwen3.6-27b';
+  var VISION_BATCH_SIZE = 3;
   var AI_PDF_PAGE_LIMIT = 5;
   var BRIEF_AI_REQUEST_TIMEOUT_MS = 90000;
   var briefPdfJsLoader = null;
+  var AI_DIAGNOSTICS_PREFIX = '[DOCUMENTS_AI_DIAGNOSTICS]';
+
+  function resolveDiagnosticUrl(endpoint) {
+    try {
+      return new URL(String(endpoint || ''), window.location.href).href;
+    } catch (_) {
+      return String(endpoint || '');
+    }
+  }
+
+  function logAiDiagnostic(eventName, details, error) {
+    if (typeof console === 'undefined' || typeof console.error !== 'function') {
+      return;
+    }
+    var payload = Object.assign({
+      event: String(eventName || 'unknown'),
+      pageUrl: window.location && window.location.href ? String(window.location.href) : '',
+      timestamp: new Date().toISOString()
+    }, details && typeof details === 'object' ? details : {});
+    if (error) {
+      payload.error = {
+        name: String(error.name || ''),
+        message: String(error.message || error),
+        code: String(error.code || ''),
+        stack: String(error.stack || '')
+      };
+    }
+    var serializedPayload = '';
+    try {
+      serializedPayload = JSON.stringify(payload, null, 2);
+    } catch (_) {
+      serializedPayload = String(payload && payload.event ? payload.event : 'unknown');
+    }
+    console.error(AI_DIAGNOSTICS_PREFIX + ' ' + serializedPayload);
+  }
+
+  function formatAiAttemptsForUser(attempts) {
+    var list = Array.isArray(attempts) ? attempts : [];
+    if (!list.length) {
+      return '';
+    }
+    return list.map(function(attempt) {
+      var endpoint = String(attempt && attempt.endpoint ? attempt.endpoint : 'неизвестный адрес');
+      if (attempt && attempt.networkError) {
+        return endpoint + ' — сеть: ' + String(attempt.networkError);
+      }
+      var status = Number(attempt && attempt.status) || 0;
+      var serverError = String(attempt && attempt.serverError ? attempt.serverError : '').trim();
+      return endpoint + ' — HTTP ' + (status || 'без статуса') + (serverError ? ': ' + serverError : '');
+    }).join('\n');
+  }
 
   function createElement(tag, className, text) {
     var node = document.createElement(tag);
@@ -75,9 +127,23 @@
     return Array.from(new Set(endpoints.filter(Boolean)));
   }
 
+  function getGroqPaidEndpoints(preferredApiUrl) {
+    var configured = String(window.GROQ_PAID_API_URL || '').trim();
+    var documentsApiUrl = String(preferredApiUrl || window.DOCUMENTS_AI_API_URL || '').trim();
+    var documentsApiPath = documentsApiUrl.replace(/[?#].*$/g, '');
+    var siblingEndpoint = /api-docs\.php$/i.test(documentsApiPath)
+      ? documentsApiPath.replace(/api-docs\.php$/i, 'api-groq-paid.php')
+      : '';
+    var endpoints = [configured, siblingEndpoint].concat(GROQ_PAID_ENDPOINTS);
+    return endpoints.filter(function(endpoint, index) {
+      return endpoint && endpoints.indexOf(endpoint) === index;
+    });
+  }
+
   async function postDocsAiWithFallback(createFormData, preferredApiUrl, actionName) {
     var endpoints = getDocsAiEndpoints(preferredApiUrl);
     var lastResult = null;
+    var attempts = [];
     for (var index = 0; index < endpoints.length; index += 1) {
       var endpoint = endpoints[index];
       var response = null;
@@ -93,18 +159,40 @@
           body: requestBody
         });
         payload = await response.json().catch(function () { return null; });
+        attempts.push({
+          endpoint: resolveDiagnosticUrl(endpoint),
+          status: response.status,
+          statusText: response.statusText,
+          contentType: response.headers.get('Content-Type') || '',
+          serverError: String(payload && payload.error ? payload.error : '')
+        });
+        if (!response.ok) {
+          logAiDiagnostic('docs-api-http-error', {
+            action: actionName || 'OCR',
+            preferredApiUrl: String(preferredApiUrl || ''),
+            attempt: attempts[attempts.length - 1],
+            attempts: attempts.slice()
+          });
+        }
       } catch (error) {
+        attempts.push({ endpoint: resolveDiagnosticUrl(endpoint), networkError: String(error && error.message ? error.message : error) });
+        logAiDiagnostic('docs-api-network-error', {
+          action: actionName || 'OCR',
+          preferredApiUrl: String(preferredApiUrl || ''),
+          attempts: attempts.slice()
+        }, error);
         lastResult = { endpoint: endpoint, response: response, payload: payload, error: error };
         continue;
       }
-      var shouldTryNext = !response.ok && (response.status === 404 || response.status === 405 || !payload);
+      var shouldTryNext = !response.ok && !payload;
       if (shouldTryNext && index < endpoints.length - 1) {
         lastResult = { endpoint: endpoint, response: response, payload: payload };
         continue;
       }
-      return { endpoint: endpoint, response: response, payload: payload };
+      return { endpoint: endpoint, response: response, payload: payload, attempts: attempts.slice() };
     }
     if (lastResult) {
+      lastResult.attempts = attempts;
       return lastResult;
     }
     throw new Error((actionName || 'OCR') + ' временно недоступен');
@@ -544,7 +632,7 @@
       formData.append('extractedTexts', JSON.stringify(resolved.ocrTexts));
     }
     formData.append('vision_payload', JSON.stringify({
-      model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+      model: PAID_VISION_MODEL,
       max_tokens: 1200,
       temperature: 0.6,
       messages: messages
@@ -699,7 +787,7 @@
     return formData;
   }
 
-  async function postGroqPaidVisionBatched(prompt, state, timeoutMs) {
+  async function postGroqPaidVisionBatched(prompt, state, timeoutMs, config) {
     var resolved = await resolveVisionAssets(state);
     var images = Array.isArray(resolved && resolved.images) ? resolved.images : [];
     if (!images.length) {
@@ -707,11 +795,12 @@
     }
     var imageBatches = chunkItems(images, VISION_BATCH_SIZE);
     var partialAnswers = [];
+    var paidEndpoints = getGroqPaidEndpoints(config && config.apiUrl);
 
     async function postVisionFormDataWithFallback(createFormData) {
       var lastError = null;
-      for (var endpointIndex = 0; endpointIndex < GROQ_PAID_ENDPOINTS.length; endpointIndex += 1) {
-        var endpoint = GROQ_PAID_ENDPOINTS[endpointIndex];
+      for (var endpointIndex = 0; endpointIndex < paidEndpoints.length; endpointIndex += 1) {
+        var endpoint = paidEndpoints[endpointIndex];
         try {
           // eslint-disable-next-line no-await-in-loop
           var response = await fetchWithTimeout(endpoint, {
@@ -719,14 +808,14 @@
             credentials: 'same-origin',
             body: createFormData()
           }, timeoutMs);
-          if (response.status === 404 || response.status === 405) {
-            continue;
-          }
           // eslint-disable-next-line no-await-in-loop
           var payload = await response.clone().json().catch(function () { return null; });
+          if ((response.status === 404 || response.status === 405) && !payload) {
+            continue;
+          }
           var serverError = String(payload && payload.error ? payload.error : '');
           var shouldTryNext = (response.status >= 500 || /E208|internal processing error/i.test(serverError))
-            && endpointIndex < GROQ_PAID_ENDPOINTS.length - 1;
+            && endpointIndex < paidEndpoints.length - 1;
           if (shouldTryNext) {
             continue;
           }
@@ -751,7 +840,7 @@
           formData.append('extractedTexts', JSON.stringify(resolved.ocrTexts));
         }
         formData.append('vision_payload', JSON.stringify({
-          model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+          model: PAID_VISION_MODEL,
           max_tokens: 1200,
           temperature: 0.6,
           messages: [{
@@ -803,7 +892,7 @@
       ok: true,
       response: finalSummary,
       mode: 'vision',
-      model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+      model: PAID_VISION_MODEL,
       tokensUsed: 0
     }), {
       status: 200,
@@ -813,11 +902,12 @@
 
   async function postGroqPaidWithFallback(prompt, state, config, timeoutMs) {
     if (state && state.visionMode) {
-      return postGroqPaidVisionBatched(prompt, state, timeoutMs);
+      return postGroqPaidVisionBatched(prompt, state, timeoutMs, config);
     }
     var lastError = null;
-    for (var i = 0; i < GROQ_PAID_ENDPOINTS.length; i += 1) {
-      var endpoint = GROQ_PAID_ENDPOINTS[i];
+    var paidEndpoints = getGroqPaidEndpoints(config && config.apiUrl);
+    for (var i = 0; i < paidEndpoints.length; i += 1) {
+      var endpoint = paidEndpoints[i];
       try {
         // eslint-disable-next-line no-await-in-loop
         var body = await buildPaidRequestFormData(prompt, state, config);
@@ -827,14 +917,14 @@
           credentials: 'same-origin',
           body: body
         }, timeoutMs);
-        if (response.status === 404 || response.status === 405) {
-          continue;
-        }
         // eslint-disable-next-line no-await-in-loop
         var payload = await response.clone().json().catch(function () { return null; });
+        if ((response.status === 404 || response.status === 405) && !payload) {
+          continue;
+        }
         var serverError = String(payload && payload.error ? payload.error : '');
         var shouldTryNext = (response.status >= 500 || /E208|internal processing error/i.test(serverError))
-          && i < GROQ_PAID_ENDPOINTS.length - 1;
+          && i < paidEndpoints.length - 1;
         if (shouldTryNext) {
           continue;
         }
@@ -1885,9 +1975,23 @@
             resolve(window.pdfjsLib);
             return;
           }
+          logAiDiagnostic('pdfjs-loaded-without-library', {
+            scriptUrl: resolveDiagnosticUrl(source.script),
+            workerUrl: resolveDiagnosticUrl(source.worker),
+            candidateIndex: index,
+            candidateCount: sources.length
+          });
           tryNext();
         };
-        script.onerror = function() { tryNext(); };
+        script.onerror = function(error) {
+          logAiDiagnostic('pdfjs-script-load-failed', {
+            scriptUrl: resolveDiagnosticUrl(source.script),
+            workerUrl: resolveDiagnosticUrl(source.worker),
+            candidateIndex: index,
+            candidateCount: sources.length
+          }, error);
+          tryNext();
+        };
         document.head.appendChild(script);
       }
       tryNext();
@@ -1976,10 +2080,49 @@
     throw new Error('Формат не поддерживается. Поддерживаемые форматы: JPG, PNG, PDF, TXT, DOCX, XLSX');
   }
 
-  async function postBriefGroqPaidWithFallback(createFormData) {
+  async function postBriefGroqPaidWithFallback(createFormData, apiUrl) {
     var lastError = null;
-    for (var index = 0; index < GROQ_PAID_ENDPOINTS.length; index += 1) {
-      var endpoint = GROQ_PAID_ENDPOINTS[index];
+    var attempts = [];
+    var initialFormData = createFormData();
+    var initialPaidAction = String(initialFormData.get('action') || '').trim();
+    var proxyRequest = null;
+    try {
+      proxyRequest = await postDocsAiWithFallback(function() {
+        var formData = createFormData();
+        var paidAction = String(formData.get('action') || '').trim();
+        formData.set('action', 'groq_paid_proxy');
+        formData.set('groq_action', paidAction);
+        return formData;
+      }, apiUrl, 'Платный ИИ');
+    } catch (proxyError) {
+      lastError = proxyError;
+      attempts.push({
+        transport: 'api-docs-proxy',
+        configuredApiUrl: String(apiUrl || ''),
+        networkError: String(proxyError && proxyError.message ? proxyError.message : proxyError)
+      });
+      logAiDiagnostic('paid-api-proxy-failed', {
+        paidAction: initialPaidAction,
+        configuredApiUrl: String(apiUrl || ''),
+        attempts: attempts.slice()
+      }, proxyError);
+    }
+    if (proxyRequest && Array.isArray(proxyRequest.attempts)) {
+      attempts = attempts.concat(proxyRequest.attempts);
+    } else if (proxyRequest && proxyRequest.response) {
+      attempts.push({
+        endpoint: resolveDiagnosticUrl(proxyRequest.endpoint),
+        transport: 'api-docs-proxy',
+        status: proxyRequest.response.status,
+        serverError: String(proxyRequest.payload && proxyRequest.payload.error ? proxyRequest.payload.error : '')
+      });
+    }
+    if (proxyRequest && proxyRequest.response && proxyRequest.payload) {
+      return proxyRequest;
+    }
+    var paidEndpoints = getGroqPaidEndpoints(apiUrl);
+    for (var index = 0; index < paidEndpoints.length; index += 1) {
+      var endpoint = paidEndpoints[index];
       var controller = typeof AbortController === 'function' ? new AbortController() : null;
       var timeoutId = controller ? setTimeout(function() { controller.abort(); }, BRIEF_AI_REQUEST_TIMEOUT_MS) : null;
       try {
@@ -1989,12 +2132,40 @@
           body: createFormData(),
           signal: controller ? controller.signal : undefined
         });
-        if (response.status === 404 || response.status === 405) {
+        var payload = await response.json().catch(function() { return null; });
+        attempts.push({
+          endpoint: resolveDiagnosticUrl(endpoint),
+          transport: 'direct-paid-api',
+          status: response.status,
+          statusText: response.statusText,
+          contentType: response.headers.get('Content-Type') || '',
+          serverError: String(payload && payload.error ? payload.error : '')
+        });
+        if ((response.status === 404 || response.status === 405) && !payload) {
+          logAiDiagnostic('paid-api-endpoint-not-found', {
+            paidAction: initialPaidAction,
+            configuredApiUrl: String(apiUrl || ''),
+            attempt: attempts[attempts.length - 1],
+            attempts: attempts.slice()
+          });
           continue;
         }
-        var payload = await response.json().catch(function() { return null; });
+        if (!response.ok) {
+          logAiDiagnostic('paid-api-http-error', {
+            paidAction: initialPaidAction,
+            configuredApiUrl: String(apiUrl || ''),
+            attempt: attempts[attempts.length - 1],
+            attempts: attempts.slice()
+          });
+        }
         return { endpoint: endpoint, response: response, payload: payload };
       } catch (error) {
+        attempts.push({ endpoint: resolveDiagnosticUrl(endpoint), transport: 'direct-paid-api', networkError: String(error && error.message ? error.message : error) });
+        logAiDiagnostic('paid-api-network-error', {
+          paidAction: initialPaidAction,
+          configuredApiUrl: String(apiUrl || ''),
+          attempts: attempts.slice()
+        }, error);
         lastError = error && error.name === 'AbortError'
           ? new Error('Сервер Платного ИИ не ответил за 90 сек. Повторите попытку.')
           : error;
@@ -2004,59 +2175,27 @@
         }
       }
     }
-    throw lastError || new Error('Не удалось отправить файл в платный ИИ.');
+    var finalError = lastError || new Error('Не удалось отправить файл в платный ИИ.');
+    finalError.attempts = attempts;
+    logAiDiagnostic('paid-api-all-endpoints-failed', {
+      paidAction: initialPaidAction,
+      configuredApiUrl: String(apiUrl || ''),
+      resolvedPaidEndpoints: getGroqPaidEndpoints(apiUrl).map(resolveDiagnosticUrl),
+      resolvedDocsEndpoints: getDocsAiEndpoints(apiUrl).map(resolveDiagnosticUrl),
+      attempts: attempts
+    }, finalError);
+    throw finalError;
   }
 
-  async function postBriefDocsOcrWithFallback(createFormData) {
-    var endpoints = DOCS_AI_FALLBACK_ENDPOINTS.slice();
-    var lastResult = null;
-    for (var index = 0; index < endpoints.length; index += 1) {
-      var endpoint = endpoints[index];
-      var response = null;
-      var payload = null;
-      var controller = typeof AbortController === 'function' ? new AbortController() : null;
-      var timeoutId = controller ? setTimeout(function() { controller.abort(); }, BRIEF_AI_REQUEST_TIMEOUT_MS) : null;
-      try {
-        response = await fetch(endpoint, {
-          method: 'POST',
-          credentials: 'include',
-          body: createFormData(),
-          signal: controller ? controller.signal : undefined
-        });
-        payload = await response.json().catch(function() { return null; });
-      } catch (error) {
-        var timeoutError = error && error.name === 'AbortError'
-          ? new Error('OCR превысил лимит ожидания (90 сек). Попробуйте файл меньшего размера.')
-          : error;
-        lastResult = { endpoint: endpoint, error: timeoutError, response: response, payload: payload };
-        continue;
-      } finally {
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-        }
-      }
-      var shouldTryNext = !response.ok && (response.status === 404 || response.status === 405 || !payload);
-      if (shouldTryNext && index < endpoints.length - 1) {
-        lastResult = { endpoint: endpoint, response: response, payload: payload };
-        continue;
-      }
-      return { endpoint: endpoint, response: response, payload: payload };
-    }
-    if (lastResult) {
-      return lastResult;
-    }
-    throw new Error('OCR временно недоступен.');
-  }
-
-  async function requestBriefOcrByFile(fileOrBlob, fileName) {
+  async function requestBriefOcrByFile(fileOrBlob, fileName, apiUrl) {
     var normalizedName = String(fileName || (fileOrBlob && fileOrBlob.name) || 'ocr-file').trim() || 'ocr-file';
-    var request = await postBriefDocsOcrWithFallback(function() {
+    var request = await postDocsAiWithFallback(function() {
       var formData = new FormData();
       formData.append('action', 'ocr_extract');
       formData.append('language', 'rus');
       formData.append('file', fileOrBlob, normalizedName);
       return formData;
-    });
+    }, apiUrl, 'OCR');
     var response = request && request.response;
     var payload = request && request.payload;
     if (!response || !response.ok || !payload || payload.ok !== true) {
@@ -2069,7 +2208,7 @@
     return text;
   }
 
-  async function requestBriefVisionByFile(source, setStatus) {
+  async function requestBriefVisionByFile(source, setStatus, apiUrl) {
     var file = source && source.fileObject instanceof File ? source.fileObject : null;
     var fileName = briefNormalizeValue(source && source.label) || 'vision-file';
     var fileUrl = briefNormalizeValue(source && source.url);
@@ -2096,7 +2235,7 @@
         formData.append('prompt', prompt);
         formData.append('extractedTexts', JSON.stringify([{ name: prepared.fileName || fileName, type: file.type || 'text/plain', text: text.slice(0, 60000) }]));
         return formData;
-      });
+      }, apiUrl);
       var textPayload = textRequest && textRequest.payload;
       if (!textRequest.response.ok || !textPayload || textPayload.ok !== true) {
         throw new Error((textPayload && textPayload.error) || 'Ошибка запроса Vision режима.');
@@ -2105,7 +2244,7 @@
     }
 
     var images = Array.isArray(prepared.images) ? prepared.images : [];
-    var imageBatches = chunkItems(images, 5);
+    var imageBatches = chunkItems(images, VISION_BATCH_SIZE);
     var partialAnswers = [];
     var startedAt = Date.now();
     var ocrText = '';
@@ -2114,7 +2253,7 @@
     if (!isPdfSource) {
       try {
         setStatus('Распознаю текст (OCR) из файла...', 'loading');
-        ocrText = await requestBriefOcrByFile(file, file.name || fileName);
+        ocrText = await requestBriefOcrByFile(file, file.name || fileName, apiUrl);
       } catch (_) {
         ocrText = '';
       }
@@ -2133,14 +2272,14 @@
           text: String(ocrText).slice(0, 70000)
         }]));
         return formData;
-      });
+      }, apiUrl);
       var fallbackPayload = fallbackRequest && fallbackRequest.payload;
       if (!fallbackRequest.response.ok || !fallbackPayload || fallbackPayload.ok !== true) {
         throw new Error((fallbackPayload && fallbackPayload.error) || 'Ошибка OCR fallback в Vision режиме.');
       }
       return {
         summary: briefToSummaryText(fallbackPayload.summary || fallbackPayload.response),
-        model: fallbackPayload.model || 'meta-llama/llama-4-scout-17b-16e-instruct',
+        model: fallbackPayload.model || PAID_VISION_MODEL,
         timeMs: fallbackPayload.durationMs || (Date.now() - startedAt),
         warning: ''
       };
@@ -2165,7 +2304,7 @@
           }]));
         }
         formData.append('vision_payload', JSON.stringify({
-          model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+          model: PAID_VISION_MODEL,
           max_tokens: 900,
           temperature: 0,
           messages: [{ role: 'user', content: [{ type: 'text', text: (isPdfSource
@@ -2180,7 +2319,7 @@
           formData.append('files', blob, item.fileName || ('vision-' + (batchIndex + 1) + '-' + (index + 1) + '.jpg'));
         });
         return formData;
-      });
+      }, apiUrl);
       var payload = request && request.payload;
       if (!request.response.ok || !payload || payload.ok !== true) {
         throw new Error((payload && payload.error) || ('Ошибка Vision запроса (блок ' + (batchIndex + 1) + ').'));
@@ -2201,14 +2340,14 @@
         }
         formData.append('extractedTexts', JSON.stringify([{ name: file.name || fileName, type: 'text/plain', text: partialAnswers.map(function(item, idx) { return 'Блок ' + (idx + 1) + '/' + partialAnswers.length + ':\\n' + item; }).join('\\n\\n') }]));
         return formData;
-      });
+      }, apiUrl);
       var mergePayload = mergeRequest && mergeRequest.payload;
       if (mergeRequest.response.ok && mergePayload && mergePayload.ok === true) {
         finalSummary = String(mergePayload.summary || mergePayload.response || '') || finalSummary;
       }
     }
     if (!finalSummary) throw new Error('Vision не вернул итоговый текст.');
-    return { summary: briefToSummaryText(finalSummary), model: 'meta-llama/llama-4-scout-17b-16e-instruct', timeMs: Date.now() - startedAt };
+    return { summary: briefToSummaryText(finalSummary), model: PAID_VISION_MODEL, timeMs: Date.now() - startedAt };
   }
 
   function ensureBriefModalStyle() {
@@ -2290,7 +2429,7 @@
         setPreviewLoading(true);
         setPreviewText('⏳ Обрабатываю файл...');
         var startedAt = Date.now();
-        requestBriefVisionByFile(source, function(message) { setPreviewText(message || '⏳ Обрабатываю файл...'); })
+        requestBriefVisionByFile(source, function(message) { setPreviewText(message || '⏳ Обрабатываю файл...'); }, options.apiUrl)
           .then(function(aiPayload) {
           var summaryText = String(aiPayload && aiPayload.summary ? aiPayload.summary : '').trim();
           setPreviewText(summaryText || 'Пустой ответ от ИИ.');
@@ -2304,7 +2443,16 @@
           }
           })
           .catch(function(error) {
-          setPreviewText('Ошибка: ' + (error && error.message ? error.message : 'неизвестная ошибка'));
+          logAiDiagnostic('brief-file-processing-failed', {
+            fileName: String(source && source.label ? source.label : ''),
+            fileSource: source && source.fileObject ? 'local' : 'linked',
+            configuredApiUrl: String(options.apiUrl || ''),
+            attempts: error && Array.isArray(error.attempts) ? error.attempts : []
+          }, error);
+          var attemptsText = formatAiAttemptsForUser(error && error.attempts);
+          setPreviewText('Ошибка: ' + (error && error.message ? error.message : 'неизвестная ошибка')
+            + (attemptsText ? ('\n\nПроверенные адреса:\n' + attemptsText) : '')
+            + '\n\nПодробности записаны в Console с меткой ' + AI_DIAGNOSTICS_PREFIX + '.');
           metaCompact.textContent = '';
           showStatusMessage('warning', 'Не удалось обработать файл «' + source.label + '».');
           })

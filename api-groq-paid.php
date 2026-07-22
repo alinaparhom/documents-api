@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+namespace DocumentsGroqPaid;
+
 /**
  * Гибкий API-обработчик для Groq (paid).
  * Поддерживает маршрутизацию по методам и action.
@@ -704,7 +706,9 @@ function callGroqChat(array $requestPayload, string $apiKey): array
     $rawResponse = curl_exec($ch);
     $httpCode = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
     $curlErr = curl_error($ch);
-    curl_close($ch);
+    if (PHP_VERSION_ID < 80500) {
+        curl_close($ch);
+    }
 
     if ($rawResponse === false) {
         return ['ok' => false, 'status' => 502, 'error' => 'Ошибка запроса к Groq: ' . $curlErr];
@@ -757,7 +761,9 @@ function callGroqTranscription(string $tmpPath, string $fileName, string $mime, 
     $rawResponse = curl_exec($ch);
     $httpCode = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
     $curlErr = curl_error($ch);
-    curl_close($ch);
+    if (PHP_VERSION_ID < 80500) {
+        curl_close($ch);
+    }
 
     if ($rawResponse === false) {
         return ['ok' => false, 'status' => 502, 'error' => 'Ошибка запроса к Groq Whisper: ' . $curlErr];
@@ -1089,7 +1095,7 @@ function handleAnalyzePaidAction(array $env): void
 
         $startedAt = microtime(true);
         $visionExtractPayload = [
-            'model' => (string)($visionPayload['model'] ?? 'meta-llama/llama-4-scout-17b-16e-instruct'),
+            'model' => (string)($visionPayload['model'] ?? 'qwen/qwen3.6-27b'),
             'max_tokens' => min(2600, max(900, (int)($visionPayload['max_tokens'] ?? 1800))),
             'messages' => [
                 ['role' => 'system', 'content' => 'Ты модуль чтения документа. Возвращай только текст без анализа.'],
