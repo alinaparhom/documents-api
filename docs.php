@@ -174,8 +174,45 @@ const DOCS_AI_TASK_SEARCH_RERANK_MAX_CHARS = 220000;
 const DOCS_AI_TASK_SEARCH_LOCAL_PREFILTER_MIN_TASKS = 80;
 const DOCS_AI_TASK_SEARCH_CLIENT_SNAPSHOT_MAX_TASKS = 1000;
 const DOCS_AI_TASK_SEARCH_LOCAL_MAX_RESULTS = 1000;
+const DOCS_TASK_RAG_DEFAULT_BASE_URL = 'http://10.0.0.2:5678/webhook/bimmax/task-rag';
+const DOCS_TASK_RAG_CONNECT_TIMEOUT_SECONDS = 10;
+const DOCS_TASK_RAG_REQUEST_TIMEOUT_SECONDS = 180;
+const DOCS_TASK_RAG_STATUS_TIMEOUT_SECONDS = 15; // Превышает 10-секундный timeout Qdrant status-узла и позволяет n8n вернуть точную ошибку.
+const DOCS_TASK_RAG_MAX_RESPONSE_BYTES = 10485760; // 10 МБ защищают PHP от неограниченного ответа внешнего поиска.
+const DOCS_TASK_RAG_SEARCH_MAX_RESULTS = 5;
+const DOCS_TASK_RAG_READY_TOKEN_TTL_SECONDS = 1800; // Готовый индекс повторно используется 30 минут; новая индексация выполняется асинхронно.
+const DOCS_AI_TASK_SEARCH_LOCAL_FUZZY_CANDIDATE_LIMIT = 512; // Ограничивает проверку похожих слов, сохраняя поиск по всему OCR-файлу.
 const DOCS_S3_READ_MAX_BYTES = 1048576; // 1 МБ: админский предпросмотр читает только текстовые файлы.
 const DOCS_EXTERNAL_COMMAND_OUTPUT_MAX_BYTES = 2097152; // 2 МБ защищают PHP от безграничного stdout дочернего процесса.
+const DOCS_PRIVATE_OCR_DEFAULT_WEBHOOK_URL = 'http://10.0.0.2:5678/webhook/ocr';
+const DOCS_PRIVATE_OCR_CREATE_TIMEOUT_SECONDS = 55;
+const DOCS_PRIVATE_OCR_REQUEST_TIMEOUT_SECONDS = 30;
+const DOCS_PRIVATE_OCR_CONNECT_TIMEOUT_SECONDS = 30;
+const DOCS_PRIVATE_OCR_MAX_RESPONSE_BYTES = 10485760; // 10 МБ достаточно для JSON с текстом большого документа.
+const DOCS_PRIVATE_OCR_MAX_TEXT_LENGTH = 5000000; // Ограничение защищает размер пользовательских S3-снимков.
+const DOCS_OCR_SNAPSHOT_READ_MEMORY_LIMIT = '512M'; // Большой лимит применяется только при точечном просмотре OCR из S3-снимка.
+const DOCS_OCR_BACKFILL_STATE_FILENAME = 'ocr_backfill_state.json';
+const DOCS_OCR_BACKFILL_LOCK_FILENAME = '.ocr_backfill_worker.lock';
+const DOCS_OCR_GLOBAL_WORKER_LOCK_FILENAME = '.documents_ocr_global_worker.lock';
+const DOCS_OCR_CRON_CYCLE_LOCK_FILENAME = '.documents_ocr_cron_cycle.lock';
+const DOCS_OCR_CRON_STATE_FILENAME = 'documents_ocr_cron_state.json';
+const DOCS_TELEGRAM_SNAPSHOT_AUDIT_STATE_FILENAME = 'telegram_snapshot_audit_state.json';
+const DOCS_TELEGRAM_SNAPSHOT_AUDIT_LOCK_FILENAME = '.telegram_snapshot_audit.lock';
+const DOCS_TELEGRAM_SNAPSHOT_AUDIT_VERSION = 1;
+const DOCS_OCR_CRON_MARKER = '# BIMMAX_DOCUMENTS_OCR_CRON';
+const DOCS_OCR_CRON_COMMAND = 'documents-ocr-cron';
+const DOCS_OCR_CRON_SCHEDULE = '* * * * *';
+const DOCS_OCR_CRON_RUN_WINDOW_SECONDS = 50;
+const DOCS_OCR_CRON_POLL_INTERVAL_MILLISECONDS = 3000;
+const DOCS_OCR_BACKFILL_MAX_ATTEMPTS = 3;
+const DOCS_OCR_BACKFILL_RECENT_FAILURES_LIMIT = 30;
+const DOCS_OCR_BACKFILL_WORKFLOW_VERSION = 5; // Версия 5 принудительно пересчитывает каждый старый файл и перезаписывает OCR участников.
+const DOCS_OCR_SNAPSHOT_DELIVERY_VERSION = 2; // Версия пофайловой доставки OCR во все telegramId.json участников.
+const DOCS_OCR_DELIVERY_REPAIR_GENERATION = 1; // Один раз возвращает в очередь старые ошибки доставки после исправления блокировки JSON.
+const DOCS_OCR_S3_CHECK_TOTAL_TIMEOUT_SECONDS = 45;
+const DOCS_OCR_S3_CHECK_PARTICIPANT_TIMEOUT_SECONDS = 8;
+const DOCS_OCR_S3_CHECK_MAX_TIMEOUT_SECONDS = 300;
+const DOCS_OCR_LIVE_UPLOAD_GENERATION = 1; // Признак файлов, загруженных после включения фонового OCR jobs.
 
 function sanitize_instruction(?string $value): string
 {
@@ -1154,7 +1191,7 @@ function docs_format_human_date(?string $value): string
 
 function docs_resolve_telegram_chat_id_from_assignee(array $assignee): ?string
 {
-    foreach (['telegram', 'chatId', 'id'] as $field) {
+    foreach (['telegram', 'telegramId', 'telegram_id', 'chatId', 'chat_id', 'userId', 'id'] as $field) {
         if (!isset($assignee[$field])) {
             continue;
         }
@@ -3808,6 +3845,10 @@ function summarize_response_payload(array $payload): array
     $summary = [];
 
     foreach ($payload as $key => $value) {
+        if ($key === 'readyToken') {
+            $summary[$key] = '[redacted]';
+            continue;
+        }
         if ($key === 'documents' && is_array($value)) {
             $ids = [];
             foreach (array_slice($value, 0, 5) as $item) {
@@ -3946,6 +3987,17 @@ function get_raw_input(): string
 }
 
 require_once __DIR__ . '/sanitize.php';
+
+if (PHP_SAPI === 'cli'
+    && isset($argv[1])
+    && is_string($argv[1])
+    && trim($argv[1]) === DOCS_OCR_CRON_COMMAND
+) {
+    $cronResult = docs_run_ocr_cron_window();
+    $encodedCronResult = json_encode($cronResult, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    fwrite(STDOUT, ($encodedCronResult !== false ? $encodedCronResult : '{"ok":false}') . PHP_EOL);
+    exit(!empty($cronResult['ok']) ? 0 : 1);
+}
 
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
@@ -4710,6 +4762,438 @@ function docs_prepare_incoming_file_storage_upload(
     ];
 
     return $storedFile;
+}
+
+function docs_build_new_file_ocr_state(bool $isLiveUpload = false): array
+{
+    $state = [
+        'status' => 'pending',
+        'engine' => 'n8n_jobs',
+        'queuedAt' => date('c'),
+    ];
+    if ($isLiveUpload) {
+        $state['uploadGeneration'] = DOCS_OCR_LIVE_UPLOAD_GENERATION;
+        $state['uploadOrigin'] = 'live_upload';
+    }
+
+    return $state;
+}
+
+function docs_resolve_private_ocr_webhook_url(): string
+{
+    $env = docs_ai_task_search_load_env();
+    $url = trim((string) ($env['PRIVATE_OCR_WEBHOOK_URL'] ?? DOCS_PRIVATE_OCR_DEFAULT_WEBHOOK_URL));
+    $url = preg_replace('~/(?:jobs|status|result)/?$~i', '', rtrim($url, '/')) ?? $url;
+
+    return filter_var($url, FILTER_VALIDATE_URL) !== false
+        ? $url
+        : DOCS_PRIVATE_OCR_DEFAULT_WEBHOOK_URL;
+}
+
+function docs_detect_private_ocr_mime_type(string $localPath, string $originalName = ''): string
+{
+    if (!is_file($localPath) || !is_readable($localPath) || !function_exists('finfo_open')) {
+        return '';
+    }
+
+    $finfo = @finfo_open(FILEINFO_MIME_TYPE);
+    if ($finfo === false) {
+        return '';
+    }
+
+    try {
+        $mimeType = @finfo_file($finfo, $localPath);
+    } finally {
+        finfo_close($finfo);
+    }
+
+    $detectedMimeType = is_string($mimeType) ? strtolower(trim($mimeType)) : '';
+    $sourceName = trim($originalName) !== '' ? $originalName : $localPath;
+    $extension = strtolower((string) pathinfo($sourceName, PATHINFO_EXTENSION));
+    if ($extension === 'docx') {
+        return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    }
+    if ($extension === 'doc') {
+        return 'application/msword';
+    }
+
+    return $detectedMimeType;
+}
+
+function docs_private_ocr_json_request(
+    string $url,
+    int $timeoutSeconds,
+    array $curlOptions = [],
+    int $maxResponseBytes = DOCS_PRIVATE_OCR_MAX_RESPONSE_BYTES
+): array {
+    $responseBody = '';
+    $responseTooLarge = false;
+    $curl = curl_init($url);
+    if ($curl === false) {
+        return [
+            'ok' => false,
+            'httpStatus' => 0,
+            'error' => 'Не удалось подготовить OCR-запрос.',
+        ];
+    }
+
+    curl_setopt_array($curl, array_replace([
+        CURLOPT_RETURNTRANSFER => false,
+        CURLOPT_CONNECTTIMEOUT => DOCS_PRIVATE_OCR_CONNECT_TIMEOUT_SECONDS,
+        CURLOPT_TIMEOUT => $timeoutSeconds,
+        CURLOPT_FOLLOWLOCATION => false,
+        CURLOPT_WRITEFUNCTION => static function ($handle, string $chunk) use (
+            &$responseBody,
+            &$responseTooLarge,
+            $maxResponseBytes
+        ): int {
+            if (strlen($responseBody) + strlen($chunk) > $maxResponseBytes) {
+                $responseTooLarge = true;
+                return 0;
+            }
+            $responseBody .= $chunk;
+            return strlen($chunk);
+        },
+    ], $curlOptions));
+
+    try {
+        $executed = curl_exec($curl);
+        $httpStatus = (int) curl_getinfo($curl, CURLINFO_HTTP_CODE);
+        $curlError = trim((string) curl_error($curl));
+    } finally {
+        curl_close($curl);
+    }
+
+    if ($responseTooLarge) {
+        return [
+            'ok' => false,
+            'httpStatus' => $httpStatus,
+            'error' => 'Ответ OCR превышает допустимый размер.',
+        ];
+    }
+
+    $decoded = json_decode($responseBody, true);
+    if ($httpStatus < 200 || $httpStatus >= 300) {
+        $serverError = is_array($decoded)
+            ? sanitize_text_field((string) ($decoded['error'] ?? ($decoded['message'] ?? '')), 500)
+            : '';
+        return [
+            'ok' => false,
+            'httpStatus' => $httpStatus,
+            'error' => $serverError !== ''
+                ? $serverError
+                : ($curlError !== '' ? $curlError : 'OCR-сервер вернул HTTP ' . $httpStatus . '.'),
+        ];
+    }
+
+    if (!is_array($decoded)) {
+        return [
+            'ok' => false,
+            'httpStatus' => $httpStatus,
+            'error' => 'OCR-сервер вернул некорректный JSON.',
+        ];
+    }
+
+    return [
+        'ok' => true,
+        'httpStatus' => $httpStatus,
+        'payload' => $decoded,
+    ];
+}
+
+function docs_private_ocr_idempotency_key(string $localPath, bool $forceNewJob = false): string
+{
+    $digest = @hash_file('sha256', $localPath);
+    if (!is_string($digest) || $digest === '') {
+        $fallback = $localPath . '|' . (string) (@filesize($localPath) ?: 0) . '|' . (string) (@filemtime($localPath) ?: 0);
+        $digest = hash('sha256', $fallback);
+    }
+
+    if ($forceNewJob) {
+        try {
+            $retryToken = bin2hex(random_bytes(8));
+        } catch (Throwable $error) {
+            $retryToken = sha1(uniqid('ocr-retry-', true));
+        }
+        return 'documents-ocr-retry-' . $digest . '-' . $retryToken;
+    }
+
+    return 'documents-ocr-' . $digest;
+}
+
+function docs_private_ocr_error_result(
+    string $mimeType,
+    string $error,
+    int $httpStatus = 0,
+    string $jobId = ''
+): array {
+    return array_filter([
+        'status' => 'error',
+        'mimeType' => $mimeType,
+        'httpStatus' => $httpStatus > 0 ? $httpStatus : null,
+        'jobId' => $jobId !== '' ? $jobId : null,
+        'error' => sanitize_text_field($error, 500),
+    ], static function ($value): bool {
+        return $value !== null && $value !== '';
+    });
+}
+
+function docs_normalize_private_ocr_job_payload(array $payload): array
+{
+    if (isset($payload[0]) && is_array($payload[0])) {
+        return $payload[0];
+    }
+
+    return $payload;
+}
+
+function docs_fetch_private_ocr_job_result(string $jobId): array
+{
+    $jobId = sanitize_text_field($jobId, 160);
+    if ($jobId === '') {
+        return [
+            'ok' => false,
+            'httpStatus' => 0,
+            'error' => 'Не указан OCR job_id.',
+        ];
+    }
+
+    $response = docs_private_ocr_json_request(
+        docs_resolve_private_ocr_webhook_url() . '/result?' . http_build_query(['job_id' => $jobId]),
+        DOCS_PRIVATE_OCR_REQUEST_TIMEOUT_SECONDS
+    );
+    if (empty($response['ok'])) {
+        return [
+            'ok' => false,
+            'httpStatus' => (int) ($response['httpStatus'] ?? 0),
+            'error' => (string) ($response['error'] ?? 'Не удалось получить результат OCR.'),
+        ];
+    }
+
+    $payload = isset($response['payload']) && is_array($response['payload'])
+        ? docs_normalize_private_ocr_job_payload($response['payload'])
+        : [];
+    if (!isset($payload['text']) || !is_string($payload['text'])) {
+        return [
+            'ok' => false,
+            'httpStatus' => (int) ($response['httpStatus'] ?? 0),
+            'error' => 'OCR-сервер не вернул текст результата.',
+        ];
+    }
+
+    $text = trim($payload['text']);
+    if ($text === '') {
+        return [
+            'ok' => false,
+            'httpStatus' => (int) ($response['httpStatus'] ?? 200),
+            'error' => 'OCR завершён, но распознанный текст пуст.',
+        ];
+    }
+    $textWasTruncated = mb_strlen($text, 'UTF-8') > DOCS_PRIVATE_OCR_MAX_TEXT_LENGTH;
+    if ($textWasTruncated) {
+        $text = mb_substr($text, 0, DOCS_PRIVATE_OCR_MAX_TEXT_LENGTH, 'UTF-8');
+    }
+
+    return [
+        'ok' => true,
+        'httpStatus' => (int) ($response['httpStatus'] ?? 200),
+        'jobId' => $jobId,
+        'text' => $text,
+        'pagesCount' => isset($payload['pages']) && is_array($payload['pages']) ? count($payload['pages']) : 0,
+        'textTruncated' => $textWasTruncated,
+    ];
+}
+
+function docs_create_private_ocr_job(
+    string $localPath,
+    string $originalName,
+    bool $forceNewJob = false
+): array {
+    if (!is_file($localPath) || !is_readable($localPath)) {
+        return docs_private_ocr_error_result('', 'Файл недоступен для OCR.');
+    }
+
+    $mimeType = docs_detect_private_ocr_mime_type($localPath, $originalName);
+    if (!function_exists('curl_init') || !class_exists('CURLFile')) {
+        return docs_private_ocr_error_result($mimeType, 'PHP cURL недоступен.');
+    }
+
+    if ($mimeType === '') {
+        $mimeType = 'application/octet-stream';
+    }
+    $uploadName = trim($originalName) !== '' ? basename($originalName) : basename($localPath);
+    $response = docs_private_ocr_json_request(
+        docs_resolve_private_ocr_webhook_url() . '/jobs',
+        DOCS_PRIVATE_OCR_CREATE_TIMEOUT_SECONDS,
+        [
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => [
+                'file' => new CURLFile($localPath, $mimeType, $uploadName),
+            ],
+            CURLOPT_HTTPHEADER => [
+                'Idempotency-Key: ' . docs_private_ocr_idempotency_key($localPath, $forceNewJob),
+            ],
+        ],
+        1048576
+    );
+    if (empty($response['ok'])) {
+        return docs_private_ocr_error_result(
+            $mimeType,
+            (string) ($response['error'] ?? 'Не удалось создать OCR-задание.'),
+            (int) ($response['httpStatus'] ?? 0)
+        );
+    }
+
+    $payload = isset($response['payload']) && is_array($response['payload'])
+        ? docs_normalize_private_ocr_job_payload($response['payload'])
+        : [];
+    $jobId = sanitize_text_field((string) ($payload['job_id'] ?? ''), 160);
+    if ($jobId === '') {
+        return docs_private_ocr_error_result(
+            $mimeType,
+            'OCR-сервер не вернул job_id.',
+            (int) ($response['httpStatus'] ?? 0)
+        );
+    }
+
+    return [
+        'status' => sanitize_text_field((string) ($payload['status'] ?? 'queued'), 40),
+        'mimeType' => $mimeType,
+        'httpStatus' => (int) ($response['httpStatus'] ?? 202),
+        'jobId' => $jobId,
+        'jobReused' => !empty($payload['reused']),
+        'progress' => max(0, min(100, (int) ($payload['progress'] ?? 0))),
+    ];
+}
+
+function docs_fetch_private_ocr_job_status(string $jobId): array
+{
+    $jobId = sanitize_text_field($jobId, 160);
+    if ($jobId === '') {
+        return ['ok' => false, 'error' => 'Не указан OCR job_id.'];
+    }
+
+    $response = docs_private_ocr_json_request(
+        docs_resolve_private_ocr_webhook_url() . '/status?' . http_build_query(['job_id' => $jobId]),
+        DOCS_PRIVATE_OCR_REQUEST_TIMEOUT_SECONDS,
+        [],
+        1048576
+    );
+    if (empty($response['ok'])) {
+        return [
+            'ok' => false,
+            'httpStatus' => (int) ($response['httpStatus'] ?? 0),
+            'error' => sanitize_text_field(
+                (string) ($response['error'] ?? 'Не удалось проверить OCR-задание.'),
+                500
+            ),
+        ];
+    }
+
+    $payload = isset($response['payload']) && is_array($response['payload'])
+        ? docs_normalize_private_ocr_job_payload($response['payload'])
+        : [];
+    $status = strtolower(sanitize_text_field((string) ($payload['status'] ?? ''), 40));
+    if (!in_array($status, ['queued', 'running', 'succeeded', 'failed', 'cancelled'], true)) {
+        return [
+            'ok' => false,
+            'httpStatus' => (int) ($response['httpStatus'] ?? 0),
+            'error' => 'OCR-сервер вернул неизвестный статус задания.',
+        ];
+    }
+
+    return [
+        'ok' => true,
+        'httpStatus' => (int) ($response['httpStatus'] ?? 200),
+        'jobId' => $jobId,
+        'status' => $status,
+        'progress' => max(0, min(100, (int) ($payload['progress'] ?? 0))),
+        'currentPage' => max(0, (int) ($payload['current_page'] ?? 0)),
+        'totalPages' => max(0, (int) ($payload['total_pages'] ?? 0)),
+        'createdAt' => sanitize_text_field((string) ($payload['created_at'] ?? ''), 80),
+        'startedAt' => sanitize_text_field((string) ($payload['started_at'] ?? ''), 80),
+        'completedAt' => sanitize_text_field((string) ($payload['completed_at'] ?? ''), 80),
+        'resultUrl' => sanitize_text_field((string) ($payload['result_url'] ?? ''), 500),
+        'error' => sanitize_text_field((string) ($payload['error'] ?? ($payload['message'] ?? '')), 500),
+    ];
+}
+
+function docs_sync_uploaded_files_to_cold_storage(string $folder, array $uploads): void
+{
+    if (empty($uploads)) {
+        return;
+    }
+
+    $resultsByStoredName = [];
+    foreach ($uploads as $upload) {
+        if (!is_array($upload) || !isset($upload['file']) || !is_array($upload['file'])) {
+            continue;
+        }
+
+        $storedName = sanitize_text_field((string) ($upload['file']['storedName'] ?? ''), 255);
+        $localPath = (string) ($upload['localPath'] ?? '');
+        $relativePath = docs_normalize_cold_storage_relative_path((string) ($upload['relativePath'] ?? ''));
+        if ($storedName === '' || $localPath === '' || $relativePath === '') {
+            continue;
+        }
+
+        $resultsByStoredName[$storedName] = [
+            'relativePath' => $relativePath,
+            'result' => docs_upload_file_to_cold_storage($localPath, $folder, $relativePath),
+        ];
+    }
+
+    if (empty($resultsByStoredName)) {
+        return;
+    }
+
+    [$handle, $records] = docs_lock_registry($folder);
+    if ($handle === null) {
+        docs_write_response_log('Не удалось обновить S3-статус новых вложений: реестр заблокирован', [
+            'folder' => $folder,
+            'filesCount' => count($resultsByStoredName),
+        ]);
+        return;
+    }
+
+    $changed = false;
+    try {
+        foreach ($records as &$record) {
+            if (!is_array($record) || !isset($record['files']) || !is_array($record['files'])) {
+                continue;
+            }
+            foreach ($record['files'] as &$file) {
+                if (!is_array($file)) {
+                    continue;
+                }
+                $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
+                if ($storedName === '' || !isset($resultsByStoredName[$storedName])) {
+                    continue;
+                }
+                $entry = $resultsByStoredName[$storedName];
+                $result = is_array($entry['result'] ?? null) ? $entry['result'] : [];
+                $file = docs_apply_cold_storage_state(
+                    $file,
+                    $folder,
+                    (string) ($entry['relativePath'] ?? ''),
+                    !empty($result['ok']) ? 'synced' : 'local_fallback',
+                    $result
+                );
+                $changed = true;
+            }
+            unset($file);
+        }
+        unset($record);
+
+        if ($changed && !docs_save_registry_locked($handle, $records)) {
+            docs_write_response_log('Не удалось сохранить S3-статус новых вложений', [
+                'folder' => $folder,
+                'filesCount' => count($resultsByStoredName),
+            ]);
+        }
+    } finally {
+        docs_unlock_registry($handle);
+    }
 }
 
 function docs_apply_cold_storage_state(
@@ -9064,6 +9548,11 @@ function docs_build_mini_app_user_tasks_snapshot_relative_path(string $safeTeleg
     return MINI_APP_USER_TASKS_SNAPSHOT_STORAGE_DIRECTORY . '/' . $safeTelegramUserId . '.json';
 }
 
+function docs_mini_app_user_tasks_snapshot_lock_path(string $safeTelegramUserId): string
+{
+    return sys_get_temp_dir() . '/docs_tasks_snapshot_' . sha1($safeTelegramUserId) . '.lock';
+}
+
 function docs_upload_mini_app_user_tasks_snapshot_to_cold_storage(string $localPath, string $relativePath): array
 {
     $key = docs_build_cold_storage_key(MINI_APP_USER_TASKS_SNAPSHOT_STORAGE_FOLDER, $relativePath);
@@ -9134,6 +9623,7 @@ function docs_save_mini_app_user_tasks_snapshot(
     ?array $filter,
     array $directorModeSummary
 ): array {
+    @ini_set('memory_limit', DOCS_OCR_SNAPSHOT_READ_MEMORY_LIMIT);
     $telegramUserId = normalize_identifier_value($telegramUserId);
     if ($telegramUserId === '') {
         return [
@@ -9144,9 +9634,28 @@ function docs_save_mini_app_user_tasks_snapshot(
     }
 
     $safeTelegramUserId = docs_sanitize_mini_app_user_tasks_snapshot_id($telegramUserId);
+    $lockHandle = @fopen(docs_mini_app_user_tasks_snapshot_lock_path($safeTelegramUserId), 'c+');
+    if ($lockHandle === false || !@flock($lockHandle, LOCK_EX)) {
+        if (is_resource($lockHandle)) {
+            fclose($lockHandle);
+        }
+        return [
+            'saved' => false,
+            'status' => 'lock_failed',
+            'reason' => 'snapshot_lock_failed',
+        ];
+    }
+
+    try {
     $relativePath = docs_build_mini_app_user_tasks_snapshot_relative_path($safeTelegramUserId);
     $generatedAt = date('c');
     $tasks = array_values($tasks);
+    $existingSnapshot = docs_load_mini_app_user_tasks_snapshot($telegramUserId);
+    if (!empty($existingSnapshot['ok'])
+        && isset($existingSnapshot['snapshot'])
+        && is_array($existingSnapshot['snapshot'])) {
+        $tasks = docs_merge_task_rag_ocr_snapshot($tasks, $existingSnapshot['snapshot']);
+    }
     $payload = [
         'version' => 2,
         'source' => 'mini_app_tasks',
@@ -9212,6 +9721,10 @@ function docs_save_mini_app_user_tasks_snapshot(
     }
 
     return $result;
+    } finally {
+        @flock($lockHandle, LOCK_UN);
+        fclose($lockHandle);
+    }
 }
 
 function docs_build_mini_app_user_tasks_snapshot_pending_result(string $telegramUserId, int $tasksCount): array
@@ -9255,7 +9768,31 @@ function docs_read_mini_app_user_tasks_snapshot_json(string $path): ?array
     return is_array($decoded) ? $decoded : null;
 }
 
-function docs_load_mini_app_user_tasks_snapshot(string $telegramUserId): array
+function docs_rclone_error_is_missing_object(string $error): bool
+{
+    $error = mb_strtolower(trim($error), 'UTF-8');
+    if ($error === '') {
+        return false;
+    }
+    foreach ([
+        'object not found',
+        'directory not found',
+        'file not found',
+        'path not found',
+        'no such file',
+        'does not exist',
+        "doesn't exist",
+        'specified key does not exist',
+    ] as $marker) {
+        if (strpos($error, $marker) !== false) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function docs_load_mini_app_user_tasks_snapshot(string $telegramUserId, int $timeoutSeconds = 20): array
 {
     $telegramUserId = normalize_identifier_value($telegramUserId);
     if ($telegramUserId === '') {
@@ -9287,14 +9824,21 @@ function docs_load_mini_app_user_tasks_snapshot(string $telegramUserId): array
         ];
     }
 
-    $download = docs_run_rclone_command(['copyto', docs_cold_storage_remote_path($key), $tempPath], 20);
+    $download = docs_run_rclone_command(
+        ['copyto', docs_cold_storage_remote_path($key), $tempPath],
+        max(1, min(20, $timeoutSeconds))
+    );
     if (empty($download['ok'])) {
         @unlink($tempPath);
+        $downloadError = (string) ($download['error'] ?? 'JSON-снимок задач в S3 недоступен.');
 
         return [
             'ok' => false,
             'error' => 's3_snapshot_unavailable',
-            'message' => (string) ($download['error'] ?? 'JSON-снимок задач в S3 недоступен.'),
+            'message' => $downloadError,
+            'notFound' => docs_rclone_error_is_missing_object($downloadError),
+            'timedOut' => !empty($download['timedOut']),
+            'exitCode' => (int) ($download['exitCode'] ?? 0),
             'relativePath' => $relativePath,
             'key' => $key,
         ];
@@ -9356,6 +9900,3681 @@ function docs_task_snapshot_key(array $task): string
     }
 
     return implode('|', $parts);
+}
+
+function docs_load_telegram_participant_directory_entries(string $folder): array
+{
+    if ($folder === '') {
+        return [];
+    }
+
+    $settings = load_admin_settings($folder);
+    $directoryEntries = [];
+    foreach (['responsibles', 'block2', 'block3'] as $group) {
+        if (isset($settings[$group]) && is_array($settings[$group])) {
+            $directoryEntries = array_merge($directoryEntries, $settings[$group]);
+        }
+    }
+
+    return $directoryEntries;
+}
+
+function docs_resolve_participant_telegram_id(array $participant, array $directoryEntries = []): ?string
+{
+    $telegramId = docs_resolve_telegram_chat_id_from_assignee($participant);
+    if ($telegramId !== null) {
+        return (string) $telegramId;
+    }
+
+    foreach (['id', 'userId', 'login', 'username', 'email', 'name', 'responsible', 'fio', 'fullName'] as $field) {
+        $candidate = sanitize_text_field((string) ($participant[$field] ?? ''), 200);
+        if ($candidate === '') {
+            continue;
+        }
+        $directoryEntry = docs_find_responsible_by_candidate($directoryEntries, $candidate);
+        if (!is_array($directoryEntry)) {
+            continue;
+        }
+        $telegramId = docs_resolve_telegram_chat_id_from_assignee($directoryEntry);
+        if ($telegramId !== null) {
+            return (string) $telegramId;
+        }
+    }
+
+    return null;
+}
+
+function docs_collect_record_telegram_participation(
+    array $record,
+    string $folder = '',
+    ?array $directoryEntries = null
+): array {
+    if ($directoryEntries === null) {
+        $directoryEntries = docs_load_telegram_participant_directory_entries($folder);
+    }
+
+    $participation = [];
+    foreach (['responsible', 'subordinate', 'director'] as $role) {
+        foreach (docs_collect_record_role_participants($record, $role) as $participant) {
+            if (!is_array($participant)) {
+                continue;
+            }
+            $telegramId = docs_resolve_participant_telegram_id($participant, $directoryEntries);
+            if ($telegramId === null || $telegramId === '') {
+                continue;
+            }
+            $key = 'telegram:' . $telegramId;
+            if (!isset($participation[$key])) {
+                $participation[$key] = [
+                    'telegramId' => $telegramId,
+                    'roles' => [],
+                ];
+            }
+            if (!in_array($role, $participation[$key]['roles'], true)) {
+                $participation[$key]['roles'][] = $role;
+            }
+        }
+    }
+
+    return array_values($participation);
+}
+
+function docs_collect_record_telegram_ids(array $record, string $folder = ''): array
+{
+    return array_values(array_map(static function (array $participant): string {
+        return (string) ($participant['telegramId'] ?? '');
+    }, docs_collect_record_telegram_participation($record, $folder)));
+}
+
+function docs_merge_task_file_ocr_text(
+    array $targetTask,
+    array $sourceTask,
+    bool $overwriteExisting
+): array {
+    if (!isset($targetTask['files']) || !is_array($targetTask['files'])) {
+        return $targetTask;
+    }
+
+    $ocrTextByStoredName = [];
+    foreach (isset($sourceTask['files']) && is_array($sourceTask['files']) ? $sourceTask['files'] : [] as $sourceFile) {
+        if (!is_array($sourceFile)
+            || !isset($sourceFile['ocrText'])
+            || !is_string($sourceFile['ocrText'])
+            || trim($sourceFile['ocrText']) === ''
+        ) {
+            continue;
+        }
+        $storedName = sanitize_text_field((string) ($sourceFile['storedName'] ?? ''), 255);
+        if ($storedName !== '') {
+            $ocrTextByStoredName[$storedName] = trim($sourceFile['ocrText']);
+        }
+    }
+    if (empty($ocrTextByStoredName)) {
+        return $targetTask;
+    }
+
+    foreach ($targetTask['files'] as &$targetFile) {
+        if (!is_array($targetFile)) {
+            continue;
+        }
+        $storedName = sanitize_text_field((string) ($targetFile['storedName'] ?? ''), 255);
+        if ($storedName === '' || !isset($ocrTextByStoredName[$storedName])) {
+            continue;
+        }
+        $currentText = isset($targetFile['ocrText']) && is_string($targetFile['ocrText'])
+            ? trim($targetFile['ocrText'])
+            : '';
+        if (!$overwriteExisting && $currentText !== '') {
+            continue;
+        }
+        $targetFile['ocrText'] = $ocrTextByStoredName[$storedName];
+        $targetFile['ocrTextLength'] = mb_strlen($ocrTextByStoredName[$storedName], 'UTF-8');
+    }
+    unset($targetFile);
+
+    return $targetTask;
+}
+
+function docs_index_telegram_participation(array $participation): array
+{
+    $index = [];
+    foreach ($participation as $participant) {
+        if (!is_array($participant)) {
+            continue;
+        }
+        $telegramId = normalize_identifier_value($participant['telegramId'] ?? '');
+        if ($telegramId === '') {
+            continue;
+        }
+        $roles = [];
+        foreach (isset($participant['roles']) && is_array($participant['roles']) ? $participant['roles'] : [] as $role) {
+            $normalizedRole = docs_normalize_assignment_role((string) $role);
+            if ($normalizedRole !== '') {
+                $roles[$normalizedRole] = true;
+            }
+        }
+        $roleList = array_keys($roles);
+        sort($roleList, SORT_STRING);
+        $index[$telegramId] = $roleList;
+    }
+    ksort($index, SORT_STRING);
+
+    return $index;
+}
+
+function docs_rebuild_mini_app_user_tasks_snapshot(string $telegramUserId, ?array $ocrTaskOverride = null): array
+{
+    @ini_set('memory_limit', DOCS_OCR_SNAPSHOT_READ_MEMORY_LIMIT);
+    $telegramUserId = normalize_identifier_value($telegramUserId);
+    if ($telegramUserId === '') {
+        return [
+            'saved' => false,
+            'status' => 'skipped',
+            'reason' => 'telegram_user_id_missing',
+        ];
+    }
+
+    $safeTelegramUserId = docs_sanitize_mini_app_user_tasks_snapshot_id($telegramUserId);
+    $lockPath = docs_mini_app_user_tasks_snapshot_lock_path($safeTelegramUserId);
+    $lockHandle = @fopen($lockPath, 'c+');
+    if ($lockHandle === false || !flock($lockHandle, LOCK_EX)) {
+        if (is_resource($lockHandle)) {
+            fclose($lockHandle);
+        }
+        return [
+            'saved' => false,
+            'status' => 'lock_failed',
+            'reason' => 'snapshot_lock_failed',
+        ];
+    }
+
+    try {
+        $loaded = docs_load_mini_app_user_tasks_snapshot($telegramUserId);
+        if (empty($loaded['ok'])
+            && (string) ($loaded['error'] ?? '') === 's3_snapshot_unavailable'
+            && empty($loaded['notFound'])
+        ) {
+            return [
+                'saved' => false,
+                'status' => 's3_read_failed',
+                'reason' => 's3_snapshot_read_failed',
+                'error' => sanitize_text_field(
+                    (string) ($loaded['message'] ?? 'Не удалось прочитать существующий Telegram JSON в S3.'),
+                    500
+                ),
+                'snapshotExisted' => false,
+                'expectedTasksCount' => 0,
+                'actualTasksBefore' => 0,
+                'missingTasksAdded' => 0,
+                'staleTasksRemoved' => 0,
+            ];
+        }
+        $snapshot = !empty($loaded['ok']) && isset($loaded['snapshot']) && is_array($loaded['snapshot'])
+            ? $loaded['snapshot']
+            : [
+                'version' => 2,
+                'source' => 'mini_app_tasks',
+                'telegramUserId' => $telegramUserId,
+                'user' => null,
+                'organizations' => [],
+                'stats' => [],
+                'filter' => null,
+                'directorMode' => [],
+                'tasks' => [],
+            ];
+
+        $existingTasksByKey = [];
+        foreach (isset($snapshot['tasks']) && is_array($snapshot['tasks']) ? $snapshot['tasks'] : [] as $existingTask) {
+            if (!is_array($existingTask)) {
+                continue;
+            }
+            $existingKey = docs_task_snapshot_key($existingTask);
+            if ($existingKey !== '') {
+                $existingTasksByKey[$existingKey] = $existingTask;
+            }
+        }
+
+        $filter = extract_assignee_filter_from_array([
+            'telegram_user_id' => $telegramUserId,
+        ]);
+        if (!assignee_filter_has_identity($filter)) {
+            return [
+                'saved' => false,
+                'status' => 'filter_failed',
+                'reason' => 'telegram_filter_missing',
+            ];
+        }
+
+        $tasks = [];
+        $organizations = [];
+        $seenTasks = [];
+        foreach (load_organizations() as $organization) {
+            if (!is_string($organization) || trim($organization) === '') {
+                continue;
+            }
+            $folder = sanitize_folder_name($organization);
+            $organizationTasksCount = 0;
+            $directoryEntries = docs_load_telegram_participant_directory_entries($folder);
+            $preparedRecords = docs_prepare_records_for_response(load_registry($folder), $organization, $folder);
+            foreach ($preparedRecords as $preparedRecord) {
+                if (!is_array($preparedRecord)) {
+                    continue;
+                }
+                $roles = [];
+                foreach (docs_collect_record_telegram_participation(
+                    $preparedRecord,
+                    $folder,
+                    $directoryEntries
+                ) as $participant) {
+                    if (!is_array($participant)
+                        || (string) ($participant['telegramId'] ?? '') !== $telegramUserId
+                    ) {
+                        continue;
+                    }
+                    $roles = isset($participant['roles']) && is_array($participant['roles'])
+                        ? array_values($participant['roles'])
+                        : [];
+                    break;
+                }
+                if (empty($roles)) {
+                    $roles = docs_resolve_record_roles_for_filter($preparedRecord, $filter);
+                }
+                if (empty($roles)) {
+                    continue;
+                }
+
+                $preparedRecord['currentUserRoles'] = $roles;
+                $preparedRecord['organization'] = $organization;
+                $preparedRecord['documentFolder'] = $folder;
+                $taskKey = docs_task_snapshot_key($preparedRecord);
+                if ($taskKey === '' || isset($seenTasks[$taskKey])) {
+                    continue;
+                }
+                $seenTasks[$taskKey] = true;
+
+                if (isset($existingTasksByKey[$taskKey])) {
+                    foreach (['folderId', 'folderByUser', 'folderSettingsByUser'] as $folderField) {
+                        if (array_key_exists($folderField, $existingTasksByKey[$taskKey])) {
+                            $preparedRecord[$folderField] = $existingTasksByKey[$taskKey][$folderField];
+                        }
+                    }
+                    $preparedRecord = docs_merge_task_file_ocr_text(
+                        $preparedRecord,
+                        $existingTasksByKey[$taskKey],
+                        false
+                    );
+                }
+
+                if (is_array($ocrTaskOverride) && docs_task_snapshot_key($ocrTaskOverride) === $taskKey) {
+                    $preparedRecord = docs_merge_task_file_ocr_text(
+                        $preparedRecord,
+                        $ocrTaskOverride,
+                        true
+                    );
+                }
+
+                $tasks[] = $preparedRecord;
+                $organizationTasksCount++;
+            }
+
+            if ($organizationTasksCount > 0) {
+                $organizations[] = [
+                    'name' => $organization,
+                    'count' => $organizationTasksCount,
+                ];
+            }
+        }
+
+        if (is_array($ocrTaskOverride)) {
+            $overrideTaskKey = docs_task_snapshot_key($ocrTaskOverride);
+            $overrideAlreadyPresent = false;
+            foreach ($tasks as $task) {
+                if (is_array($task) && docs_task_snapshot_key($task) === $overrideTaskKey) {
+                    $overrideAlreadyPresent = true;
+                    break;
+                }
+            }
+            if (!$overrideAlreadyPresent && $overrideTaskKey !== '') {
+                // OCR-доставка вызывает rebuild только для уже определённых участников задачи,
+                // поэтому задача не должна исчезать из JSON из-за более узкого UI-фильтра.
+                $overrideFolder = sanitize_folder_name((string) (
+                    $ocrTaskOverride['documentFolder']
+                    ?? $ocrTaskOverride['organization']
+                    ?? ''
+                ));
+                $overrideRoles = [];
+                foreach (docs_collect_record_telegram_participation(
+                    $ocrTaskOverride,
+                    $overrideFolder
+                ) as $participant) {
+                    if (!is_array($participant)
+                        || (string) ($participant['telegramId'] ?? '') !== $telegramUserId
+                    ) {
+                        continue;
+                    }
+                    $overrideRoles = isset($participant['roles']) && is_array($participant['roles'])
+                        ? array_values($participant['roles'])
+                        : [];
+                    break;
+                }
+                $fallbackTask = $ocrTaskOverride;
+                if (isset($existingTasksByKey[$overrideTaskKey])) {
+                    foreach (['folderId', 'folderByUser', 'folderSettingsByUser'] as $folderField) {
+                        if (array_key_exists($folderField, $existingTasksByKey[$overrideTaskKey])) {
+                            $fallbackTask[$folderField] = $existingTasksByKey[$overrideTaskKey][$folderField];
+                        }
+                    }
+                    $fallbackTask = docs_merge_task_file_ocr_text(
+                        $fallbackTask,
+                        $existingTasksByKey[$overrideTaskKey],
+                        false
+                    );
+                }
+                $fallbackTask = docs_merge_task_file_ocr_text(
+                    $fallbackTask,
+                    $ocrTaskOverride,
+                    true
+                );
+                if (!empty($overrideRoles)) {
+                    $fallbackTask['currentUserRoles'] = $overrideRoles;
+                }
+                if ($overrideFolder !== '') {
+                    $fallbackTask['documentFolder'] = $overrideFolder;
+                }
+                $tasks[] = $fallbackTask;
+            }
+            $requiredOcrStoredNames = [];
+            foreach (isset($ocrTaskOverride['files']) && is_array($ocrTaskOverride['files'])
+                ? $ocrTaskOverride['files']
+                : [] as $overrideFile
+            ) {
+                if (!is_array($overrideFile)
+                    || !isset($overrideFile['ocrText'])
+                    || !is_string($overrideFile['ocrText'])
+                    || trim($overrideFile['ocrText']) === ''
+                ) {
+                    continue;
+                }
+                $overrideStoredName = sanitize_text_field((string) ($overrideFile['storedName'] ?? ''), 255);
+                if ($overrideStoredName !== '') {
+                    $requiredOcrStoredNames[$overrideStoredName] = true;
+                }
+            }
+
+            if (!empty($requiredOcrStoredNames)) {
+                $storedOcrNames = [];
+                foreach ($tasks as $task) {
+                    if (!is_array($task) || docs_task_snapshot_key($task) !== $overrideTaskKey) {
+                        continue;
+                    }
+                    foreach (isset($task['files']) && is_array($task['files']) ? $task['files'] : [] as $taskFile) {
+                        if (!is_array($taskFile)
+                            || !isset($taskFile['ocrText'])
+                            || !is_string($taskFile['ocrText'])
+                            || trim($taskFile['ocrText']) === ''
+                        ) {
+                            continue;
+                        }
+                        $taskStoredName = sanitize_text_field((string) ($taskFile['storedName'] ?? ''), 255);
+                        if ($taskStoredName !== '') {
+                            $storedOcrNames[$taskStoredName] = true;
+                        }
+                    }
+                    break;
+                }
+
+                $missingOcrNames = array_values(array_diff(
+                    array_keys($requiredOcrStoredNames),
+                    array_keys($storedOcrNames)
+                ));
+                if (!empty($missingOcrNames)) {
+                    return [
+                        'saved' => false,
+                        'status' => 'ocr_task_missing',
+                        'reason' => 'ocr_task_or_text_missing',
+                        'error' => 'Задача или OCR-текст файла не попали в JSON участника: '
+                            . implode(', ', array_slice($missingOcrNames, 0, 3)),
+                    ];
+                }
+            }
+        }
+
+        $expectedTaskKeys = [];
+        foreach ($tasks as $task) {
+            if (!is_array($task)) {
+                continue;
+            }
+            $taskKey = docs_task_snapshot_key($task);
+            if ($taskKey !== '') {
+                $expectedTaskKeys[$taskKey] = true;
+            }
+        }
+        $missingTaskKeys = array_values(array_diff(
+            array_keys($expectedTaskKeys),
+            array_keys($existingTasksByKey)
+        ));
+        $staleTaskKeys = array_values(array_diff(
+            array_keys($existingTasksByKey),
+            array_keys($expectedTaskKeys)
+        ));
+
+        $snapshot['version'] = max(2, (int) ($snapshot['version'] ?? 2));
+        $snapshot['source'] = 'mini_app_tasks';
+        $snapshot['telegramUserId'] = $telegramUserId;
+        $snapshot['generatedAt'] = date('c');
+        $snapshot['tasks'] = array_values($tasks);
+        $snapshot['tasksCount'] = count($tasks);
+        $snapshot['organizations'] = $organizations;
+
+        $encoded = json_encode($snapshot, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if ($encoded === false) {
+            return [
+                'saved' => false,
+                'status' => 'encode_failed',
+                'reason' => 'json_encode_failed',
+            ];
+        }
+
+        $tempPath = tempnam(sys_get_temp_dir(), 'docs_ocr_snapshot_');
+        if (!is_string($tempPath) || $tempPath === '') {
+            return [
+                'saved' => false,
+                'status' => 'temp_file_failed',
+                'reason' => 'temp_file_failed',
+            ];
+        }
+
+        $relativePath = docs_build_mini_app_user_tasks_snapshot_relative_path($safeTelegramUserId);
+        try {
+            if (@file_put_contents($tempPath, $encoded . PHP_EOL, LOCK_EX) === false) {
+                return [
+                    'saved' => false,
+                    'status' => 'temp_write_failed',
+                    'reason' => 'temp_write_failed',
+                ];
+            }
+            $upload = docs_upload_mini_app_user_tasks_snapshot_to_cold_storage($tempPath, $relativePath);
+        } finally {
+            @unlink($tempPath);
+        }
+
+        return [
+            'saved' => !empty($upload['ok']),
+            'status' => !empty($upload['ok']) ? 'synced' : 's3_failed',
+            'error' => !empty($upload['ok']) ? '' : sanitize_text_field((string) ($upload['error'] ?? ''), 500),
+            'snapshotExisted' => !empty($loaded['ok']),
+            'expectedTasksCount' => count($expectedTaskKeys),
+            'actualTasksBefore' => count($existingTasksByKey),
+            'missingTasksAdded' => count($missingTaskKeys),
+            'staleTasksRemoved' => count($staleTaskKeys),
+        ];
+    } finally {
+        flock($lockHandle, LOCK_UN);
+        fclose($lockHandle);
+    }
+}
+
+function docs_sync_task_ocr_to_participant_snapshots(array $record, string $folder): void
+{
+    $folder = sanitize_folder_name($folder);
+    if ($folder !== '') {
+        $record['documentFolder'] = $folder;
+    }
+
+    $ocrStoredNames = [];
+    foreach (isset($record['files']) && is_array($record['files']) ? $record['files'] : [] as $file) {
+        if (!is_array($file)
+            || !isset($file['ocrText'])
+            || !is_string($file['ocrText'])
+            || trim($file['ocrText']) === ''
+        ) {
+            continue;
+        }
+        $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
+        if ($storedName !== '') {
+            $ocrStoredNames[$storedName] = true;
+        }
+    }
+    if (empty($ocrStoredNames)) {
+        return;
+    }
+
+    $telegramIds = docs_collect_record_telegram_ids($record, $folder);
+    if (empty($telegramIds)) {
+        docs_update_record_ocr_snapshot_status(
+            $folder,
+            (string) ($record['id'] ?? ''),
+            'synced',
+            0,
+            '',
+            array_keys($ocrStoredNames)
+        );
+        return;
+    }
+
+    $syncedCount = 0;
+    $errors = [];
+    foreach ($telegramIds as $telegramId) {
+        $result = docs_rebuild_mini_app_user_tasks_snapshot($telegramId, $record);
+        if (empty($result['saved'])) {
+            $errors[] = sanitize_text_field((string) ($result['error'] ?? ($result['reason'] ?? 'S3-ошибка')), 300);
+            docs_write_response_log('Не удалось обновить Telegram JSON-снимок после OCR', [
+                'folder' => $folder,
+                'documentId' => $record['id'] ?? null,
+                'telegramId' => $telegramId,
+                'status' => $result['status'] ?? 'unknown',
+                'error' => $result['error'] ?? ($result['reason'] ?? ''),
+            ]);
+            continue;
+        }
+        $syncedCount++;
+    }
+
+    docs_update_record_ocr_snapshot_status(
+        $folder,
+        (string) ($record['id'] ?? ''),
+        empty($errors) ? 'synced' : ($syncedCount > 0 ? 'partial' : 'error'),
+        $syncedCount,
+        !empty($errors) ? implode('; ', array_slice(array_unique($errors), 0, 3)) : '',
+        array_keys($ocrStoredNames)
+    );
+}
+
+function docs_hydrate_task_ocr_from_participant_snapshots(array $record, array $telegramIds): array
+{
+    @ini_set('memory_limit', DOCS_OCR_SNAPSHOT_READ_MEMORY_LIMIT);
+    $taskKey = docs_task_snapshot_key($record);
+    if ($taskKey === '' || !isset($record['files']) || !is_array($record['files'])) {
+        return $record;
+    }
+
+    $requiredStoredNames = [];
+    $requiredStoredNameByFileKey = [];
+    $requiredFilesByStoredName = [];
+    foreach ($record['files'] as $file) {
+        if (!is_array($file)) {
+            continue;
+        }
+        $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
+        $ocrStatus = isset($file['ocr']) && is_array($file['ocr'])
+            ? strtolower((string) ($file['ocr']['status'] ?? ''))
+            : '';
+        if ($storedName !== '' && ($ocrStatus === 'completed' || (int) ($file['ocrTextLength'] ?? 0) > 0)) {
+            $requiredStoredNames[$storedName] = true;
+            $requiredFilesByStoredName[$storedName] = $file;
+            foreach (docs_task_rag_file_keys($file) as $fileKey) {
+                $requiredStoredNameByFileKey[$fileKey] = $storedName;
+            }
+        }
+    }
+    if (empty($requiredStoredNames)) {
+        return $record;
+    }
+
+    $normalizedTelegramIds = [];
+    foreach ($telegramIds as $telegramId) {
+        $normalizedTelegramId = normalize_identifier_value($telegramId);
+        if ($normalizedTelegramId !== '') {
+            $normalizedTelegramIds[$normalizedTelegramId] = true;
+        }
+    }
+
+    $ocrTextByStoredName = [];
+    foreach (array_keys($normalizedTelegramIds) as $telegramId) {
+        $loaded = docs_load_mini_app_user_tasks_snapshot($telegramId);
+        if (empty($loaded['ok']) || !isset($loaded['snapshot']) || !is_array($loaded['snapshot'])) {
+            continue;
+        }
+        foreach (isset($loaded['snapshot']['tasks']) && is_array($loaded['snapshot']['tasks'])
+            ? $loaded['snapshot']['tasks']
+            : [] as $task
+        ) {
+            if (!is_array($task) || docs_task_snapshot_key($task) !== $taskKey) {
+                continue;
+            }
+            foreach (isset($task['files']) && is_array($task['files']) ? $task['files'] : [] as $file) {
+                if (!is_array($file) || !isset($file['ocrText']) || !is_string($file['ocrText'])) {
+                    continue;
+                }
+                $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
+                $ocrText = trim($file['ocrText']);
+                $targetStoredName = $storedName !== '' && isset($requiredStoredNames[$storedName])
+                    ? $storedName
+                    : '';
+                if ($targetStoredName === '') {
+                    foreach (docs_task_rag_file_keys($file) as $fileKey) {
+                        if (isset($requiredStoredNameByFileKey[$fileKey])) {
+                            $targetStoredName = $requiredStoredNameByFileKey[$fileKey];
+                            break;
+                        }
+                    }
+                }
+                if ($targetStoredName !== '' && $ocrText !== '') {
+                    $ocrTextByStoredName[$targetStoredName] = $ocrText;
+                }
+            }
+            break;
+        }
+        if (count($ocrTextByStoredName) === count($requiredStoredNames)) {
+            break;
+        }
+    }
+
+    foreach (array_diff(array_keys($requiredStoredNames), array_keys($ocrTextByStoredName)) as $storedName) {
+        $file = $requiredFilesByStoredName[$storedName] ?? null;
+        if (!is_array($file) || !isset($file['ocr']) || !is_array($file['ocr'])) {
+            continue;
+        }
+        $jobId = sanitize_text_field((string) ($file['ocr']['jobId'] ?? ''), 160);
+        if ($jobId === '') {
+            continue;
+        }
+        $jobResult = docs_fetch_private_ocr_job_result($jobId);
+        $ocrText = !empty($jobResult['ok']) && isset($jobResult['text']) && is_string($jobResult['text'])
+            ? trim($jobResult['text'])
+            : '';
+        if ($ocrText !== '') {
+            $ocrTextByStoredName[$storedName] = $ocrText;
+        }
+    }
+
+    if (empty($ocrTextByStoredName)) {
+        return $record;
+    }
+    foreach ($record['files'] as &$file) {
+        if (!is_array($file)) {
+            continue;
+        }
+        $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
+        if ($storedName !== '' && isset($ocrTextByStoredName[$storedName])) {
+            $file['ocrText'] = $ocrTextByStoredName[$storedName];
+            $file['ocrTextLength'] = mb_strlen($ocrTextByStoredName[$storedName], 'UTF-8');
+        }
+    }
+    unset($file);
+
+    return $record;
+}
+
+function docs_reprocess_task_ocr_files_for_snapshot_recovery(
+    array $record,
+    string $folder,
+    array $storedNames
+): array {
+    $documentId = sanitize_text_field((string) ($record['id'] ?? ''), 200);
+    $folder = sanitize_folder_name($folder);
+    if ($documentId === '' || $folder === '' || empty($storedNames)) {
+        return $record;
+    }
+
+    $storedNameLookup = [];
+    foreach ($storedNames as $storedName) {
+        $normalizedStoredName = sanitize_text_field((string) $storedName, 255);
+        if ($normalizedStoredName !== '') {
+            $storedNameLookup[$normalizedStoredName] = true;
+        }
+    }
+    if (empty($storedNameLookup)) {
+        return $record;
+    }
+
+    $organizationDirectory = ensure_organization_directory($folder);
+    $uploads = [];
+    $deadline = microtime(true) + 180;
+    foreach (isset($record['files']) && is_array($record['files']) ? $record['files'] : [] as $file) {
+        if (!is_array($file)) {
+            continue;
+        }
+        $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
+        if ($storedName === '' || !isset($storedNameLookup[$storedName])) {
+            continue;
+        }
+        $pathCandidates = [];
+        foreach (docs_file_public_relative_candidates($folder, $file, $storedName) as $relativePath) {
+            $normalizedRelativePath = docs_normalize_cold_storage_relative_path($relativePath);
+            if ($normalizedRelativePath !== '') {
+                $pathCandidates[] = $organizationDirectory . '/' . $normalizedRelativePath;
+            }
+        }
+        $resolvedPath = docs_resolve_file_path_with_cold_storage($folder, $file, $pathCandidates, $deadline);
+        if ($resolvedPath === '') {
+            docs_write_response_log('Не удалось восстановить OCR-текст после смены участников: исходный файл недоступен', [
+                'folder' => $folder,
+                'documentId' => $documentId,
+                'storedName' => $storedName,
+            ]);
+            continue;
+        }
+        $uploads[] = [
+            'file' => $file,
+            'relativePath' => $storedName,
+            'localPath' => $resolvedPath,
+            'context' => [
+                'source' => 'participant_snapshot_recovery',
+                'record' => $documentId,
+            ],
+        ];
+    }
+
+    if (!empty($uploads)) {
+        docs_process_uploaded_files_ocr($folder, $documentId, $uploads);
+    }
+    $storedNameKeys = array_keys($storedNameLookup);
+    $updated = docs_find_ocr_backfill_record_file($folder, $documentId, (string) ($storedNameKeys[0] ?? ''));
+
+    return isset($updated['record']) && is_array($updated['record'])
+        ? $updated['record']
+        : $record;
+}
+
+function docs_sync_task_snapshots_after_participation_change(
+    array $record,
+    string $folder,
+    array $previousParticipation,
+    array $currentParticipation
+): void {
+    $folder = sanitize_folder_name($folder);
+    if ($folder !== '') {
+        $record['documentFolder'] = $folder;
+    }
+
+    $previousIndex = docs_index_telegram_participation($previousParticipation);
+    $currentIndex = docs_index_telegram_participation($currentParticipation);
+    if ($previousIndex === $currentIndex) {
+        return;
+    }
+
+    $sourceTelegramIds = array_values(array_unique(array_merge(
+        array_keys($previousIndex),
+        array_keys($currentIndex)
+    )));
+    $snapshotRecord = docs_hydrate_task_ocr_from_participant_snapshots($record, $sourceTelegramIds);
+    $currentSyncedCount = 0;
+    $currentErrors = [];
+    $expectedOcrStoredNames = [];
+    $hydratedOcrStoredNames = [];
+    foreach (isset($snapshotRecord['files']) && is_array($snapshotRecord['files']) ? $snapshotRecord['files'] : [] as $file) {
+        if (!is_array($file)) {
+            continue;
+        }
+        $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
+        if ($storedName === '') {
+            continue;
+        }
+        $ocrStatus = isset($file['ocr']) && is_array($file['ocr'])
+            ? strtolower((string) ($file['ocr']['status'] ?? ''))
+            : '';
+        if ($ocrStatus === 'completed' || (int) ($file['ocrTextLength'] ?? 0) > 0) {
+            $expectedOcrStoredNames[$storedName] = true;
+        }
+        if (isset($file['ocrText']) && is_string($file['ocrText']) && trim($file['ocrText']) !== '') {
+            $hydratedOcrStoredNames[$storedName] = true;
+        }
+    }
+    $missingOcrStoredNames = array_values(array_diff(
+        array_keys($expectedOcrStoredNames),
+        array_keys($hydratedOcrStoredNames)
+    ));
+    if (!empty($missingOcrStoredNames)) {
+        $reprocessedRecord = docs_reprocess_task_ocr_files_for_snapshot_recovery(
+            $record,
+            $folder,
+            $missingOcrStoredNames
+        );
+        $snapshotRecord = docs_hydrate_task_ocr_from_participant_snapshots(
+            $reprocessedRecord,
+            $sourceTelegramIds
+        );
+        $hydratedOcrStoredNames = [];
+        foreach (isset($snapshotRecord['files']) && is_array($snapshotRecord['files'])
+            ? $snapshotRecord['files']
+            : [] as $file
+        ) {
+            if (!is_array($file)
+                || !isset($file['ocrText'])
+                || !is_string($file['ocrText'])
+                || trim($file['ocrText']) === ''
+            ) {
+                continue;
+            }
+            $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
+            if ($storedName !== '') {
+                $hydratedOcrStoredNames[$storedName] = true;
+            }
+        }
+        $missingOcrStoredNames = array_values(array_diff(
+            array_keys($expectedOcrStoredNames),
+            array_keys($hydratedOcrStoredNames)
+        ));
+    }
+    if (!empty($missingOcrStoredNames)) {
+        $currentErrors[] = 'OCR-текст не найден в прежних S3-снимках: '
+            . implode(', ', array_slice($missingOcrStoredNames, 0, 3));
+    }
+
+    foreach (array_keys($currentIndex) as $telegramId) {
+        $result = docs_rebuild_mini_app_user_tasks_snapshot($telegramId, $snapshotRecord);
+        if (!empty($result['saved'])) {
+            $currentSyncedCount++;
+            continue;
+        }
+        $currentErrors[] = sanitize_text_field(
+            (string) ($result['error'] ?? ($result['reason'] ?? 'S3-ошибка')),
+            300
+        );
+        docs_write_response_log('Не удалось обновить JSON нового состава участников задачи', [
+            'folder' => $folder,
+            'documentId' => $record['id'] ?? null,
+            'telegramId' => $telegramId,
+            'status' => $result['status'] ?? 'unknown',
+            'error' => $result['error'] ?? ($result['reason'] ?? ''),
+        ]);
+    }
+
+    $removedTelegramIds = array_values(array_diff(array_keys($previousIndex), array_keys($currentIndex)));
+    foreach ($removedTelegramIds as $telegramId) {
+        $result = docs_rebuild_mini_app_user_tasks_snapshot($telegramId);
+        if (!empty($result['saved'])) {
+            continue;
+        }
+        docs_write_response_log('Не удалось удалить задачу из JSON исключённого участника', [
+            'folder' => $folder,
+            'documentId' => $record['id'] ?? null,
+            'telegramId' => $telegramId,
+            'status' => $result['status'] ?? 'unknown',
+            'error' => $result['error'] ?? ($result['reason'] ?? ''),
+        ]);
+    }
+
+    if (!empty($expectedOcrStoredNames) && !empty($currentIndex)) {
+        docs_update_record_ocr_snapshot_status(
+            $folder,
+            (string) ($record['id'] ?? ''),
+            empty($currentErrors) ? 'synced' : ($currentSyncedCount > 0 ? 'partial' : 'error'),
+            $currentSyncedCount,
+            !empty($currentErrors) ? implode('; ', array_slice(array_unique($currentErrors), 0, 3)) : '',
+            array_keys($expectedOcrStoredNames)
+        );
+    }
+}
+
+function docs_find_task_file_ocr_text_in_participant_snapshots(
+    array $record,
+    string $folder,
+    string $storedName
+): array {
+    @ini_set('memory_limit', DOCS_OCR_SNAPSHOT_READ_MEMORY_LIMIT);
+    $record['documentFolder'] = sanitize_folder_name($folder);
+    $taskKey = docs_task_snapshot_key($record);
+    $telegramIds = docs_collect_record_telegram_ids($record, $folder);
+    foreach ($telegramIds as $telegramId) {
+        $loaded = docs_load_mini_app_user_tasks_snapshot($telegramId);
+        if (empty($loaded['ok']) || !isset($loaded['snapshot']) || !is_array($loaded['snapshot'])) {
+            continue;
+        }
+        $tasks = isset($loaded['snapshot']['tasks']) && is_array($loaded['snapshot']['tasks'])
+            ? $loaded['snapshot']['tasks']
+            : [];
+        foreach ($tasks as $task) {
+            if (!is_array($task) || docs_task_snapshot_key($task) !== $taskKey) {
+                continue;
+            }
+            $files = isset($task['files']) && is_array($task['files']) ? $task['files'] : [];
+            foreach ($files as $file) {
+                if (!is_array($file) || (string) ($file['storedName'] ?? '') !== $storedName) {
+                    continue;
+                }
+                if (!isset($file['ocrText']) || !is_string($file['ocrText'])) {
+                    continue;
+                }
+                $text = trim($file['ocrText']);
+                if ($text === '') {
+                    continue;
+                }
+
+                return [
+                    'ok' => true,
+                    'source' => 's3_snapshot',
+                    'sourceLocation' => 'S3: ' . (string) ($loaded['remotePath'] ?? ($loaded['key'] ?? (
+                        docs_build_mini_app_user_tasks_snapshot_relative_path(
+                            docs_sanitize_mini_app_user_tasks_snapshot_id($telegramId)
+                        )
+                    ))),
+                    'text' => $text,
+                    'pagesCount' => isset($file['ocr']['pagesCount']) ? (int) $file['ocr']['pagesCount'] : 0,
+                    'telegramId' => $telegramId,
+                ];
+            }
+        }
+    }
+
+    return [
+        'ok' => false,
+        'source' => 's3_snapshot',
+        'error' => 'OCR-текст не найден в пользовательских JSON-снимках S3.',
+    ];
+}
+
+function docs_check_task_file_ocr_in_participant_snapshots(
+    array $record,
+    string $folder,
+    string $storedName
+): array {
+    @ini_set('memory_limit', DOCS_OCR_SNAPSHOT_READ_MEMORY_LIMIT);
+    $record['documentFolder'] = sanitize_folder_name($folder);
+    $taskKey = docs_task_snapshot_key($record);
+    $telegramIds = docs_collect_record_telegram_ids($record, $folder);
+    $totalCheckTimeout = min(
+        DOCS_OCR_S3_CHECK_MAX_TIMEOUT_SECONDS,
+        max(
+            DOCS_OCR_S3_CHECK_TOTAL_TIMEOUT_SECONDS,
+            count($telegramIds) * DOCS_OCR_S3_CHECK_PARTICIPANT_TIMEOUT_SECONDS
+        )
+    );
+    @set_time_limit($totalCheckTimeout + DOCS_OCR_S3_CHECK_PARTICIPANT_TIMEOUT_SECONDS);
+    $participants = [];
+    $presentCount = 0;
+    $deadline = microtime(true) + $totalCheckTimeout;
+
+    foreach ($telegramIds as $telegramId) {
+        $safeTelegramId = docs_sanitize_mini_app_user_tasks_snapshot_id($telegramId);
+        $relativePath = docs_build_mini_app_user_tasks_snapshot_relative_path($safeTelegramId);
+        if (microtime(true) >= $deadline) {
+            $participants[] = [
+                'telegramId' => $telegramId,
+                'relativePath' => $relativePath,
+                'sourceLocation' => 'S3: ' . $relativePath,
+                'present' => false,
+                'textLength' => 0,
+                'status' => 'check_timeout',
+                'message' => 'Общий лимит времени проверки S3 исчерпан.',
+            ];
+            continue;
+        }
+
+        try {
+            $loaded = docs_load_mini_app_user_tasks_snapshot(
+                $telegramId,
+                min(
+                    DOCS_OCR_S3_CHECK_PARTICIPANT_TIMEOUT_SECONDS,
+                    max(1, (int) floor($deadline - microtime(true)))
+                )
+            );
+        } catch (Throwable $error) {
+            $loaded = [
+                'ok' => false,
+                'error' => 'snapshot_check_failed',
+                'message' => sanitize_text_field($error->getMessage(), 300),
+            ];
+            docs_write_response_log('Ошибка проверки пользовательского OCR JSON в S3', [
+                'folder' => $folder,
+                'documentId' => $record['id'] ?? null,
+                'storedName' => $storedName,
+                'telegramId' => $telegramId,
+                'error' => $error->getMessage(),
+            ]);
+        }
+        $participant = [
+            'telegramId' => $telegramId,
+            'relativePath' => $relativePath,
+            'sourceLocation' => 'S3: ' . (string) ($loaded['remotePath'] ?? ($loaded['key'] ?? $relativePath)),
+            'present' => false,
+            'textLength' => 0,
+            'status' => 'snapshot_unavailable',
+            'message' => sanitize_text_field(
+                (string) ($loaded['message'] ?? 'JSON-снимок участника в S3 недоступен.'),
+                300
+            ),
+        ];
+
+        if (!empty($loaded['ok']) && isset($loaded['snapshot']) && is_array($loaded['snapshot'])) {
+            $participant['status'] = 'task_missing';
+            $participant['message'] = 'Задача отсутствует в JSON-снимке участника.';
+            foreach (isset($loaded['snapshot']['tasks']) && is_array($loaded['snapshot']['tasks'])
+                ? $loaded['snapshot']['tasks']
+                : [] as $task
+            ) {
+                if (!is_array($task) || docs_task_snapshot_key($task) !== $taskKey) {
+                    continue;
+                }
+                $participant['status'] = 'file_missing';
+                $participant['message'] = 'Файл отсутствует в задаче JSON-снимка.';
+                foreach (isset($task['files']) && is_array($task['files']) ? $task['files'] : [] as $file) {
+                    if (!is_array($file) || (string) ($file['storedName'] ?? '') !== $storedName) {
+                        continue;
+                    }
+                    $text = isset($file['ocrText']) && is_string($file['ocrText'])
+                        ? trim($file['ocrText'])
+                        : '';
+                    $participant['textLength'] = mb_strlen($text, 'UTF-8');
+                    if ($text !== '') {
+                        $participant['present'] = true;
+                        $participant['status'] = 'present';
+                        $participant['message'] = 'OCR-текст найден.';
+                        $presentCount++;
+                    } else {
+                        $participant['status'] = 'text_missing';
+                        $participant['message'] = 'У файла отсутствует OCR-текст.';
+                    }
+                    break;
+                }
+                break;
+            }
+        }
+
+        $participants[] = $participant;
+    }
+
+    $total = count($telegramIds);
+
+    return [
+        'allPresent' => $total > 0 && $presentCount === $total,
+        'participantsTotal' => $total,
+        'presentCount' => $presentCount,
+        'missingCount' => max(0, $total - $presentCount),
+        'participants' => $participants,
+    ];
+}
+
+function docs_update_record_ocr_snapshot_status(
+    string $folder,
+    string $documentId,
+    string $status,
+    int $syncedUsersCount,
+    string $error = '',
+    array $storedNames = []
+): void {
+    if ($documentId === '') {
+        return;
+    }
+
+    $storedNameLookup = [];
+    foreach ($storedNames as $storedName) {
+        $normalizedStoredName = sanitize_text_field((string) $storedName, 255);
+        if ($normalizedStoredName !== '') {
+            $storedNameLookup[$normalizedStoredName] = true;
+        }
+    }
+    if (empty($storedNameLookup)) {
+        return;
+    }
+
+    [$handle, $records] = docs_lock_registry($folder);
+    if ($handle === null) {
+        return;
+    }
+
+    $changed = false;
+    try {
+        foreach ($records as &$record) {
+            if (!is_array($record) || (string) ($record['id'] ?? '') !== $documentId) {
+                continue;
+            }
+            if (!isset($record['files']) || !is_array($record['files'])) {
+                break;
+            }
+            foreach ($record['files'] as &$file) {
+                if (!is_array($file) || !isset($file['ocr']) || !is_array($file['ocr'])) {
+                    continue;
+                }
+                $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
+                if ($storedName === '' || !isset($storedNameLookup[$storedName])) {
+                    continue;
+                }
+                if ((string) ($file['ocr']['status'] ?? '') !== 'completed') {
+                    continue;
+                }
+                $file['ocr']['snapshotStatus'] = $status;
+                $file['ocr']['snapshotUpdatedAt'] = date('c');
+                $file['ocr']['snapshotUsersCount'] = max(0, $syncedUsersCount);
+                if ($status === 'synced') {
+                    $file['ocr']['snapshotDeliveryVersion'] = DOCS_OCR_SNAPSHOT_DELIVERY_VERSION;
+                } else {
+                    unset($file['ocr']['snapshotDeliveryVersion']);
+                }
+                if ($error !== '') {
+                    $file['ocr']['snapshotError'] = sanitize_text_field($error, 500);
+                } else {
+                    unset($file['ocr']['snapshotError']);
+                }
+                $changed = true;
+            }
+            unset($file);
+            if ($changed) {
+                $record['updatedAt'] = date('c');
+            }
+            break;
+        }
+        unset($record);
+
+        if ($changed) {
+            docs_save_registry_locked($handle, $records);
+        }
+    } finally {
+        docs_unlock_registry($handle);
+    }
+}
+
+function docs_mark_uploaded_files_ocr_processing(string $folder, string $documentId, array $uploads): void
+{
+    $storedNames = [];
+    foreach ($uploads as $upload) {
+        if (!is_array($upload) || !isset($upload['file']) || !is_array($upload['file'])) {
+            continue;
+        }
+        $storedName = sanitize_text_field((string) ($upload['file']['storedName'] ?? ''), 255);
+        if ($storedName !== '') {
+            $storedNames[$storedName] = true;
+        }
+    }
+    if (empty($storedNames)) {
+        return;
+    }
+
+    [$handle, $records] = docs_lock_registry($folder);
+    if ($handle === null) {
+        return;
+    }
+
+    $changed = false;
+    try {
+        foreach ($records as &$record) {
+            if (!is_array($record) || (string) ($record['id'] ?? '') !== $documentId) {
+                continue;
+            }
+            if (!isset($record['files']) || !is_array($record['files'])) {
+                break;
+            }
+            foreach ($record['files'] as &$file) {
+                if (!is_array($file)) {
+                    continue;
+                }
+                $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
+                if ($storedName === '' || !isset($storedNames[$storedName])) {
+                    continue;
+                }
+                $ocr = isset($file['ocr']) && is_array($file['ocr']) ? $file['ocr'] : docs_build_new_file_ocr_state();
+                $ocr['status'] = 'processing';
+                $ocr['startedAt'] = date('c');
+                $file['ocr'] = $ocr;
+                $changed = true;
+            }
+            unset($file);
+            if ($changed) {
+                $record['updatedAt'] = date('c');
+            }
+            break;
+        }
+        unset($record);
+
+        if ($changed) {
+            docs_save_registry_locked($handle, $records);
+        }
+    } finally {
+        docs_unlock_registry($handle);
+    }
+}
+
+function docs_store_file_ocr_job(
+    string $folder,
+    string $documentId,
+    string $storedName,
+    array $job
+): void {
+    $jobId = sanitize_text_field((string) ($job['jobId'] ?? ''), 160);
+    if ($documentId === '' || $storedName === '' || $jobId === '') {
+        return;
+    }
+
+    [$handle, $records] = docs_lock_registry($folder);
+    if ($handle === null) {
+        return;
+    }
+
+    $changed = false;
+    try {
+        foreach ($records as &$record) {
+            if (!is_array($record) || (string) ($record['id'] ?? '') !== $documentId) {
+                continue;
+            }
+            if (!isset($record['files']) || !is_array($record['files'])) {
+                break;
+            }
+            foreach ($record['files'] as &$file) {
+                if (!is_array($file) || (string) ($file['storedName'] ?? '') !== $storedName) {
+                    continue;
+                }
+                $ocr = isset($file['ocr']) && is_array($file['ocr']) ? $file['ocr'] : docs_build_new_file_ocr_state();
+                $jobStatus = sanitize_text_field((string) ($job['status'] ?? 'queued'), 40);
+                if (in_array($jobStatus, ['queued', 'running'], true)) {
+                    $ocr['status'] = 'processing';
+                    if (empty($ocr['startedAt'])) {
+                        $ocr['startedAt'] = date('c');
+                    }
+                } elseif (in_array($jobStatus, ['failed', 'cancelled'], true)) {
+                    $ocr['status'] = 'failed';
+                    $ocr['processedAt'] = date('c');
+                }
+                $ocr['jobId'] = $jobId;
+                $ocr['jobReused'] = !empty($job['reused']);
+                $ocr['jobStatus'] = $jobStatus;
+                $ocr['jobProgress'] = max(0, min(100, (int) ($job['progress'] ?? 0)));
+                $ocr['jobCurrentPage'] = max(0, (int) ($job['currentPage'] ?? 0));
+                $ocr['jobTotalPages'] = max(0, (int) ($job['totalPages'] ?? 0));
+                $ocr['jobCreatedAt'] = sanitize_text_field((string) ($job['createdAt'] ?? ($ocr['jobCreatedAt'] ?? date('c'))), 80);
+                $ocr['jobStartedAt'] = sanitize_text_field((string) ($job['startedAt'] ?? ($ocr['jobStartedAt'] ?? '')), 80);
+                $ocr['jobCompletedAt'] = sanitize_text_field((string) ($job['completedAt'] ?? ''), 80);
+                $ocr['jobResultUrl'] = sanitize_text_field((string) ($job['resultUrl'] ?? ''), 500);
+                $jobError = sanitize_text_field((string) ($job['error'] ?? ''), 500);
+                if ($jobError !== '') {
+                    $ocr['jobError'] = $jobError;
+                } else {
+                    unset($ocr['jobError']);
+                }
+                $file['ocr'] = $ocr;
+                $changed = true;
+                break;
+            }
+            unset($file);
+            if ($changed) {
+                $record['updatedAt'] = date('c');
+            }
+            break;
+        }
+        unset($record);
+
+        if ($changed) {
+            docs_save_registry_locked($handle, $records);
+        }
+    } finally {
+        docs_unlock_registry($handle);
+    }
+
+}
+
+function docs_apply_private_ocr_result_to_file(
+    string $folder,
+    string $documentId,
+    string $storedName,
+    array $result
+): array {
+    $ocrText = isset($result['text']) && is_string($result['text'])
+        ? trim($result['text'])
+        : '';
+    if ($ocrText === '') {
+        return [
+            'ok' => false,
+            'error' => 'OCR завершён, но распознанный текст пуст.',
+        ];
+    }
+
+    [$handle, $records] = docs_lock_registry($folder);
+    if ($handle === null) {
+        return [
+            'ok' => false,
+            'error' => 'Не удалось заблокировать реестр для записи OCR.',
+        ];
+    }
+
+    $updatedRecord = null;
+    try {
+        foreach ($records as &$record) {
+            if (!is_array($record) || (string) ($record['id'] ?? '') !== $documentId) {
+                continue;
+            }
+            if (!isset($record['files']) || !is_array($record['files'])) {
+                break;
+            }
+            foreach ($record['files'] as &$file) {
+                if (!is_array($file) || (string) ($file['storedName'] ?? '') !== $storedName) {
+                    continue;
+                }
+                $previousOcr = isset($file['ocr']) && is_array($file['ocr']) ? $file['ocr'] : [];
+                $file['ocr'] = array_filter([
+                    'status' => 'completed',
+                    'engine' => 'n8n_jobs',
+                    'uploadGeneration' => max(0, (int) ($previousOcr['uploadGeneration'] ?? 0)),
+                    'uploadOrigin' => sanitize_text_field((string) ($previousOcr['uploadOrigin'] ?? ''), 40),
+                    'queuedAt' => (string) ($previousOcr['queuedAt'] ?? date('c')),
+                    'startedAt' => (string) ($previousOcr['startedAt'] ?? date('c')),
+                    'processedAt' => date('c'),
+                    'mimeType' => sanitize_text_field((string) ($result['mimeType'] ?? ($previousOcr['mimeType'] ?? '')), 120),
+                    'httpStatus' => isset($result['httpStatus']) ? (int) $result['httpStatus'] : 200,
+                    'pagesCount' => max(0, (int) ($result['pagesCount'] ?? 0)),
+                    'jobId' => sanitize_text_field((string) ($result['jobId'] ?? ($previousOcr['jobId'] ?? '')), 160),
+                    'jobReused' => isset($result['jobReused'])
+                        ? (bool) $result['jobReused']
+                        : (!empty($previousOcr['jobReused']) ? true : null),
+                    'jobStatus' => 'succeeded',
+                    'jobProgress' => 100,
+                    'jobCurrentPage' => max(0, (int) ($result['pagesCount'] ?? 0)),
+                    'jobTotalPages' => max(0, (int) ($result['pagesCount'] ?? 0)),
+                    'jobCreatedAt' => sanitize_text_field((string) ($previousOcr['jobCreatedAt'] ?? ''), 80),
+                    'jobStartedAt' => sanitize_text_field((string) ($previousOcr['jobStartedAt'] ?? ''), 80),
+                    'jobCompletedAt' => date('c'),
+                    'jobResultUrl' => sanitize_text_field((string) ($previousOcr['jobResultUrl'] ?? ''), 500),
+                    'textTruncated' => !empty($result['textTruncated']) ? true : null,
+                ], static function ($value): bool {
+                    return $value !== null && $value !== '';
+                });
+                unset($file['ocrText']);
+                $file['ocrTextLength'] = mb_strlen($ocrText, 'UTF-8');
+                $record['updatedAt'] = date('c');
+                $updatedRecord = $record;
+                foreach ($updatedRecord['files'] as &$snapshotFile) {
+                    if (is_array($snapshotFile)
+                        && (string) ($snapshotFile['storedName'] ?? '') === $storedName
+                    ) {
+                        $snapshotFile['ocrText'] = $ocrText;
+                        $snapshotFile['ocrTextLength'] = mb_strlen($ocrText, 'UTF-8');
+                        break;
+                    }
+                }
+                unset($snapshotFile);
+                break 2;
+            }
+            unset($file);
+        }
+        unset($record);
+
+        if (!is_array($updatedRecord) || !docs_save_registry_locked($handle, $records)) {
+            return [
+                'ok' => false,
+                'error' => 'Не удалось сохранить результат OCR в реестре.',
+            ];
+        }
+    } finally {
+        docs_unlock_registry($handle);
+    }
+
+    docs_sync_task_ocr_to_participant_snapshots($updatedRecord, $folder);
+    $participantsTotal = count(docs_collect_record_telegram_ids($updatedRecord, $folder));
+    if ($participantsTotal === 0) {
+        return [
+            'ok' => true,
+            'snapshotStatus' => 'synced',
+            'participantsTotal' => 0,
+            'presentCount' => 0,
+            'error' => '',
+        ];
+    }
+
+    try {
+        $deliveryCheck = docs_check_task_file_ocr_in_participant_snapshots(
+            $updatedRecord,
+            $folder,
+            $storedName
+        );
+    } catch (Throwable $error) {
+        $deliveryCheck = [
+            'allPresent' => false,
+            'participantsTotal' => $participantsTotal,
+            'presentCount' => 0,
+            'participants' => [],
+            'error' => sanitize_text_field($error->getMessage(), 300),
+        ];
+    }
+
+    $presentCount = max(0, (int) ($deliveryCheck['presentCount'] ?? 0));
+    $allPresent = !empty($deliveryCheck['allPresent'])
+        && $presentCount === $participantsTotal;
+    $snapshotStatus = $allPresent ? 'synced' : ($presentCount > 0 ? 'partial' : 'error');
+    $snapshotError = '';
+    if (!$allPresent) {
+        $missingDetails = [];
+        foreach (isset($deliveryCheck['participants']) && is_array($deliveryCheck['participants'])
+            ? $deliveryCheck['participants']
+            : [] as $participant
+        ) {
+            if (!is_array($participant) || !empty($participant['present'])) {
+                continue;
+            }
+            $telegramId = sanitize_text_field((string) ($participant['telegramId'] ?? ''), 120);
+            $message = sanitize_text_field((string) ($participant['message'] ?? ''), 200);
+            $missingDetails[] = ($telegramId !== '' ? $telegramId . ': ' : '')
+                . ($message !== '' ? $message : 'OCR-текст не найден.');
+            if (count($missingDetails) >= 3) {
+                break;
+            }
+        }
+        $snapshotError = 'После записи OCR подтверждён в '
+            . $presentCount
+            . ' из '
+            . $participantsTotal
+            . ' telegramId.json.';
+        if (!empty($missingDetails)) {
+            $snapshotError .= ' ' . implode('; ', $missingDetails);
+        } elseif (!empty($deliveryCheck['error'])) {
+            $snapshotError .= ' ' . sanitize_text_field((string) $deliveryCheck['error'], 300);
+        }
+    }
+    docs_update_record_ocr_snapshot_status(
+        $folder,
+        $documentId,
+        $snapshotStatus,
+        $presentCount,
+        $snapshotError,
+        [$storedName]
+    );
+
+    return [
+        'ok' => $allPresent,
+        'snapshotStatus' => $snapshotStatus,
+        'participantsTotal' => $participantsTotal,
+        'presentCount' => $presentCount,
+        'error' => $snapshotError,
+    ];
+}
+
+function docs_process_uploaded_files_ocr(
+    string $folder,
+    string $documentId,
+    array $uploads,
+    bool $forceNewJob = false
+): void {
+    if (empty($uploads)) {
+        return;
+    }
+
+    docs_enqueue_uploaded_files_ocr($folder, $documentId, $uploads, $forceNewJob);
+    docs_run_ocr_backfill_worker_step($folder);
+}
+
+function docs_ocr_backfill_state_path(string $folder): string
+{
+    return ensure_organization_directory($folder) . '/' . DOCS_OCR_BACKFILL_STATE_FILENAME;
+}
+
+function docs_ocr_backfill_lock_path(string $folder): string
+{
+    return ensure_organization_directory($folder) . '/' . DOCS_OCR_BACKFILL_LOCK_FILENAME;
+}
+
+function docs_ocr_runtime_file_path(string $filename): string
+{
+    if (!is_dir(DOCS_SERVER_LOG_DIRECTORY)) {
+        @mkdir(DOCS_SERVER_LOG_DIRECTORY, 0775, true);
+    }
+
+    return DOCS_SERVER_LOG_DIRECTORY . '/' . $filename;
+}
+
+function docs_ocr_global_worker_lock_path(): string
+{
+    return docs_ocr_runtime_file_path(DOCS_OCR_GLOBAL_WORKER_LOCK_FILENAME);
+}
+
+function docs_ocr_cron_cycle_lock_path(): string
+{
+    return docs_ocr_runtime_file_path(DOCS_OCR_CRON_CYCLE_LOCK_FILENAME);
+}
+
+function docs_ocr_cron_state_path(): string
+{
+    return docs_ocr_runtime_file_path(DOCS_OCR_CRON_STATE_FILENAME);
+}
+
+function docs_telegram_snapshot_audit_state_path(): string
+{
+    return docs_ocr_runtime_file_path(DOCS_TELEGRAM_SNAPSHOT_AUDIT_STATE_FILENAME);
+}
+
+function docs_telegram_snapshot_audit_lock_path(): string
+{
+    return docs_ocr_runtime_file_path(DOCS_TELEGRAM_SNAPSHOT_AUDIT_LOCK_FILENAME);
+}
+
+function docs_ocr_cron_php_binary(): string
+{
+    $candidates = [PHP_BINARY, '/usr/bin/php', '/usr/local/bin/php'];
+    foreach ($candidates as $candidate) {
+        $candidate = trim((string) $candidate);
+        if ($candidate !== '' && $candidate[0] === '/' && is_file($candidate) && is_executable($candidate)) {
+            return $candidate;
+        }
+    }
+
+    return 'php';
+}
+
+function docs_ocr_cron_entry(): string
+{
+    return DOCS_OCR_CRON_SCHEDULE
+        . ' ' . escapeshellarg(docs_ocr_cron_php_binary())
+        . ' ' . escapeshellarg(__FILE__)
+        . ' ' . escapeshellarg(DOCS_OCR_CRON_COMMAND)
+        . ' >/dev/null 2>&1 '
+        . DOCS_OCR_CRON_MARKER;
+}
+
+function docs_filter_ocr_crontab_lines(string $crontab): array
+{
+    $kept = [];
+    foreach (preg_split('/\r\n|\r|\n/', $crontab) ?: [] as $line) {
+        $trimmed = trim((string) $line);
+        if ($trimmed === '') {
+            continue;
+        }
+        if (strpos($line, DOCS_OCR_CRON_MARKER) !== false
+            || strpos($line, DOCS_OCR_CRON_COMMAND) !== false
+        ) {
+            continue;
+        }
+        $kept[] = rtrim((string) $line);
+    }
+
+    return $kept;
+}
+
+function docs_read_system_crontab(): array
+{
+    $result = docs_run_process_with_timeout(['crontab', '-l'], 10);
+    if (!empty($result['ok'])) {
+        return [
+            'ok' => true,
+            'content' => (string) ($result['output'] ?? ''),
+            'error' => '',
+        ];
+    }
+
+    $combinedError = trim((string) ($result['error'] ?? '') . "\n" . (string) ($result['output'] ?? ''));
+    $noCrontab = (int) ($result['exitCode'] ?? 0) === 1
+        && ($combinedError === '' || stripos($combinedError, 'no crontab') !== false);
+    if ($noCrontab) {
+        return [
+            'ok' => true,
+            'content' => '',
+            'error' => '',
+        ];
+    }
+
+    return [
+        'ok' => false,
+        'content' => '',
+        'error' => $combinedError !== '' ? sanitize_text_field($combinedError, 500) : 'Команда crontab недоступна.',
+    ];
+}
+
+function docs_write_system_crontab(array $lines): array
+{
+    $tempPath = tempnam(sys_get_temp_dir(), 'docs_ocr_cron_');
+    if (!is_string($tempPath) || $tempPath === '') {
+        return ['ok' => false, 'error' => 'Не удалось создать временный файл crontab.'];
+    }
+
+    try {
+        $content = empty($lines) ? '' : implode(PHP_EOL, $lines) . PHP_EOL;
+        if (@file_put_contents($tempPath, $content, LOCK_EX) === false) {
+            return ['ok' => false, 'error' => 'Не удалось подготовить новый crontab.'];
+        }
+        @chmod($tempPath, 0600);
+        $result = docs_run_process_with_timeout(['crontab', $tempPath], 10);
+        if (empty($result['ok'])) {
+            $error = trim((string) ($result['error'] ?? '') . "\n" . (string) ($result['output'] ?? ''));
+            return [
+                'ok' => false,
+                'error' => $error !== '' ? sanitize_text_field($error, 500) : 'Не удалось обновить crontab.',
+            ];
+        }
+
+        return ['ok' => true, 'error' => ''];
+    } finally {
+        if (is_file($tempPath)) {
+            @unlink($tempPath);
+        }
+    }
+}
+
+function docs_load_ocr_cron_runtime_state(): array
+{
+    $path = docs_ocr_cron_state_path();
+    if (!is_file($path) || !is_readable($path)) {
+        return [];
+    }
+    $raw = @file_get_contents($path);
+    $decoded = is_string($raw) && trim($raw) !== '' ? json_decode($raw, true) : null;
+
+    return is_array($decoded) ? $decoded : [];
+}
+
+function docs_save_ocr_cron_runtime_state(array $state): bool
+{
+    $path = docs_ocr_cron_state_path();
+    $encoded = json_encode($state, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if ($encoded === false) {
+        return false;
+    }
+    $tempPath = tempnam(dirname($path), '.documents_ocr_cron_');
+    if (!is_string($tempPath) || $tempPath === '') {
+        return false;
+    }
+    try {
+        if (@file_put_contents($tempPath, $encoded . PHP_EOL, LOCK_EX) === false) {
+            return false;
+        }
+        return @rename($tempPath, $path);
+    } finally {
+        if (is_file($tempPath)) {
+            @unlink($tempPath);
+        }
+    }
+}
+
+function docs_default_telegram_snapshot_audit_state(): array
+{
+    return [
+        'version' => DOCS_TELEGRAM_SNAPSHOT_AUDIT_VERSION,
+        'status' => 'idle',
+        'items' => [],
+        'startedAt' => '',
+        'completedAt' => '',
+        'updatedAt' => '',
+        'inventoryWarning' => '',
+    ];
+}
+
+function docs_load_telegram_snapshot_audit_state(): array
+{
+    $path = docs_telegram_snapshot_audit_state_path();
+    if (!is_file($path) || !is_readable($path)) {
+        return docs_default_telegram_snapshot_audit_state();
+    }
+    $raw = @file_get_contents($path);
+    $decoded = is_string($raw) && trim($raw) !== '' ? json_decode($raw, true) : null;
+    if (!is_array($decoded)
+        || (int) ($decoded['version'] ?? 0) !== DOCS_TELEGRAM_SNAPSHOT_AUDIT_VERSION
+    ) {
+        return docs_default_telegram_snapshot_audit_state();
+    }
+
+    return $decoded;
+}
+
+function docs_save_telegram_snapshot_audit_state(array $state): bool
+{
+    $path = docs_telegram_snapshot_audit_state_path();
+    $state['version'] = DOCS_TELEGRAM_SNAPSHOT_AUDIT_VERSION;
+    $state['updatedAt'] = date('c');
+    $encoded = json_encode($state, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if ($encoded === false) {
+        return false;
+    }
+    $tempPath = tempnam(dirname($path), '.telegram_snapshot_audit_');
+    if (!is_string($tempPath) || $tempPath === '') {
+        return false;
+    }
+    try {
+        if (@file_put_contents($tempPath, $encoded . PHP_EOL, LOCK_EX) === false) {
+            return false;
+        }
+
+        return @rename($tempPath, $path);
+    } finally {
+        if (is_file($tempPath)) {
+            @unlink($tempPath);
+        }
+    }
+}
+
+function docs_add_telegram_snapshot_audit_target(
+    array &$targets,
+    $telegramId,
+    array $entry = [],
+    string $source = ''
+): void {
+    $telegramId = normalize_identifier_value($telegramId);
+    if ($telegramId === '' || !preg_match('/^-?\d{4,}$/', $telegramId)) {
+        return;
+    }
+    if (!isset($targets[$telegramId])) {
+        $targets[$telegramId] = [
+            'telegramId' => $telegramId,
+            'displayName' => '',
+            'sources' => [],
+        ];
+    }
+    $displayName = !empty($entry) ? docs_extract_assignee_display_name($entry) : '';
+    if ($displayName !== '' && (string) ($targets[$telegramId]['displayName'] ?? '') === '') {
+        $targets[$telegramId]['displayName'] = $displayName;
+    }
+    if ($source !== '') {
+        $targets[$telegramId]['sources'][$source] = true;
+    }
+}
+
+function docs_collect_telegram_snapshot_audit_targets(): array
+{
+    $targets = [];
+    foreach (load_organizations() as $organization) {
+        if (!is_string($organization) || trim($organization) === '') {
+            continue;
+        }
+        $folder = sanitize_folder_name($organization);
+        $settings = load_admin_settings($folder);
+        $directoryEntries = [];
+        foreach (['responsibles', 'block2', 'block3'] as $group) {
+            foreach (isset($settings[$group]) && is_array($settings[$group]) ? $settings[$group] : [] as $entry) {
+                if (!is_array($entry)) {
+                    continue;
+                }
+                $directoryEntries[] = $entry;
+                docs_add_telegram_snapshot_audit_target(
+                    $targets,
+                    docs_resolve_telegram_chat_id_from_assignee($entry),
+                    $entry,
+                    'directory'
+                );
+            }
+        }
+
+        foreach (load_registry($folder) as $record) {
+            if (!is_array($record)) {
+                continue;
+            }
+            foreach (docs_collect_record_telegram_participation($record, $folder, $directoryEntries) as $participant) {
+                if (!is_array($participant)) {
+                    continue;
+                }
+                docs_add_telegram_snapshot_audit_target(
+                    $targets,
+                    $participant['telegramId'] ?? '',
+                    $participant,
+                    'task'
+                );
+            }
+        }
+    }
+
+    $listing = docs_list_cold_storage_objects(
+        MINI_APP_USER_TASKS_SNAPSHOT_STORAGE_FOLDER,
+        MINI_APP_USER_TASKS_SNAPSHOT_STORAGE_DIRECTORY
+    );
+    $inventoryWarning = '';
+    if (!empty($listing['ok'])) {
+        foreach (isset($listing['items']) && is_array($listing['items']) ? $listing['items'] : [] as $item) {
+            if (!is_array($item) || (string) ($item['type'] ?? '') !== 'file') {
+                continue;
+            }
+            $fileName = sanitize_text_field((string) ($item['name'] ?? ''), 255);
+            if (!preg_match('/^(-?\d{4,})\.json$/', $fileName, $matches)) {
+                continue;
+            }
+            docs_add_telegram_snapshot_audit_target($targets, $matches[1], [], 's3');
+        }
+    } else {
+        $inventoryWarning = sanitize_text_field(
+            (string) ($listing['message'] ?? 'Не удалось получить список существующих Telegram JSON в S3.'),
+            500
+        );
+    }
+
+    uasort($targets, static function (array $left, array $right): int {
+        return strnatcasecmp((string) ($left['telegramId'] ?? ''), (string) ($right['telegramId'] ?? ''));
+    });
+
+    return [
+        'targets' => array_values($targets),
+        'warning' => $inventoryWarning,
+    ];
+}
+
+function docs_create_telegram_snapshot_audit_state(): array
+{
+    $inventory = docs_collect_telegram_snapshot_audit_targets();
+    $items = [];
+    foreach (isset($inventory['targets']) && is_array($inventory['targets']) ? $inventory['targets'] : [] as $target) {
+        if (!is_array($target)) {
+            continue;
+        }
+        $sources = [];
+        foreach (isset($target['sources']) && is_array($target['sources']) ? array_keys($target['sources']) : [] as $source) {
+            $source = sanitize_text_field((string) $source, 40);
+            if ($source !== '') {
+                $sources[] = $source;
+            }
+        }
+        $items[] = [
+            'telegramId' => sanitize_text_field((string) ($target['telegramId'] ?? ''), 120),
+            'displayName' => sanitize_text_field((string) ($target['displayName'] ?? ''), 200),
+            'sources' => array_values(array_unique($sources)),
+            'status' => 'pending',
+            'snapshotExisted' => false,
+            'expectedTasksCount' => 0,
+            'actualTasksBefore' => 0,
+            'missingTasksAdded' => 0,
+            'staleTasksRemoved' => 0,
+            'error' => '',
+        ];
+    }
+    $state = [
+        'version' => DOCS_TELEGRAM_SNAPSHOT_AUDIT_VERSION,
+        'status' => empty($items) ? 'completed' : 'running',
+        'items' => $items,
+        'startedAt' => date('c'),
+        'completedAt' => empty($items) ? date('c') : '',
+        'inventoryWarning' => sanitize_text_field((string) ($inventory['warning'] ?? ''), 500),
+    ];
+    docs_save_telegram_snapshot_audit_state($state);
+
+    return $state;
+}
+
+function docs_admin_state_items_options(array $source): array
+{
+    $options = [
+        'offset' => max(0, (int) ($source['itemsOffset'] ?? 0)),
+        'search' => mb_strtolower(sanitize_text_field((string) ($source['itemsSearch'] ?? ''), 200), 'UTF-8'),
+        'filter' => strtolower(sanitize_text_field((string) ($source['itemsFilter'] ?? 'all'), 40)),
+    ];
+    if (array_key_exists('itemsLimit', $source)) {
+        $options['limit'] = max(0, min(100, (int) $source['itemsLimit']));
+    }
+
+    return $options;
+}
+
+function docs_paginate_admin_state_items(
+    array $items,
+    array $options,
+    callable $matches
+): array {
+    $filtered = [];
+    foreach ($items as $item) {
+        if (is_array($item) && $matches($item, $options)) {
+            $filtered[] = $item;
+        }
+    }
+    $total = count($filtered);
+    $offset = min(max(0, (int) ($options['offset'] ?? 0)), $total);
+    $limit = array_key_exists('limit', $options)
+        ? max(0, min(100, (int) $options['limit']))
+        : $total;
+
+    return [
+        'items' => $limit > 0 ? array_slice($filtered, $offset, $limit) : [],
+        'total' => $total,
+        'offset' => $offset,
+        'limit' => $limit,
+    ];
+}
+
+function docs_summarize_telegram_snapshot_audit_state(array $state, array $itemsOptions = []): array
+{
+    $total = 0;
+    $processed = 0;
+    $valid = 0;
+    $reconciled = 0;
+    $failed = 0;
+    $created = 0;
+    $expectedTasks = 0;
+    $missingTasksAdded = 0;
+    $staleTasksRemoved = 0;
+    $currentTelegramId = '';
+    $items = [];
+    foreach (isset($state['items']) && is_array($state['items']) ? $state['items'] : [] as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+        $status = sanitize_text_field((string) ($item['status'] ?? 'pending'), 40);
+        $publicItem = [
+            'telegramId' => sanitize_text_field((string) ($item['telegramId'] ?? ''), 120),
+            'displayName' => sanitize_text_field((string) ($item['displayName'] ?? ''), 200),
+            'status' => $status,
+            'snapshotExisted' => !empty($item['snapshotExisted']),
+            'expectedTasksCount' => max(0, (int) ($item['expectedTasksCount'] ?? 0)),
+            'actualTasksBefore' => max(0, (int) ($item['actualTasksBefore'] ?? 0)),
+            'missingTasksAdded' => max(0, (int) ($item['missingTasksAdded'] ?? 0)),
+            'staleTasksRemoved' => max(0, (int) ($item['staleTasksRemoved'] ?? 0)),
+            'error' => sanitize_text_field((string) ($item['error'] ?? ''), 500),
+        ];
+        $items[] = $publicItem;
+        $total++;
+        $expectedTasks += $publicItem['expectedTasksCount'];
+        $missingTasksAdded += $publicItem['missingTasksAdded'];
+        $staleTasksRemoved += $publicItem['staleTasksRemoved'];
+        if (in_array($status, ['valid', 'reconciled', 'failed'], true)) {
+            $processed++;
+        }
+        if ($status === 'valid') {
+            $valid++;
+        } elseif ($status === 'reconciled') {
+            $reconciled++;
+            if (!$publicItem['snapshotExisted']) {
+                $created++;
+            }
+        } elseif ($status === 'failed') {
+            $failed++;
+        } elseif ($status === 'processing' && $currentTelegramId === '') {
+            $currentTelegramId = $publicItem['telegramId'];
+        }
+    }
+
+    $pagedItems = docs_paginate_admin_state_items(
+        $items,
+        $itemsOptions,
+        static function (array $item, array $options): bool {
+            $filter = (string) ($options['filter'] ?? 'all');
+            if ($filter !== '' && $filter !== 'all' && (string) ($item['status'] ?? '') !== $filter) {
+                return false;
+            }
+            $search = (string) ($options['search'] ?? '');
+            if ($search === '') {
+                return true;
+            }
+            $haystack = mb_strtolower(
+                (string) ($item['telegramId'] ?? '') . ' ' . (string) ($item['displayName'] ?? ''),
+                'UTF-8'
+            );
+
+            return mb_strpos($haystack, $search, 0, 'UTF-8') !== false;
+        }
+    );
+
+    return [
+        'status' => sanitize_text_field((string) ($state['status'] ?? 'idle'), 40),
+        'total' => $total,
+        'processed' => $processed,
+        'pending' => max(0, $total - $processed),
+        'valid' => $valid,
+        'reconciled' => $reconciled,
+        'failed' => $failed,
+        'created' => $created,
+        'expectedTasks' => $expectedTasks,
+        'missingTasksAdded' => $missingTasksAdded,
+        'staleTasksRemoved' => $staleTasksRemoved,
+        'progress' => $total > 0 ? round(($processed / $total) * 100, 1) : 0,
+        'currentTelegramId' => $currentTelegramId,
+        'startedAt' => sanitize_text_field((string) ($state['startedAt'] ?? ''), 80),
+        'updatedAt' => sanitize_text_field((string) ($state['updatedAt'] ?? ''), 80),
+        'completedAt' => sanitize_text_field((string) ($state['completedAt'] ?? ''), 80),
+        'inventoryWarning' => sanitize_text_field((string) ($state['inventoryWarning'] ?? ''), 500),
+        'items' => $pagedItems['items'],
+        'itemsTotal' => $pagedItems['total'],
+        'itemsOffset' => $pagedItems['offset'],
+        'itemsLimit' => $pagedItems['limit'],
+    ];
+}
+
+function docs_start_telegram_snapshot_audit(): array
+{
+    $lockHandle = @fopen(docs_telegram_snapshot_audit_lock_path(), 'c+');
+    if ($lockHandle === false || !@flock($lockHandle, LOCK_EX | LOCK_NB)) {
+        if (is_resource($lockHandle)) {
+            fclose($lockHandle);
+        }
+        $currentState = docs_load_telegram_snapshot_audit_state();
+        if ((string) ($currentState['status'] ?? '') === 'running') {
+            return [
+                'ok' => true,
+                'alreadyRunning' => true,
+                'message' => 'Проверка Telegram JSON уже выполняется.',
+                'state' => docs_summarize_telegram_snapshot_audit_state($currentState),
+            ];
+        }
+        return [
+            'ok' => false,
+            'message' => 'Очередь проверки Telegram JSON сейчас заблокирована.',
+            'state' => docs_summarize_telegram_snapshot_audit_state(
+                docs_load_telegram_snapshot_audit_state()
+            ),
+        ];
+    }
+    try {
+        $state = docs_load_telegram_snapshot_audit_state();
+        if ((string) ($state['status'] ?? '') === 'running') {
+            return [
+                'ok' => true,
+                'alreadyRunning' => true,
+                'message' => 'Проверка Telegram JSON уже выполняется.',
+                'state' => docs_summarize_telegram_snapshot_audit_state($state),
+            ];
+        }
+        $state = docs_create_telegram_snapshot_audit_state();
+
+        return [
+            'ok' => true,
+            'alreadyRunning' => false,
+            'message' => empty($state['items'])
+                ? 'Пользователи с Telegram ID не найдены.'
+                : 'Полная проверка Telegram JSON поставлена в фоновую очередь.',
+            'state' => docs_summarize_telegram_snapshot_audit_state($state),
+        ];
+    } finally {
+        @flock($lockHandle, LOCK_UN);
+        fclose($lockHandle);
+    }
+}
+
+function docs_retry_failed_telegram_snapshot_audit_items(): array
+{
+    $lockHandle = @fopen(docs_telegram_snapshot_audit_lock_path(), 'c+');
+    if ($lockHandle === false || !@flock($lockHandle, LOCK_EX | LOCK_NB)) {
+        if (is_resource($lockHandle)) {
+            fclose($lockHandle);
+        }
+        return [
+            'ok' => false,
+            'message' => 'Очередь проверки Telegram JSON сейчас заблокирована.',
+            'state' => docs_summarize_telegram_snapshot_audit_state(
+                docs_load_telegram_snapshot_audit_state()
+            ),
+        ];
+    }
+    try {
+        $state = docs_load_telegram_snapshot_audit_state();
+        $retried = 0;
+        foreach (isset($state['items']) && is_array($state['items']) ? $state['items'] : [] as &$item) {
+            if (!is_array($item) || (string) ($item['status'] ?? '') !== 'failed') {
+                continue;
+            }
+            $item['status'] = 'pending';
+            $item['error'] = '';
+            $retried++;
+        }
+        unset($item);
+        if ($retried > 0) {
+            $state['status'] = 'running';
+            $state['completedAt'] = '';
+            docs_save_telegram_snapshot_audit_state($state);
+        }
+
+        return [
+            'ok' => true,
+            'retried' => $retried,
+            'message' => $retried > 0
+                ? 'Ошибочные Telegram JSON возвращены в фоновую очередь.'
+                : 'Ошибок для повторной проверки нет.',
+            'state' => docs_summarize_telegram_snapshot_audit_state($state),
+        ];
+    } finally {
+        @flock($lockHandle, LOCK_UN);
+        fclose($lockHandle);
+    }
+}
+
+function docs_telegram_snapshot_audit_has_work(): bool
+{
+    $state = docs_load_telegram_snapshot_audit_state();
+    if ((string) ($state['status'] ?? '') !== 'running') {
+        return false;
+    }
+    foreach (isset($state['items']) && is_array($state['items']) ? $state['items'] : [] as $item) {
+        if (is_array($item)
+            && in_array((string) ($item['status'] ?? ''), ['pending', 'processing'], true)
+        ) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function docs_run_telegram_snapshot_audit_worker_step(): array
+{
+    $globalLockHandle = @fopen(docs_ocr_global_worker_lock_path(), 'c+');
+    if ($globalLockHandle === false || !@flock($globalLockHandle, LOCK_EX | LOCK_NB)) {
+        if (is_resource($globalLockHandle)) {
+            fclose($globalLockHandle);
+        }
+        return ['worked' => false, 'reason' => 'global_worker_busy'];
+    }
+    $auditLockHandle = @fopen(docs_telegram_snapshot_audit_lock_path(), 'c+');
+    if ($auditLockHandle === false || !@flock($auditLockHandle, LOCK_EX | LOCK_NB)) {
+        if (is_resource($auditLockHandle)) {
+            fclose($auditLockHandle);
+        }
+        @flock($globalLockHandle, LOCK_UN);
+        fclose($globalLockHandle);
+        return ['worked' => false, 'reason' => 'snapshot_audit_busy'];
+    }
+
+    try {
+        $state = docs_load_telegram_snapshot_audit_state();
+        if ((string) ($state['status'] ?? '') !== 'running') {
+            return ['worked' => false, 'reason' => 'snapshot_audit_idle'];
+        }
+        $items = isset($state['items']) && is_array($state['items'])
+            ? array_values($state['items'])
+            : [];
+        $itemIndex = null;
+        foreach ($items as $index => $item) {
+            if (is_array($item) && (string) ($item['status'] ?? '') === 'processing') {
+                $itemIndex = $index;
+                break;
+            }
+        }
+        if ($itemIndex === null) {
+            foreach ($items as $index => $item) {
+                if (is_array($item) && (string) ($item['status'] ?? '') === 'pending') {
+                    $itemIndex = $index;
+                    break;
+                }
+            }
+        }
+        if ($itemIndex === null) {
+            $state['status'] = 'completed';
+            $state['completedAt'] = date('c');
+            docs_save_telegram_snapshot_audit_state($state);
+            return ['worked' => false, 'reason' => 'snapshot_audit_completed'];
+        }
+
+        $item = is_array($items[$itemIndex] ?? null) ? $items[$itemIndex] : [];
+        $telegramId = normalize_identifier_value($item['telegramId'] ?? '');
+        $item['status'] = 'processing';
+        $item['startedAt'] = date('c');
+        $item['error'] = '';
+        $items[$itemIndex] = $item;
+        $state['items'] = $items;
+        docs_save_telegram_snapshot_audit_state($state);
+
+        try {
+            $result = docs_rebuild_mini_app_user_tasks_snapshot($telegramId);
+        } catch (Throwable $error) {
+            $result = [
+                'saved' => false,
+                'status' => 'exception',
+                'error' => sanitize_text_field($error->getMessage(), 500),
+            ];
+        }
+
+        $item['snapshotExisted'] = !empty($result['snapshotExisted']);
+        $item['expectedTasksCount'] = max(0, (int) ($result['expectedTasksCount'] ?? 0));
+        $item['actualTasksBefore'] = max(0, (int) ($result['actualTasksBefore'] ?? 0));
+        $item['missingTasksAdded'] = max(0, (int) ($result['missingTasksAdded'] ?? 0));
+        $item['staleTasksRemoved'] = max(0, (int) ($result['staleTasksRemoved'] ?? 0));
+        if (!empty($result['saved'])) {
+            $item['status'] = !empty($item['snapshotExisted'])
+                && $item['missingTasksAdded'] === 0
+                && $item['staleTasksRemoved'] === 0
+                ? 'valid'
+                : 'reconciled';
+            $item['error'] = '';
+        } else {
+            $item['status'] = 'failed';
+            $item['error'] = sanitize_text_field(
+                (string) ($result['error'] ?? ($result['reason'] ?? 'Не удалось сохранить Telegram JSON в S3.')),
+                500
+            );
+        }
+        $item['finishedAt'] = date('c');
+        $items[$itemIndex] = $item;
+        $state['items'] = $items;
+
+        $hasRemaining = false;
+        foreach ($items as $queuedItem) {
+            if (is_array($queuedItem)
+                && in_array((string) ($queuedItem['status'] ?? ''), ['pending', 'processing'], true)
+            ) {
+                $hasRemaining = true;
+                break;
+            }
+        }
+        if (!$hasRemaining) {
+            $state['status'] = 'completed';
+            $state['completedAt'] = date('c');
+        }
+        docs_save_telegram_snapshot_audit_state($state);
+
+        return [
+            'worked' => true,
+            'reason' => $item['status'] === 'failed'
+                ? 'snapshot_audit_failed'
+                : ($item['status'] === 'valid' ? 'snapshot_audit_valid' : 'snapshot_audit_reconciled'),
+            'telegramId' => $telegramId,
+            'state' => docs_summarize_telegram_snapshot_audit_state($state),
+        ];
+    } finally {
+        @flock($auditLockHandle, LOCK_UN);
+        fclose($auditLockHandle);
+        @flock($globalLockHandle, LOCK_UN);
+        fclose($globalLockHandle);
+    }
+}
+
+function docs_ocr_cron_runtime_is_enabled(): bool
+{
+    $runtime = docs_load_ocr_cron_runtime_state();
+
+    return !array_key_exists('enabled', $runtime) || !empty($runtime['enabled']);
+}
+
+function docs_set_ocr_cron_runtime_enabled(bool $enabled): bool
+{
+    $runtime = docs_load_ocr_cron_runtime_state();
+    $runtime['enabled'] = $enabled;
+    if ($enabled) {
+        $runtime['startedAt'] = date('c');
+        unset($runtime['stopRequestedAt']);
+    } else {
+        $runtime['stopRequestedAt'] = date('c');
+    }
+
+    return docs_save_ocr_cron_runtime_state($runtime);
+}
+
+function docs_get_ocr_cron_status(): array
+{
+    $expectedEntry = docs_ocr_cron_entry();
+    $read = docs_read_system_crontab();
+    $installed = false;
+    if (!empty($read['ok'])) {
+        foreach (preg_split('/\r\n|\r|\n/', (string) ($read['content'] ?? '')) ?: [] as $line) {
+            if (trim((string) $line) === $expectedEntry) {
+                $installed = true;
+                break;
+            }
+        }
+    }
+    $runtime = docs_load_ocr_cron_runtime_state();
+    $enabled = !array_key_exists('enabled', $runtime) || !empty($runtime['enabled']);
+    $lastRunAt = sanitize_text_field((string) ($runtime['lastRunAt'] ?? ''), 80);
+    $lastRunTimestamp = $lastRunAt !== '' ? strtotime($lastRunAt) : false;
+    $lastRunAge = $lastRunTimestamp !== false ? max(0, time() - $lastRunTimestamp) : null;
+
+    return [
+        'supported' => !empty($read['ok']),
+        'installed' => $installed,
+        'enabled' => $enabled,
+        'schedule' => DOCS_OCR_CRON_SCHEDULE,
+        'entry' => $expectedEntry,
+        'lastRunAt' => $lastRunAt,
+        'lastRunAgeSeconds' => $lastRunAge,
+        'active' => $enabled && $lastRunAge !== null && $lastRunAge <= 180,
+        'lastFolder' => sanitize_text_field((string) ($runtime['lastFolder'] ?? ''), 200),
+        'lastWorkType' => sanitize_text_field((string) ($runtime['lastWorkType'] ?? ''), 40),
+        'lastReason' => sanitize_text_field((string) ($runtime['reason'] ?? ''), 80),
+        'lastWorked' => !empty($runtime['worked']),
+        'lastError' => sanitize_text_field((string) ($runtime['lastError'] ?? ''), 500),
+        'stopRequestedAt' => sanitize_text_field((string) ($runtime['stopRequestedAt'] ?? ''), 80),
+        'error' => !empty($read['ok']) ? '' : sanitize_text_field((string) ($read['error'] ?? ''), 500),
+    ];
+}
+
+function docs_install_ocr_cron(): array
+{
+    $read = docs_read_system_crontab();
+    if (empty($read['ok'])) {
+        $status = docs_get_ocr_cron_status();
+        $status['ok'] = false;
+        $status['message'] = (string) ($read['error'] ?? 'Не удалось прочитать crontab.');
+        return $status;
+    }
+
+    $lines = docs_filter_ocr_crontab_lines((string) ($read['content'] ?? ''));
+    $lines[] = docs_ocr_cron_entry();
+    $write = docs_write_system_crontab($lines);
+    if (!empty($write['ok'])) {
+        docs_set_ocr_cron_runtime_enabled(true);
+    }
+    $status = docs_get_ocr_cron_status();
+    $status['ok'] = !empty($write['ok'])
+        && !empty($status['installed'])
+        && !empty($status['enabled']);
+    $status['message'] = !empty($status['ok'])
+        ? 'Cron фоновой обработки установлен и будет запускаться каждую минуту.'
+        : (string) ($write['error'] ?? 'Cron OCR не появился в crontab после установки.');
+
+    return $status;
+}
+
+function docs_remove_ocr_cron(): array
+{
+    $runtimeStopped = docs_set_ocr_cron_runtime_enabled(false);
+    $read = docs_read_system_crontab();
+    if (empty($read['ok'])) {
+        $status = docs_get_ocr_cron_status();
+        $status['ok'] = $runtimeStopped && empty($status['enabled']);
+        $status['message'] = !empty($status['ok'])
+            ? 'Фоновый OCR и проверка Telegram JSON остановлены. Не удалось проверить удаление строки cron: '
+                . (string) ($read['error'] ?? 'не удалось прочитать crontab.')
+            : (string) ($read['error'] ?? 'Не удалось прочитать crontab.');
+        return $status;
+    }
+
+    $lines = docs_filter_ocr_crontab_lines((string) ($read['content'] ?? ''));
+    $write = docs_write_system_crontab($lines);
+    $status = docs_get_ocr_cron_status();
+    $status['ok'] = $runtimeStopped && empty($status['enabled']);
+    $status['message'] = !empty($status['ok'])
+        ? (!empty($write['ok']) && empty($status['installed'])
+            ? 'Фоновая обработка остановлена, строка cron удалена. Очереди и текущий jobId сохранены.'
+            : 'Фоновая обработка остановлена. Строку cron удалить не удалось, но она заблокирована stop-флагом.')
+        : (string) ($write['error'] ?? 'Cron OCR остался в crontab после удаления.');
+
+    return $status;
+}
+
+function docs_find_global_ocr_processing_owner(): array
+{
+    foreach (load_organizations() as $organization) {
+        $folder = sanitize_folder_name((string) $organization);
+        if ($folder === '' || !is_dir(DOCUMENTS_ROOT . '/' . $folder)) {
+            continue;
+        }
+        $state = docs_load_ocr_backfill_state($folder);
+        if (!in_array((string) ($state['status'] ?? 'idle'), ['running', 'paused'], true)) {
+            continue;
+        }
+        foreach (isset($state['items']) && is_array($state['items']) ? $state['items'] : [] as $item) {
+            if (is_array($item) && (string) ($item['status'] ?? '') === 'processing') {
+                return [
+                    'folder' => $folder,
+                    'item' => $item,
+                ];
+            }
+        }
+    }
+
+    return [];
+}
+
+function docs_run_ocr_cron_cycle(): array
+{
+    $startedAt = microtime(true);
+    $cycleLock = @fopen(docs_ocr_cron_cycle_lock_path(), 'c+');
+    if ($cycleLock === false || !@flock($cycleLock, LOCK_EX | LOCK_NB)) {
+        if (is_resource($cycleLock)) {
+            fclose($cycleLock);
+        }
+        return [
+            'ok' => true,
+            'worked' => false,
+            'reason' => 'cron_cycle_busy',
+        ];
+    }
+
+    try {
+        $runtime = docs_load_ocr_cron_runtime_state();
+        $lastFolder = sanitize_folder_name((string) ($runtime['lastFolder'] ?? ''));
+        $lastWorkType = sanitize_text_field((string) ($runtime['lastWorkType'] ?? ''), 40);
+        foreach (load_organizations() as $organization) {
+            $repairFolder = sanitize_folder_name((string) $organization);
+            if ($repairFolder !== '' && is_dir(DOCUMENTS_ROOT . '/' . $repairFolder)) {
+                docs_reactivate_legacy_ocr_delivery_failures($repairFolder);
+            }
+        }
+        $eligibleFolders = [];
+        $processingOwner = docs_find_global_ocr_processing_owner();
+        if (!empty($processingOwner['folder'])) {
+            $eligibleFolders[] = (string) $processingOwner['folder'];
+        } else {
+            foreach (load_organizations() as $organization) {
+                $folder = sanitize_folder_name((string) $organization);
+                if ($folder === '' || !is_dir(DOCUMENTS_ROOT . '/' . $folder)) {
+                    continue;
+                }
+                $state = docs_load_ocr_backfill_state($folder);
+                $queueStatus = (string) ($state['status'] ?? 'idle');
+                if (!in_array($queueStatus, ['running', 'paused'], true)) {
+                    continue;
+                }
+                $items = isset($state['items']) && is_array($state['items']) ? array_values($state['items']) : [];
+                if (docs_select_ocr_queue_item_index(
+                    $items,
+                    $queueStatus === 'paused',
+                    (string) ($state['lastScheduledOrigin'] ?? '')
+                ) !== null) {
+                    $eligibleFolders[] = $folder;
+                }
+            }
+        }
+
+        $selectedFolder = '';
+        if (!empty($eligibleFolders)) {
+            $selectedFolder = (string) $eligibleFolders[0];
+            if (empty($processingOwner) && $lastFolder !== '') {
+                $lastIndex = array_search($lastFolder, $eligibleFolders, true);
+                if ($lastIndex !== false) {
+                    $selectedFolder = (string) $eligibleFolders[((int) $lastIndex + 1) % count($eligibleFolders)];
+                }
+            }
+        }
+
+        $hasOcrWork = $selectedFolder !== '';
+        $hasSnapshotAuditWork = docs_telegram_snapshot_audit_has_work();
+        $workType = '';
+        if ($hasOcrWork && $hasSnapshotAuditWork) {
+            $workType = $lastWorkType === 'snapshot_audit' ? 'ocr' : 'snapshot_audit';
+        } elseif ($hasSnapshotAuditWork) {
+            $workType = 'snapshot_audit';
+        } elseif ($hasOcrWork) {
+            $workType = 'ocr';
+        }
+
+        try {
+            if ($workType === 'snapshot_audit') {
+                $step = docs_run_telegram_snapshot_audit_worker_step();
+            } elseif ($workType === 'ocr') {
+                $step = docs_run_ocr_backfill_worker_step($selectedFolder);
+            } else {
+                $step = ['worked' => false, 'reason' => 'no_active_queues'];
+            }
+        } catch (Throwable $error) {
+            $step = [
+                'worked' => false,
+                'reason' => 'worker_error',
+                'error' => sanitize_text_field($error->getMessage(), 500),
+            ];
+        }
+        $heartbeat = [
+            'lastRunAt' => date('c'),
+            'lastFolder' => $workType === 'ocr' ? $selectedFolder : $lastFolder,
+            'lastWorkType' => $workType,
+            'worked' => !empty($step['worked']),
+            'reason' => sanitize_text_field((string) ($step['reason'] ?? ''), 80),
+            'lastError' => sanitize_text_field((string) ($step['error'] ?? ''), 500),
+            'durationMs' => (int) round((microtime(true) - $startedAt) * 1000),
+            'pid' => function_exists('getmypid') ? (int) getmypid() : 0,
+        ];
+        docs_save_ocr_cron_runtime_state(array_merge(
+            docs_load_ocr_cron_runtime_state(),
+            $heartbeat
+        ));
+
+        return [
+            'ok' => true,
+            'worked' => $heartbeat['worked'],
+            'reason' => $heartbeat['reason'],
+            'folder' => $workType === 'ocr' ? $selectedFolder : '',
+            'workType' => $workType,
+            'durationMs' => $heartbeat['durationMs'],
+        ];
+    } finally {
+        @flock($cycleLock, LOCK_UN);
+        fclose($cycleLock);
+    }
+}
+
+function docs_run_ocr_cron_window(): array
+{
+    if (!docs_ocr_cron_runtime_is_enabled()) {
+        return [
+            'ok' => true,
+            'worked' => false,
+            'reason' => 'cron_stopped',
+            'folder' => '',
+            'cycles' => 0,
+        ];
+    }
+    $deadline = microtime(true) + DOCS_OCR_CRON_RUN_WINDOW_SECONDS;
+    $cycles = 0;
+    $worked = false;
+    $lastResult = [
+        'ok' => true,
+        'worked' => false,
+        'reason' => 'no_active_queues',
+        'folder' => '',
+    ];
+
+    do {
+        if (!docs_ocr_cron_runtime_is_enabled()) {
+            $lastResult = [
+                'ok' => true,
+                'worked' => false,
+                'reason' => 'cron_stopped',
+                'folder' => '',
+            ];
+            break;
+        }
+        $lastResult = docs_run_ocr_cron_cycle();
+        $cycles++;
+        $worked = $worked || !empty($lastResult['worked']);
+        $reason = (string) ($lastResult['reason'] ?? '');
+        if (in_array($reason, ['no_active_queues', 'cron_cycle_busy'], true)) {
+            break;
+        }
+        $remainingMicroseconds = (int) floor((
+            $deadline - microtime(true)
+        ) * 1000000);
+        $pollIntervalMicroseconds = DOCS_OCR_CRON_POLL_INTERVAL_MILLISECONDS * 1000;
+        if ($remainingMicroseconds <= $pollIntervalMicroseconds) {
+            break;
+        }
+        usleep($pollIntervalMicroseconds);
+    } while (microtime(true) < $deadline);
+
+    return [
+        'ok' => !empty($lastResult['ok']),
+        'worked' => $worked,
+        'reason' => (string) ($lastResult['reason'] ?? ''),
+        'folder' => (string) ($lastResult['folder'] ?? ''),
+        'cycles' => $cycles,
+    ];
+}
+
+function docs_default_ocr_backfill_state(): array
+{
+    return [
+        'version' => DOCS_OCR_BACKFILL_WORKFLOW_VERSION,
+        'status' => 'idle',
+        'total' => 0,
+        'completed' => 0,
+        'failed' => 0,
+        'skipped' => 0,
+        'attempted' => 0,
+        'items' => [],
+        'recentFailures' => [],
+        'lastScheduledOrigin' => '',
+    ];
+}
+
+function docs_ocr_queue_item_key(string $documentId, string $storedName): string
+{
+    return hash('sha256', $documentId . "\0" . $storedName);
+}
+
+function docs_build_ocr_queue_item(
+    array $record,
+    array $file,
+    string $origin,
+    int $participantsTotal,
+    int $presentCount,
+    bool $forceNewJob = false
+): array {
+    $documentId = sanitize_text_field((string) ($record['id'] ?? ''), 200);
+    $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
+    $ocr = isset($file['ocr']) && is_array($file['ocr']) ? $file['ocr'] : [];
+
+    return [
+        'key' => docs_ocr_queue_item_key($documentId, $storedName),
+        'documentId' => $documentId,
+        'taskLabel' => sanitize_text_field((string) (
+            $record['registryNumber']
+            ?? $record['documentNumber']
+            ?? $record['entryNumber']
+            ?? $documentId
+        ), 160),
+        'storedName' => $storedName,
+        'originalName' => sanitize_text_field((string) ($file['originalName'] ?? $storedName), 255),
+        'size' => max(0, (int) ($file['size'] ?? 0)),
+        'origin' => $origin === 'live_upload' ? 'live_upload' : 'old_backfill',
+        'fullReprocess' => $forceNewJob && $origin !== 'live_upload',
+        'status' => 'pending',
+        'attempts' => 0,
+        'participantsTotal' => max(0, $participantsTotal),
+        'presentCount' => max(0, $presentCount),
+        'missingCount' => max(0, $participantsTotal - $presentCount),
+        'jobId' => $forceNewJob ? '' : sanitize_text_field((string) ($ocr['jobId'] ?? ''), 160),
+        'jobStatus' => $forceNewJob ? '' : sanitize_text_field((string) ($ocr['jobStatus'] ?? ''), 40),
+        'progress' => $forceNewJob ? 0 : max(0, min(100, (int) ($ocr['jobProgress'] ?? 0))),
+        'currentPage' => $forceNewJob ? 0 : max(0, (int) ($ocr['jobCurrentPage'] ?? 0)),
+        'totalPages' => $forceNewJob ? 0 : max(0, (int) ($ocr['jobTotalPages'] ?? 0)),
+        'legacyJobChecked' => $forceNewJob,
+        'forceNewJob' => $forceNewJob,
+        'deliveryPending' => !$forceNewJob
+            && (string) ($ocr['status'] ?? '') === 'completed'
+            && in_array(strtolower((string) ($ocr['snapshotStatus'] ?? '')), ['partial', 'error'], true),
+        'deliveryAttempts' => 0,
+        'deliveryRepairGeneration' => DOCS_OCR_DELIVERY_REPAIR_GENERATION,
+        'error' => '',
+        'queuedAt' => date('c'),
+    ];
+}
+
+function docs_enqueue_uploaded_files_ocr(
+    string $folder,
+    string $documentId,
+    array $uploads,
+    bool $forceNewJob = false
+): void {
+    $storedNames = [];
+    foreach ($uploads as $upload) {
+        if (!is_array($upload) || !isset($upload['file']) || !is_array($upload['file'])) {
+            continue;
+        }
+        $storedName = sanitize_text_field((string) ($upload['file']['storedName'] ?? ''), 255);
+        if ($storedName !== '') {
+            $storedNames[$storedName] = true;
+        }
+    }
+    if ($documentId === '' || empty($storedNames)) {
+        return;
+    }
+
+    $matchRecord = null;
+    foreach (load_registry($folder) as $record) {
+        if (is_array($record) && (string) ($record['id'] ?? '') === $documentId) {
+            $matchRecord = $record;
+            break;
+        }
+    }
+    if (!is_array($matchRecord)) {
+        return;
+    }
+
+    $lockHandle = @fopen(docs_ocr_backfill_lock_path($folder), 'c+');
+    if ($lockHandle === false || !@flock($lockHandle, LOCK_EX)) {
+        if (is_resource($lockHandle)) {
+            fclose($lockHandle);
+        }
+        return;
+    }
+
+    try {
+        $state = docs_load_ocr_backfill_state($folder);
+        $items = isset($state['items']) && is_array($state['items']) ? $state['items'] : [];
+        $indexByKey = [];
+        foreach ($items as $index => $item) {
+            if (is_array($item) && isset($item['key'])) {
+                $indexByKey[(string) $item['key']] = $index;
+            }
+        }
+        $participantsTotal = count(docs_collect_record_telegram_ids($matchRecord, $folder));
+        foreach (isset($matchRecord['files']) && is_array($matchRecord['files']) ? $matchRecord['files'] : [] as $file) {
+            if (!is_array($file)) {
+                continue;
+            }
+            $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
+            if ($storedName === '' || !isset($storedNames[$storedName])) {
+                continue;
+            }
+            $ocr = isset($file['ocr']) && is_array($file['ocr']) ? $file['ocr'] : [];
+            $origin = (int) ($ocr['uploadGeneration'] ?? 0) >= DOCS_OCR_LIVE_UPLOAD_GENERATION
+                ? 'live_upload'
+                : 'old_backfill';
+            $snapshotStatus = strtolower((string) ($ocr['snapshotStatus'] ?? ''));
+            $presentCount = (string) ($ocr['status'] ?? '') === 'completed'
+                && in_array($snapshotStatus, ['partial', 'error'], true)
+                ? max(0, (int) ($ocr['snapshotUsersCount'] ?? 0))
+                : 0;
+            $item = docs_build_ocr_queue_item(
+                $matchRecord,
+                $file,
+                $origin,
+                $participantsTotal,
+                $presentCount,
+                $forceNewJob
+            );
+            $key = (string) $item['key'];
+            if (isset($indexByKey[$key])) {
+                $existingIndex = $indexByKey[$key];
+                $existing = is_array($items[$existingIndex] ?? null) ? $items[$existingIndex] : [];
+                if ((string) ($existing['status'] ?? '') === 'processing'
+                    && !$forceNewJob
+                    && sanitize_text_field((string) ($existing['jobId'] ?? ''), 160) !== ''
+                ) {
+                    continue;
+                }
+                $items[$existingIndex] = array_merge($existing, $item);
+            } else {
+                $items[] = $item;
+                $indexByKey[$key] = array_key_last($items);
+            }
+        }
+        $state['items'] = array_values($items);
+        $state['folder'] = $folder;
+        if ((string) ($state['status'] ?? '') !== 'paused') {
+            $state['status'] = 'running';
+        }
+        if (empty($state['startedAt'])) {
+            $state['startedAt'] = date('c');
+        }
+        $state['completedAt'] = '';
+        docs_save_ocr_backfill_state($folder, $state);
+    } finally {
+        @flock($lockHandle, LOCK_UN);
+        fclose($lockHandle);
+    }
+}
+
+function docs_load_ocr_backfill_state(string $folder): array
+{
+    $path = docs_ocr_backfill_state_path($folder);
+    if (!is_file($path) || !is_readable($path)) {
+        return docs_default_ocr_backfill_state();
+    }
+
+    $raw = @file_get_contents($path);
+    $decoded = is_string($raw) && trim($raw) !== '' ? json_decode($raw, true) : null;
+
+    if (is_array($decoded)
+        && (int) ($decoded['version'] ?? 0) === DOCS_OCR_BACKFILL_WORKFLOW_VERSION
+    ) {
+        return $decoded;
+    }
+
+    $state = docs_default_ocr_backfill_state();
+    $state['error'] = is_array($decoded) ? 'workflow_reset' : 'state_decode_failed';
+    return $state;
+}
+
+function docs_save_ocr_backfill_state(string $folder, array $state): bool
+{
+    $path = docs_ocr_backfill_state_path($folder);
+    $state['version'] = DOCS_OCR_BACKFILL_WORKFLOW_VERSION;
+    $state['updatedAt'] = date('c');
+    $encoded = json_encode($state, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if ($encoded === false) {
+        return false;
+    }
+
+    $tempPath = tempnam(dirname($path), '.ocr_backfill_');
+    if (!is_string($tempPath) || $tempPath === '') {
+        return false;
+    }
+    try {
+        if (@file_put_contents($tempPath, $encoded . PHP_EOL, LOCK_EX) === false) {
+            return false;
+        }
+        return @rename($tempPath, $path);
+    } finally {
+        if (is_file($tempPath)) {
+            @unlink($tempPath);
+        }
+    }
+}
+
+function docs_reactivate_legacy_ocr_delivery_failures(string $folder): bool
+{
+    $state = docs_load_ocr_backfill_state($folder);
+    $hasLegacyDeliveryFailure = false;
+    foreach (isset($state['items']) && is_array($state['items']) ? $state['items'] : [] as $item) {
+        if (is_array($item)
+            && (string) ($item['status'] ?? '') === 'failed'
+            && !empty($item['deliveryPending'])
+            && (int) ($item['deliveryRepairGeneration'] ?? 0) < DOCS_OCR_DELIVERY_REPAIR_GENERATION
+        ) {
+            $hasLegacyDeliveryFailure = true;
+            break;
+        }
+    }
+    if (!$hasLegacyDeliveryFailure) {
+        return false;
+    }
+
+    $lockHandle = @fopen(docs_ocr_backfill_lock_path($folder), 'c+');
+    if ($lockHandle === false || !@flock($lockHandle, LOCK_EX | LOCK_NB)) {
+        if (is_resource($lockHandle)) {
+            fclose($lockHandle);
+        }
+        return false;
+    }
+
+    try {
+        $state = docs_load_ocr_backfill_state($folder);
+        $items = isset($state['items']) && is_array($state['items']) ? array_values($state['items']) : [];
+        $changed = false;
+        foreach ($items as &$item) {
+            if (!is_array($item)
+                || (string) ($item['status'] ?? '') !== 'failed'
+                || empty($item['deliveryPending'])
+                || (int) ($item['deliveryRepairGeneration'] ?? 0) >= DOCS_OCR_DELIVERY_REPAIR_GENERATION
+            ) {
+                continue;
+            }
+            $item['status'] = 'processing';
+            $item['deliveryAttempts'] = 0;
+            $item['deliveryRepairGeneration'] = DOCS_OCR_DELIVERY_REPAIR_GENERATION;
+            $item['error'] = '';
+            unset($item['finishedAt']);
+            $changed = true;
+        }
+        unset($item);
+        if (!$changed) {
+            return false;
+        }
+        $state['items'] = $items;
+        if ((string) ($state['status'] ?? '') !== 'paused') {
+            $state['status'] = 'running';
+        }
+        $state['completedAt'] = '';
+
+        return docs_save_ocr_backfill_state($folder, $state);
+    } finally {
+        @flock($lockHandle, LOCK_UN);
+        fclose($lockHandle);
+    }
+}
+
+function docs_summarize_ocr_backfill_state(array $state, array $itemsOptions = []): array
+{
+    $total = 0;
+    $completed = 0;
+    $failed = 0;
+    $skipped = 0;
+    $deliveryPendingCount = 0;
+    $activeProgress = 0;
+    $currentItem = null;
+    $publicItems = [];
+    foreach (isset($state['items']) && is_array($state['items']) ? $state['items'] : [] as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+        $status = sanitize_text_field((string) ($item['status'] ?? 'pending'), 40);
+        $progress = max(0, min(100, (int) ($item['progress'] ?? 0)));
+        $publicItem = [
+            'key' => sanitize_text_field((string) ($item['key'] ?? ''), 64),
+            'documentId' => sanitize_text_field((string) ($item['documentId'] ?? ''), 200),
+            'taskLabel' => sanitize_text_field((string) ($item['taskLabel'] ?? ''), 160),
+            'storedName' => sanitize_text_field((string) ($item['storedName'] ?? ''), 255),
+            'originalName' => sanitize_text_field((string) ($item['originalName'] ?? ''), 255),
+            'size' => max(0, (int) ($item['size'] ?? 0)),
+            'origin' => (string) ($item['origin'] ?? '') === 'live_upload' ? 'live_upload' : 'old_backfill',
+            'fullReprocess' => !empty($item['fullReprocess']),
+            'status' => $status,
+            'attempts' => max(0, (int) ($item['attempts'] ?? 0)),
+            'participantsTotal' => max(0, (int) ($item['participantsTotal'] ?? 0)),
+            'presentCount' => max(0, (int) ($item['presentCount'] ?? 0)),
+            'missingCount' => max(0, (int) ($item['missingCount'] ?? 0)),
+            'jobId' => sanitize_text_field((string) ($item['jobId'] ?? ''), 160),
+            'jobStatus' => sanitize_text_field((string) ($item['jobStatus'] ?? ''), 40),
+            'progress' => $progress,
+            'currentPage' => max(0, (int) ($item['currentPage'] ?? 0)),
+            'totalPages' => max(0, (int) ($item['totalPages'] ?? 0)),
+            'deliveryPending' => !empty($item['deliveryPending']),
+            'error' => sanitize_text_field((string) ($item['error'] ?? ''), 500),
+        ];
+        $publicItems[] = $publicItem;
+        $total++;
+        if (!empty($publicItem['deliveryPending'])) {
+            $deliveryPendingCount++;
+        }
+        if ($status === 'completed') {
+            $completed++;
+        } elseif ($status === 'failed') {
+            $failed++;
+        } elseif ($status === 'skipped') {
+            $skipped++;
+        } elseif ($status === 'processing' && $currentItem === null) {
+            $currentItem = $publicItem;
+            $activeProgress = $progress;
+        }
+    }
+    $processed = $completed + $failed + $skipped;
+    $overallProgress = $total > 0
+        ? round(min(100, (($processed + ($activeProgress / 100)) / $total) * 100), 1)
+        : 0;
+
+    $pagedItems = docs_paginate_admin_state_items(
+        $publicItems,
+        $itemsOptions,
+        static function (array $item, array $options): bool {
+            $filter = (string) ($options['filter'] ?? 'all');
+            $status = (string) ($item['status'] ?? 'pending');
+            $origin = (string) ($item['origin'] ?? 'old_backfill');
+            $deliveryPending = !empty($item['deliveryPending']);
+            if ($filter === 'attention'
+                && !in_array($status, ['failed', 'skipped'], true)
+                && !$deliveryPending
+            ) {
+                return false;
+            }
+            if ($filter === 'processing' && !in_array($status, ['pending', 'processing'], true)) {
+                return false;
+            }
+            if ($filter === 'ready' && $status !== 'completed') {
+                return false;
+            }
+            if ($filter === 'new' && $origin !== 'live_upload') {
+                return false;
+            }
+            if ($filter === 'old' && $origin !== 'old_backfill') {
+                return false;
+            }
+            $search = (string) ($options['search'] ?? '');
+            if ($search === '') {
+                return true;
+            }
+            $haystack = mb_strtolower(implode(' ', [
+                (string) ($item['originalName'] ?? ''),
+                (string) ($item['storedName'] ?? ''),
+                (string) ($item['taskLabel'] ?? ''),
+                (string) ($item['documentId'] ?? ''),
+            ]), 'UTF-8');
+
+            return mb_strpos($haystack, $search, 0, 'UTF-8') !== false;
+        }
+    );
+
+    return [
+        'status' => sanitize_text_field((string) ($state['status'] ?? 'idle'), 40),
+        'total' => $total,
+        'processed' => $processed,
+        'pending' => max(0, $total - $processed),
+        'completed' => $completed,
+        'failed' => $failed,
+        'skipped' => $skipped,
+        'deliveryPending' => $deliveryPendingCount,
+        'attempted' => max(0, (int) ($state['attempted'] ?? 0)),
+        'progress' => $overallProgress,
+        'activeProgress' => $activeProgress,
+        'currentFile' => $currentItem !== null ? (string) $currentItem['originalName'] : '',
+        'startedAt' => sanitize_text_field((string) ($state['startedAt'] ?? ''), 80),
+        'updatedAt' => sanitize_text_field((string) ($state['updatedAt'] ?? ''), 80),
+        'completedAt' => sanitize_text_field((string) ($state['completedAt'] ?? ''), 80),
+        'currentJob' => $currentItem,
+        'items' => $pagedItems['items'],
+        'itemsTotal' => $pagedItems['total'],
+        'itemsOffset' => $pagedItems['offset'],
+        'itemsLimit' => $pagedItems['limit'],
+        'recentFailures' => isset($state['recentFailures']) && is_array($state['recentFailures'])
+            ? array_slice(array_values($state['recentFailures']), -DOCS_OCR_BACKFILL_RECENT_FAILURES_LIMIT)
+            : [],
+    ];
+}
+
+function docs_create_ocr_backfill_state(string $folder, string $organization): array
+{
+    $items = [];
+    foreach (load_registry($folder) as $record) {
+        if (!is_array($record)) {
+            continue;
+        }
+        $documentId = sanitize_text_field((string) ($record['id'] ?? ''), 200);
+        if ($documentId === '' || !isset($record['files']) || !is_array($record['files'])) {
+            continue;
+        }
+        $participantsTotal = count(docs_collect_record_telegram_ids($record, $folder));
+        foreach ($record['files'] as $file) {
+            if (!is_array($file)) {
+                continue;
+            }
+            $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
+            if ($storedName === '') {
+                continue;
+            }
+            $items[] = docs_build_ocr_queue_item(
+                $record,
+                $file,
+                'old_backfill',
+                $participantsTotal,
+                0,
+                true
+            );
+        }
+    }
+
+    $state = [
+        'version' => DOCS_OCR_BACKFILL_WORKFLOW_VERSION,
+        'organization' => $organization,
+        'folder' => $folder,
+        'status' => empty($items) ? 'completed' : 'running',
+        'total' => count($items),
+        'completed' => 0,
+        'failed' => 0,
+        'skipped' => 0,
+        'attempted' => 0,
+        'items' => $items,
+        'recentFailures' => [],
+        'lastScheduledOrigin' => '',
+        'startedAt' => date('c'),
+        'completedAt' => empty($items) ? date('c') : '',
+    ];
+    docs_save_ocr_backfill_state($folder, $state);
+
+    return $state;
+}
+
+function docs_ocr_backfill_append_failure(array &$state, array $item, string $error): void
+{
+    $failures = isset($state['recentFailures']) && is_array($state['recentFailures'])
+        ? $state['recentFailures']
+        : [];
+    $failures[] = [
+        'documentId' => sanitize_text_field((string) ($item['documentId'] ?? ''), 200),
+        'file' => sanitize_text_field((string) ($item['originalName'] ?? ($item['storedName'] ?? '')), 255),
+        'attempt' => max(1, (int) ($item['attempts'] ?? 1)),
+        'error' => sanitize_text_field($error, 500),
+        'at' => date('c'),
+    ];
+    $state['recentFailures'] = array_slice($failures, -DOCS_OCR_BACKFILL_RECENT_FAILURES_LIMIT);
+}
+
+function docs_find_ocr_backfill_record_file(string $folder, string $documentId, string $storedName): array
+{
+    foreach (load_registry($folder) as $record) {
+        if (!is_array($record) || (string) ($record['id'] ?? '') !== $documentId) {
+            continue;
+        }
+        foreach (isset($record['files']) && is_array($record['files']) ? $record['files'] : [] as $file) {
+            if (is_array($file) && (string) ($file['storedName'] ?? '') === $storedName) {
+                return [
+                    'record' => $record,
+                    'file' => $file,
+                ];
+            }
+        }
+    }
+
+    return [];
+}
+
+function docs_select_ocr_queue_item_index(array $items, bool $oldQueuePaused, string $lastOrigin): ?int
+{
+    foreach ($items as $index => $item) {
+        if (is_array($item) && (string) ($item['status'] ?? '') === 'processing') {
+            return $index;
+        }
+    }
+
+    $pendingByOrigin = [
+        'live_upload' => [],
+        'old_backfill' => [],
+    ];
+    foreach ($items as $index => $item) {
+        if (!is_array($item) || (string) ($item['status'] ?? '') !== 'pending') {
+            continue;
+        }
+        $origin = (string) ($item['origin'] ?? '') === 'live_upload'
+            ? 'live_upload'
+            : 'old_backfill';
+        if ($oldQueuePaused && $origin === 'old_backfill') {
+            continue;
+        }
+        $pendingByOrigin[$origin][] = $index;
+    }
+
+    if (!empty($pendingByOrigin['live_upload']) && !empty($pendingByOrigin['old_backfill'])) {
+        $nextOrigin = $lastOrigin === 'live_upload' ? 'old_backfill' : 'live_upload';
+        return $pendingByOrigin[$nextOrigin][0];
+    }
+    if (!empty($pendingByOrigin['live_upload'])) {
+        return $pendingByOrigin['live_upload'][0];
+    }
+    if (!empty($pendingByOrigin['old_backfill'])) {
+        return $pendingByOrigin['old_backfill'][0];
+    }
+
+    return null;
+}
+
+function docs_update_file_ocr_terminal_status(
+    string $folder,
+    string $documentId,
+    string $storedName,
+    string $status,
+    string $error
+): void {
+    [$handle, $records] = docs_lock_registry($folder);
+    if ($handle === null) {
+        return;
+    }
+    try {
+        foreach ($records as &$record) {
+            if (!is_array($record) || (string) ($record['id'] ?? '') !== $documentId) {
+                continue;
+            }
+            if (!isset($record['files']) || !is_array($record['files'])) {
+                break;
+            }
+            foreach ($record['files'] as &$file) {
+                if (!is_array($file) || (string) ($file['storedName'] ?? '') !== $storedName) {
+                    continue;
+                }
+                $ocr = isset($file['ocr']) && is_array($file['ocr']) ? $file['ocr'] : docs_build_new_file_ocr_state();
+                $ocr['status'] = $status === 'skipped' ? 'unsupported' : 'failed';
+                $ocr['processedAt'] = date('c');
+                $ocr['error'] = sanitize_text_field($error, 500);
+                $file['ocr'] = $ocr;
+                $record['updatedAt'] = date('c');
+                docs_save_registry_locked($handle, $records);
+                return;
+            }
+            unset($file);
+        }
+        unset($record);
+    } finally {
+        docs_unlock_registry($handle);
+    }
+}
+
+function docs_finish_ocr_queue_item(
+    string $folder,
+    array &$state,
+    array &$items,
+    int $itemIndex,
+    string $status,
+    string $error = ''
+): void {
+    $item = isset($items[$itemIndex]) && is_array($items[$itemIndex])
+        ? $items[$itemIndex]
+        : [];
+    $item['status'] = $status;
+    $item['jobStatus'] = $status === 'completed'
+        ? 'succeeded'
+        : (string) ($item['jobStatus'] ?? '');
+    if ($status === 'completed') {
+        $item['progress'] = 100;
+        $item['presentCount'] = max(0, (int) ($item['participantsTotal'] ?? 0));
+        $item['missingCount'] = 0;
+    }
+    $item['error'] = sanitize_text_field($error, 500);
+    $item['finishedAt'] = date('c');
+    $items[$itemIndex] = $item;
+    $state['items'] = $items;
+    if ($status === 'skipped' || ($status === 'failed' && empty($item['deliveryPending']))) {
+        docs_update_file_ocr_terminal_status(
+            $folder,
+            sanitize_text_field((string) ($item['documentId'] ?? ''), 200),
+            sanitize_text_field((string) ($item['storedName'] ?? ''), 255),
+            $status,
+            (string) $item['error']
+        );
+    }
+    unset($state['currentJob']);
+    $hasRemainingItems = false;
+    foreach ($items as $queueItem) {
+        if (is_array($queueItem)
+            && in_array((string) ($queueItem['status'] ?? ''), ['pending', 'processing'], true)
+        ) {
+            $hasRemainingItems = true;
+            break;
+        }
+    }
+    if (!$hasRemainingItems) {
+        $state['status'] = 'completed';
+        $state['completedAt'] = date('c');
+    }
+}
+
+function docs_run_ocr_backfill_worker_step(string $folder): array
+{
+    $globalLockHandle = @fopen(docs_ocr_global_worker_lock_path(), 'c+');
+    if ($globalLockHandle === false || !@flock($globalLockHandle, LOCK_EX | LOCK_NB)) {
+        if (is_resource($globalLockHandle)) {
+            fclose($globalLockHandle);
+        }
+        return [
+            'worked' => false,
+            'reason' => 'global_worker_busy',
+            'state' => docs_summarize_ocr_backfill_state(docs_load_ocr_backfill_state($folder)),
+        ];
+    }
+
+    $lockHandle = null;
+    try {
+        $lockHandle = @fopen(docs_ocr_backfill_lock_path($folder), 'c+');
+        if ($lockHandle === false || !@flock($lockHandle, LOCK_EX | LOCK_NB)) {
+            return [
+                'worked' => false,
+                'reason' => 'worker_busy',
+                'state' => docs_summarize_ocr_backfill_state(docs_load_ocr_backfill_state($folder)),
+            ];
+        }
+
+        $state = docs_load_ocr_backfill_state($folder);
+        $queueStatus = (string) ($state['status'] ?? 'idle');
+        if (!in_array($queueStatus, ['running', 'paused'], true)) {
+            return [
+                'worked' => false,
+                'reason' => 'queue_not_running',
+                'state' => docs_summarize_ocr_backfill_state($state),
+            ];
+        }
+
+        $processingOwner = docs_find_global_ocr_processing_owner();
+        if (!empty($processingOwner['folder']) && (string) $processingOwner['folder'] !== $folder) {
+            return [
+                'worked' => false,
+                'reason' => 'global_job_active',
+                'activeFolder' => (string) $processingOwner['folder'],
+                'state' => docs_summarize_ocr_backfill_state($state),
+            ];
+        }
+
+        $items = isset($state['items']) && is_array($state['items']) ? array_values($state['items']) : [];
+        $itemIndex = docs_select_ocr_queue_item_index(
+            $items,
+            $queueStatus === 'paused',
+            (string) ($state['lastScheduledOrigin'] ?? '')
+        );
+        if ($itemIndex === null) {
+            $hasPausedOldItems = false;
+            foreach ($items as $item) {
+                if (is_array($item)
+                    && (string) ($item['status'] ?? '') === 'pending'
+                    && (string) ($item['origin'] ?? '') !== 'live_upload'
+                ) {
+                    $hasPausedOldItems = true;
+                    break;
+                }
+            }
+            $state['items'] = $items;
+            if (!$hasPausedOldItems) {
+                $state['status'] = 'completed';
+                $state['completedAt'] = date('c');
+            }
+            docs_save_ocr_backfill_state($folder, $state);
+            return [
+                'worked' => !$hasPausedOldItems,
+                'reason' => $hasPausedOldItems ? 'queue_paused' : 'completed',
+                'state' => docs_summarize_ocr_backfill_state($state),
+            ];
+        }
+
+        $item = $items[$itemIndex];
+        $state['lastScheduledOrigin'] = (string) ($item['origin'] ?? 'old_backfill');
+        $documentId = sanitize_text_field((string) ($item['documentId'] ?? ''), 200);
+        $storedName = sanitize_text_field((string) ($item['storedName'] ?? ''), 255);
+        $match = docs_find_ocr_backfill_record_file($folder, $documentId, $storedName);
+        $record = isset($match['record']) && is_array($match['record']) ? $match['record'] : [];
+        $file = isset($match['file']) && is_array($match['file']) ? $match['file'] : [];
+
+        if (empty($record) || empty($file)) {
+            docs_finish_ocr_queue_item($folder, $state, $items, $itemIndex, 'skipped', 'Файл или задача больше не существуют.');
+            docs_save_ocr_backfill_state($folder, $state);
+            return [
+                'worked' => true,
+                'reason' => 'file_missing',
+                'state' => docs_summarize_ocr_backfill_state($state),
+            ];
+        }
+        $jobId = sanitize_text_field((string) ($item['jobId'] ?? ''), 160);
+        if (empty($item['deliveryPending'])
+            && (string) ($item['status'] ?? '') === 'processing'
+            && $jobId !== ''
+        ) {
+            $job = docs_fetch_private_ocr_job_status($jobId);
+            if (empty($job['ok'])) {
+                $item['error'] = sanitize_text_field((string) ($job['error'] ?? 'Не удалось проверить OCR job.'), 500);
+                $httpStatus = (int) ($job['httpStatus'] ?? 0);
+                if (in_array($httpStatus, [404, 410], true)) {
+                    $item['status'] = 'pending';
+                    $item['legacyJobChecked'] = true;
+                    $item['forceNewJob'] = true;
+                    $item['jobId'] = '';
+                    $item['jobStatus'] = '';
+                    $item['progress'] = 0;
+                    $item['currentPage'] = 0;
+                    $item['totalPages'] = 0;
+                }
+                $items[$itemIndex] = $item;
+                $state['items'] = $items;
+                docs_save_ocr_backfill_state($folder, $state);
+                return [
+                    'worked' => in_array($httpStatus, [404, 410], true),
+                    'reason' => in_array($httpStatus, [404, 410], true)
+                        ? 'stale_job_reset'
+                        : 'job_status_unavailable',
+                    'state' => docs_summarize_ocr_backfill_state($state),
+                ];
+            }
+
+            $item['jobStatus'] = (string) ($job['status'] ?? '');
+            $item['progress'] = max(0, min(100, (int) ($job['progress'] ?? 0)));
+            $item['currentPage'] = max(0, (int) ($job['currentPage'] ?? 0));
+            $item['totalPages'] = max(0, (int) ($job['totalPages'] ?? 0));
+            $item['error'] = sanitize_text_field((string) ($job['error'] ?? ''), 500);
+            $items[$itemIndex] = $item;
+            $state['items'] = $items;
+            docs_store_file_ocr_job($folder, $documentId, $storedName, $job);
+
+            if (in_array((string) $item['jobStatus'], ['queued', 'running'], true)) {
+                docs_save_ocr_backfill_state($folder, $state);
+                return [
+                    'worked' => false,
+                    'reason' => 'job_running',
+                    'state' => docs_summarize_ocr_backfill_state($state),
+                ];
+            }
+
+            if ((string) $item['jobStatus'] === 'succeeded') {
+                $jobResult = docs_fetch_private_ocr_job_result($jobId);
+                if (!empty($jobResult['ok'])) {
+                    $jobResult['mimeType'] = (string) ($file['ocr']['mimeType'] ?? '');
+                    $applied = docs_apply_private_ocr_result_to_file(
+                        $folder,
+                        $documentId,
+                        $storedName,
+                        $jobResult
+                    );
+                    if (!empty($applied['ok'])) {
+                        docs_finish_ocr_queue_item($folder, $state, $items, $itemIndex, 'completed');
+                        docs_save_ocr_backfill_state($folder, $state);
+                        return [
+                            'worked' => true,
+                            'reason' => 'file_completed',
+                            'state' => docs_summarize_ocr_backfill_state($state),
+                        ];
+                    }
+                    $item['deliveryAttempts'] = max(0, (int) ($item['deliveryAttempts'] ?? 0)) + 1;
+                    $item['error'] = sanitize_text_field((string) ($applied['error'] ?? 'Не удалось доставить OCR-текст.'), 500);
+                    if ($item['deliveryAttempts'] >= DOCS_OCR_BACKFILL_MAX_ATTEMPTS) {
+                        $items[$itemIndex] = $item;
+                        docs_finish_ocr_queue_item($folder, $state, $items, $itemIndex, 'failed', (string) $item['error']);
+                    } else {
+                        $item['status'] = 'processing';
+                        $item['deliveryPending'] = true;
+                        $item['legacyJobChecked'] = true;
+                        $items[$itemIndex] = $item;
+                        $state['items'] = $items;
+                    }
+                    docs_save_ocr_backfill_state($folder, $state);
+                    return [
+                        'worked' => true,
+                        'reason' => 'snapshot_delivery_failed',
+                        'state' => docs_summarize_ocr_backfill_state($state),
+                    ];
+                }
+                $item['error'] = sanitize_text_field((string) ($jobResult['error'] ?? 'OCR не вернул результат.'), 500);
+            }
+
+            if ((int) ($item['attempts'] ?? 0) >= DOCS_OCR_BACKFILL_MAX_ATTEMPTS) {
+                $items[$itemIndex] = $item;
+                docs_finish_ocr_queue_item($folder, $state, $items, $itemIndex, 'failed', (string) ($item['error'] ?? 'OCR завершился с ошибкой.'));
+                docs_ocr_backfill_append_failure($state, $items[$itemIndex], (string) ($items[$itemIndex]['error'] ?? ''));
+            } else {
+                $item['status'] = 'pending';
+                $item['legacyJobChecked'] = true;
+                $item['forceNewJob'] = true;
+                $item['jobId'] = '';
+                $item['jobStatus'] = '';
+                $item['progress'] = 0;
+                $item['currentPage'] = 0;
+                $item['totalPages'] = 0;
+                $items[$itemIndex] = $item;
+                $state['items'] = $items;
+                docs_ocr_backfill_append_failure($state, $item, (string) ($item['error'] ?? 'OCR завершился с ошибкой.'));
+            }
+            docs_save_ocr_backfill_state($folder, $state);
+            return [
+                'worked' => true,
+                'reason' => 'job_failed',
+                'state' => docs_summarize_ocr_backfill_state($state),
+            ];
+        }
+
+        if (!empty($item['deliveryPending']) && $jobId !== '') {
+            $jobResult = docs_fetch_private_ocr_job_result($jobId);
+            $resultHttpStatus = (int) ($jobResult['httpStatus'] ?? 0);
+            if (empty($jobResult['ok']) && $resultHttpStatus === 202) {
+                $item['status'] = 'processing';
+                $items[$itemIndex] = $item;
+                $state['items'] = $items;
+                docs_save_ocr_backfill_state($folder, $state);
+                return [
+                    'worked' => false,
+                    'reason' => 'job_running',
+                    'state' => docs_summarize_ocr_backfill_state($state),
+                ];
+            }
+            if (empty($jobResult['ok']) && in_array($resultHttpStatus, [200, 404, 410], true)) {
+                $item['status'] = 'pending';
+                $item['deliveryPending'] = false;
+                $item['legacyJobChecked'] = true;
+                $item['forceNewJob'] = true;
+                $item['jobId'] = '';
+                $item['jobStatus'] = '';
+                $item['progress'] = 0;
+                $item['currentPage'] = 0;
+                $item['totalPages'] = 0;
+                $item['error'] = sanitize_text_field(
+                    (string) ($jobResult['error'] ?? 'Сохранённый OCR-результат больше недоступен.'),
+                    500
+                );
+                $items[$itemIndex] = $item;
+                $state['items'] = $items;
+                docs_save_ocr_backfill_state($folder, $state);
+                return [
+                    'worked' => true,
+                    'reason' => 'stale_result_reset',
+                    'state' => docs_summarize_ocr_backfill_state($state),
+                ];
+            }
+            $item['deliveryAttempts'] = max(0, (int) ($item['deliveryAttempts'] ?? 0)) + 1;
+            if (!empty($jobResult['ok'])) {
+                $applied = docs_apply_private_ocr_result_to_file($folder, $documentId, $storedName, $jobResult);
+                if (!empty($applied['ok'])) {
+                    docs_finish_ocr_queue_item($folder, $state, $items, $itemIndex, 'completed');
+                    docs_save_ocr_backfill_state($folder, $state);
+                    return [
+                        'worked' => true,
+                        'reason' => 'snapshot_delivery_completed',
+                        'state' => docs_summarize_ocr_backfill_state($state),
+                    ];
+                }
+                $item['error'] = sanitize_text_field((string) ($applied['error'] ?? ''), 500);
+            } else {
+                $item['error'] = sanitize_text_field((string) ($jobResult['error'] ?? ''), 500);
+            }
+            if ((int) $item['deliveryAttempts'] >= DOCS_OCR_BACKFILL_MAX_ATTEMPTS) {
+                $items[$itemIndex] = $item;
+                docs_finish_ocr_queue_item($folder, $state, $items, $itemIndex, 'failed', (string) $item['error']);
+            } else {
+                $items[$itemIndex] = $item;
+                $state['items'] = $items;
+            }
+            docs_save_ocr_backfill_state($folder, $state);
+            return [
+                'worked' => true,
+                'reason' => 'snapshot_delivery_retry',
+                'state' => docs_summarize_ocr_backfill_state($state),
+            ];
+        }
+
+        if ((int) ($item['presentCount'] ?? 0) > 0) {
+            $existingSnapshotOcr = docs_find_task_file_ocr_text_in_participant_snapshots(
+                $record,
+                $folder,
+                $storedName
+            );
+            if (!empty($existingSnapshotOcr['ok'])
+                && isset($existingSnapshotOcr['text'])
+                && is_string($existingSnapshotOcr['text'])
+                && trim($existingSnapshotOcr['text']) !== ''
+            ) {
+                $existingSnapshotOcr['mimeType'] = (string) ($file['ocr']['mimeType'] ?? '');
+                $applied = docs_apply_private_ocr_result_to_file(
+                    $folder,
+                    $documentId,
+                    $storedName,
+                    $existingSnapshotOcr
+                );
+                if (!empty($applied['ok'])) {
+                    docs_finish_ocr_queue_item($folder, $state, $items, $itemIndex, 'completed');
+                    docs_save_ocr_backfill_state($folder, $state);
+                    return [
+                        'worked' => true,
+                        'reason' => 'existing_text_delivered',
+                        'state' => docs_summarize_ocr_backfill_state($state),
+                    ];
+                }
+                $item['deliveryAttempts'] = max(0, (int) ($item['deliveryAttempts'] ?? 0)) + 1;
+                $item['deliveryPending'] = true;
+                $item['status'] = 'processing';
+                $item['jobId'] = '';
+                $item['jobStatus'] = 'succeeded';
+                $item['progress'] = 100;
+                $item['error'] = sanitize_text_field(
+                    (string) ($applied['error'] ?? 'Не удалось доставить найденный OCR-текст всем участникам.'),
+                    500
+                );
+                $items[$itemIndex] = $item;
+                if ((int) $item['deliveryAttempts'] >= DOCS_OCR_BACKFILL_MAX_ATTEMPTS) {
+                    docs_finish_ocr_queue_item(
+                        $folder,
+                        $state,
+                        $items,
+                        $itemIndex,
+                        'failed',
+                        (string) $item['error']
+                    );
+                } else {
+                    $state['items'] = $items;
+                }
+                docs_save_ocr_backfill_state($folder, $state);
+                return [
+                    'worked' => true,
+                    'reason' => 'snapshot_delivery_failed',
+                    'state' => docs_summarize_ocr_backfill_state($state),
+                ];
+            }
+            $item['presentCount'] = 0;
+            $item['missingCount'] = max(0, (int) ($item['participantsTotal'] ?? 0));
+            $items[$itemIndex] = $item;
+            $state['items'] = $items;
+        }
+
+        if ($jobId !== '' && empty($item['legacyJobChecked'])) {
+            $item['legacyJobChecked'] = true;
+            $legacyJob = docs_fetch_private_ocr_job_status($jobId);
+            $legacyHttpStatus = (int) ($legacyJob['httpStatus'] ?? 0);
+            if (empty($legacyJob['ok']) && !in_array($legacyHttpStatus, [404, 410], true)) {
+                $item['legacyJobChecked'] = false;
+                $item['error'] = sanitize_text_field(
+                    (string) ($legacyJob['error'] ?? 'Не удалось проверить сохранённую OCR job.'),
+                    500
+                );
+                $items[$itemIndex] = $item;
+                $state['items'] = $items;
+                docs_save_ocr_backfill_state($folder, $state);
+                return [
+                    'worked' => false,
+                    'reason' => 'job_status_unavailable',
+                    'state' => docs_summarize_ocr_backfill_state($state),
+                ];
+            }
+            if (!empty($legacyJob['ok'])
+                && in_array((string) ($legacyJob['status'] ?? ''), ['queued', 'running'], true)
+            ) {
+                $item['status'] = 'processing';
+                $item['jobStatus'] = (string) ($legacyJob['status'] ?? 'queued');
+                $item['progress'] = max(0, min(100, (int) ($legacyJob['progress'] ?? 0)));
+                $item['currentPage'] = max(0, (int) ($legacyJob['currentPage'] ?? 0));
+                $item['totalPages'] = max(0, (int) ($legacyJob['totalPages'] ?? 0));
+                $item['error'] = '';
+                $items[$itemIndex] = $item;
+                $state['items'] = $items;
+                docs_store_file_ocr_job($folder, $documentId, $storedName, $legacyJob);
+                docs_save_ocr_backfill_state($folder, $state);
+                return [
+                    'worked' => true,
+                    'reason' => 'legacy_job_restored',
+                    'state' => docs_summarize_ocr_backfill_state($state),
+                ];
+            }
+            if (!empty($legacyJob['ok']) && (string) ($legacyJob['status'] ?? '') === 'succeeded') {
+                $legacyResult = docs_fetch_private_ocr_job_result($jobId);
+                if (!empty($legacyResult['ok'])) {
+                    $applied = docs_apply_private_ocr_result_to_file($folder, $documentId, $storedName, $legacyResult);
+                    if (!empty($applied['ok'])) {
+                        docs_finish_ocr_queue_item($folder, $state, $items, $itemIndex, 'completed');
+                        docs_save_ocr_backfill_state($folder, $state);
+                        return [
+                            'worked' => true,
+                            'reason' => 'legacy_result_delivered',
+                            'state' => docs_summarize_ocr_backfill_state($state),
+                        ];
+                    }
+                } elseif (!in_array((int) ($legacyResult['httpStatus'] ?? 0), [404, 410, 200], true)) {
+                    $item['legacyJobChecked'] = false;
+                    $item['error'] = sanitize_text_field(
+                        (string) ($legacyResult['error'] ?? 'Не удалось получить сохранённый OCR-результат.'),
+                        500
+                    );
+                    $items[$itemIndex] = $item;
+                    $state['items'] = $items;
+                    docs_save_ocr_backfill_state($folder, $state);
+                    return [
+                        'worked' => false,
+                        'reason' => 'job_result_unavailable',
+                        'state' => docs_summarize_ocr_backfill_state($state),
+                    ];
+                }
+            }
+            $item['jobId'] = '';
+            $item['jobStatus'] = '';
+            $item['progress'] = 0;
+            $item['currentPage'] = 0;
+            $item['totalPages'] = 0;
+            $item['forceNewJob'] = true;
+            $items[$itemIndex] = $item;
+            $state['items'] = $items;
+        }
+
+        $organizationDirectory = ensure_organization_directory($folder);
+        $pathCandidates = [];
+        foreach (docs_file_public_relative_candidates($folder, $file, $storedName) as $relativePath) {
+            $normalizedRelativePath = docs_normalize_cold_storage_relative_path($relativePath);
+            if ($normalizedRelativePath !== '') {
+                $pathCandidates[] = $organizationDirectory . '/' . $normalizedRelativePath;
+            }
+        }
+        $resolvedPath = docs_resolve_file_path_with_cold_storage(
+            $folder,
+            $file,
+            $pathCandidates,
+            microtime(true) + 90
+        );
+        if ($resolvedPath === '') {
+            $item['attempts'] = max(0, (int) ($item['attempts'] ?? 0)) + 1;
+            $item['error'] = 'Файл недоступен локально и в S3.';
+            $items[$itemIndex] = $item;
+            if ((int) $item['attempts'] >= DOCS_OCR_BACKFILL_MAX_ATTEMPTS) {
+                docs_finish_ocr_queue_item($folder, $state, $items, $itemIndex, 'failed', (string) $item['error']);
+            } else {
+                $state['items'] = $items;
+            }
+            docs_save_ocr_backfill_state($folder, $state);
+            return [
+                'worked' => true,
+                'reason' => 'source_unavailable',
+                'state' => docs_summarize_ocr_backfill_state($state),
+            ];
+        }
+
+        $item['attempts'] = max(0, (int) ($item['attempts'] ?? 0)) + 1;
+        $createdJob = docs_create_private_ocr_job(
+            $resolvedPath,
+            (string) ($item['originalName'] ?? $storedName),
+            !empty($item['forceNewJob']) || (string) ($item['origin'] ?? '') === 'old_backfill'
+        );
+        $createdJobId = sanitize_text_field((string) ($createdJob['jobId'] ?? ''), 160);
+        if ($createdJobId === '') {
+            $item['error'] = sanitize_text_field((string) ($createdJob['error'] ?? 'Не удалось создать OCR job.'), 500);
+            $items[$itemIndex] = $item;
+            $createHttpStatus = (int) ($createdJob['httpStatus'] ?? 0);
+            $terminalCreateFailure = in_array($createHttpStatus, [413, 415, 422], true);
+            if ($terminalCreateFailure || (int) $item['attempts'] >= DOCS_OCR_BACKFILL_MAX_ATTEMPTS) {
+                docs_finish_ocr_queue_item($folder, $state, $items, $itemIndex, 'failed', (string) $item['error']);
+                docs_ocr_backfill_append_failure($state, $items[$itemIndex], (string) $item['error']);
+            } else {
+                $state['items'] = $items;
+                docs_ocr_backfill_append_failure($state, $item, (string) $item['error']);
+            }
+            docs_save_ocr_backfill_state($folder, $state);
+            return [
+                'worked' => true,
+                'reason' => 'job_create_failed',
+                'state' => docs_summarize_ocr_backfill_state($state),
+            ];
+        }
+
+        $item['status'] = 'processing';
+        $item['jobId'] = $createdJobId;
+        $item['jobStatus'] = sanitize_text_field((string) ($createdJob['status'] ?? 'queued'), 40);
+        $item['progress'] = max(0, min(100, (int) ($createdJob['progress'] ?? 0)));
+        $item['currentPage'] = 0;
+        $item['totalPages'] = 0;
+        $item['startedAt'] = date('c');
+        $item['error'] = '';
+        $item['forceNewJob'] = false;
+        $item['deliveryPending'] = false;
+        $item['deliveryAttempts'] = 0;
+        $items[$itemIndex] = $item;
+        $state['items'] = $items;
+        $state['attempted'] = max(0, (int) ($state['attempted'] ?? 0)) + 1;
+        docs_store_file_ocr_job($folder, $documentId, $storedName, [
+            'jobId' => $createdJobId,
+            'reused' => !empty($createdJob['jobReused']),
+            'status' => $item['jobStatus'],
+            'progress' => $item['progress'],
+        ]);
+        docs_save_ocr_backfill_state($folder, $state);
+
+        return [
+            'worked' => true,
+            'reason' => 'job_submitted',
+            'state' => docs_summarize_ocr_backfill_state($state),
+        ];
+    } finally {
+        if (is_resource($lockHandle)) {
+            @flock($lockHandle, LOCK_UN);
+            fclose($lockHandle);
+        }
+        @flock($globalLockHandle, LOCK_UN);
+        fclose($globalLockHandle);
+    }
 }
 
 function docs_prepare_ai_task_search_client_task(array $task): array
@@ -9606,14 +13825,690 @@ function docs_build_live_ai_task_search_snapshot(string $telegramUserId, array $
     ];
 }
 
+function docs_require_verified_telegram_user_id(array $requestContext): string
+{
+    $telegramInitData = isset($requestContext['telegramInitData']) && is_array($requestContext['telegramInitData'])
+        ? $requestContext['telegramInitData']
+        : [];
+    if (!empty($telegramInitData['present']) && empty($telegramInitData['valid'])) {
+        respond_error('Не удалось подтвердить данные Telegram. Откройте мини-приложение заново из чата с ботом.', 401, [
+            'telegramInitDataError' => isset($telegramInitData['error']) ? (string) $telegramInitData['error'] : 'invalid',
+            'telegramInitDataPresent' => true,
+            'requiresTelegramReauth' => true,
+        ]);
+    }
+
+    $requestedTelegramUserId = normalize_identifier_value($requestContext['raw']['telegram_user_id'] ?? '');
+    $verifiedTelegramUserId = '';
+    if (!empty($telegramInitData['valid'])) {
+        $verifiedTelegramUserId = normalize_identifier_value(
+            $telegramInitData['source']['telegram_user_id']
+                ?? ($telegramInitData['user']['id'] ?? '')
+        );
+    } else {
+        $sessionAuth = docs_get_session_auth();
+        if (is_array($sessionAuth)) {
+            $sessionRole = strtolower((string) ($sessionAuth['role'] ?? ''));
+            if ($sessionRole === 'admin' && $requestedTelegramUserId !== '') {
+                $verifiedTelegramUserId = $requestedTelegramUserId;
+                log_docs_event('Admin Telegram user preview authorized', [
+                    'telegramUserId' => $requestedTelegramUserId,
+                    'adminLogin' => sanitize_text_field((string) ($sessionAuth['login'] ?? ''), 120),
+                    'action' => docs_current_action(),
+                ]);
+            } else {
+                foreach (['telegramId', 'chatId'] as $sessionIdField) {
+                    $verifiedTelegramUserId = normalize_identifier_value($sessionAuth[$sessionIdField] ?? '');
+                    if ($verifiedTelegramUserId !== '') {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    if ($verifiedTelegramUserId === '') {
+        respond_error('Поиск доступен только после подтверждения пользователя Telegram.', 401, [
+            'requiresTelegramReauth' => true,
+        ]);
+    }
+
+    if ($requestedTelegramUserId !== '' && !hash_equals($verifiedTelegramUserId, $requestedTelegramUserId)) {
+        respond_error('Telegram ID запроса не совпадает с подтверждённым пользователем.', 403);
+    }
+
+    return $verifiedTelegramUserId;
+}
+
+function docs_task_rag_file_keys(array $file): array
+{
+    $keys = [];
+    foreach (['storedName', 'url', 'originalName', 'name'] as $field) {
+        $value = trim((string) ($file[$field] ?? ''));
+        if ($value !== '') {
+            $keys[] = $field . ':' . mb_strtolower($value, 'UTF-8');
+        }
+    }
+
+    return array_values(array_unique($keys));
+}
+
+function docs_merge_task_rag_ocr_snapshot(array $liveTasks, array $storedSnapshot): array
+{
+    $storedTasks = isset($storedSnapshot['tasks']) && is_array($storedSnapshot['tasks'])
+        ? $storedSnapshot['tasks']
+        : [];
+    $liveTaskKeys = [];
+    foreach ($liveTasks as $liveTask) {
+        if (!is_array($liveTask)) {
+            continue;
+        }
+        $liveTaskKey = docs_task_snapshot_key($liveTask);
+        if ($liveTaskKey !== '') {
+            $liveTaskKeys[$liveTaskKey] = true;
+        }
+    }
+    if (empty($liveTaskKeys)) {
+        return $liveTasks;
+    }
+
+    $storedByTaskKey = [];
+    foreach ($storedTasks as $storedTask) {
+        if (!is_array($storedTask)) {
+            continue;
+        }
+        $taskKey = docs_task_snapshot_key($storedTask);
+        if ($taskKey !== '' && isset($liveTaskKeys[$taskKey])) {
+            $storedByTaskKey[$taskKey] = $storedTask;
+        }
+    }
+
+    foreach ($liveTasks as &$liveTask) {
+        if (!is_array($liveTask)) {
+            continue;
+        }
+        $taskKey = docs_task_snapshot_key($liveTask);
+        if ($taskKey === '' || !isset($storedByTaskKey[$taskKey])) {
+            continue;
+        }
+        $storedTask = $storedByTaskKey[$taskKey];
+        $storedFiles = isset($storedTask['files']) && is_array($storedTask['files'])
+            ? $storedTask['files']
+            : [];
+        $ocrByFileKey = [];
+        foreach ($storedFiles as $storedFile) {
+            if (!is_array($storedFile) || !isset($storedFile['ocrText']) || !is_string($storedFile['ocrText'])) {
+                continue;
+            }
+            foreach (docs_task_rag_file_keys($storedFile) as $fileKey) {
+                $ocrByFileKey[$fileKey] = $storedFile['ocrText'];
+            }
+        }
+        if (empty($ocrByFileKey) || !isset($liveTask['files']) || !is_array($liveTask['files'])) {
+            continue;
+        }
+        foreach ($liveTask['files'] as &$liveFile) {
+            if (!is_array($liveFile)) {
+                continue;
+            }
+            foreach (docs_task_rag_file_keys($liveFile) as $fileKey) {
+                if (!array_key_exists($fileKey, $ocrByFileKey)) {
+                    continue;
+                }
+                $ocrText = $ocrByFileKey[$fileKey];
+                $liveFile['ocrText'] = $ocrText;
+                $liveFile['ocrTextLength'] = mb_strlen($ocrText, 'UTF-8');
+                break;
+            }
+        }
+        unset($liveFile);
+    }
+    unset($liveTask);
+
+    return array_values($liveTasks);
+}
+
+function docs_prepare_task_rag_snapshot(string $telegramUserId, array $tasks): array
+{
+    $preparedTasks = [];
+    foreach ($tasks as $task) {
+        if (!is_array($task)) {
+            continue;
+        }
+        $taskId = '';
+        foreach (['id', 'entryNumber', 'registryNumber', 'documentNumber'] as $idField) {
+            $taskId = sanitize_text_field((string) ($task[$idField] ?? ''), 200);
+            if ($taskId !== '') {
+                break;
+            }
+        }
+        if ($taskId === '') {
+            continue;
+        }
+
+        $files = [];
+        foreach (isset($task['files']) && is_array($task['files']) ? $task['files'] : [] as $file) {
+            if (!is_array($file)) {
+                continue;
+            }
+            $ocrText = isset($file['ocrText']) && is_string($file['ocrText'])
+                ? trim($file['ocrText'])
+                : '';
+            if (mb_strlen($ocrText, 'UTF-8') > DOCS_PRIVATE_OCR_MAX_TEXT_LENGTH) {
+                $ocrText = mb_substr($ocrText, 0, DOCS_PRIVATE_OCR_MAX_TEXT_LENGTH, 'UTF-8');
+            }
+            $files[] = [
+                'id' => docs_ai_task_search_short_text($file['id'] ?? '', 120),
+                'originalName' => sanitize_text_field(
+                    (string) ($file['originalName'] ?? ($file['name'] ?? ($file['storedName'] ?? ''))),
+                    255
+                ),
+                'storedName' => docs_ai_task_search_short_text($file['storedName'] ?? '', 255),
+                'url' => sanitize_text_field((string) ($file['url'] ?? ''), 1000),
+                'aiBrief' => docs_ai_task_search_short_text($file['aiBrief'] ?? '', 2000),
+                'ocrText' => $ocrText,
+                'ocrTextLength' => mb_strlen($ocrText, 'UTF-8'),
+            ];
+        }
+
+        $preparedTask = [
+            'id' => $taskId,
+            'entryNumber' => docs_ai_task_search_short_text($task['entryNumber'] ?? '', 80),
+            'registryNumber' => docs_ai_task_search_short_text($task['registryNumber'] ?? '', 120),
+            'documentNumber' => docs_ai_task_search_short_text($task['documentNumber'] ?? '', 120),
+            'organization' => sanitize_text_field((string) ($task['organization'] ?? ''), 200),
+            'folderId' => docs_ai_task_search_task_folder_id($task, $telegramUserId),
+            'title' => docs_ai_task_search_short_text(
+                $task['title'] ?? ($task['document'] ?? docs_ai_task_search_result_title($task)),
+                500
+            ),
+            'summary' => sanitize_text_field(
+                (string) ($task['summary'] ?? ($task['contentCompact'] ?? ($task['correspondent'] ?? ''))),
+                4000
+            ),
+            'correspondent' => docs_ai_task_search_short_text($task['correspondent'] ?? '', 1000),
+            'executor' => docs_ai_task_search_short_text(
+                $task['executor'] ?? ($task['assignee'] ?? ($task['responsible'] ?? '')),
+                1000
+            ),
+            'instruction' => sanitize_text_field(
+                (string) ($task['instruction'] ?? ($task['resolution'] ?? '')),
+                4000
+            ),
+            'resolution' => docs_ai_task_search_short_text($task['resolution'] ?? '', 4000),
+            'notes' => docs_ai_task_search_short_text($task['notes'] ?? '', 4000),
+            'question' => docs_ai_task_search_short_text($task['question'] ?? '', 4000),
+            'comment' => docs_ai_task_search_short_text($task['comment'] ?? '', 4000),
+            'status' => sanitize_text_field((string) ($task['status'] ?? ''), 160),
+            'registrationDate' => sanitize_date_field(isset($task['registrationDate']) ? (string) $task['registrationDate'] : ''),
+            'documentDate' => sanitize_date_field(isset($task['documentDate']) ? (string) $task['documentDate'] : ''),
+            'dueDate' => sanitize_date_field(isset($task['dueDate']) ? (string) $task['dueDate'] : ''),
+            'updatedAt' => docs_ai_task_search_short_text($task['updatedAt'] ?? '', 100),
+            'files' => $files,
+        ];
+
+        $peopleFields = [
+            'name',
+            'responsible',
+            'fio',
+            'fullName',
+            'role',
+            'assignmentInstruction',
+            'assignmentComment',
+            'reviewComment',
+            'assignmentDueDate',
+            'status',
+        ];
+        foreach (['directors', 'responsibles', 'assignees', 'executors', 'subordinates'] as $peopleField) {
+            $entries = docs_ai_task_search_compact_entries(
+                $task[$peopleField] ?? [],
+                $peopleFields,
+                20,
+                500
+            );
+            if (!empty($entries)) {
+                $preparedTask[$peopleField] = $entries;
+            }
+        }
+
+        $responses = [];
+        foreach (['responses', 'answers', 'executorResponses'] as $responseField) {
+            foreach (docs_ai_task_search_compact_entries(
+                $task[$responseField] ?? [],
+                ['originalName', 'name', 'storedName', 'textContent', 'comment', 'note', 'uploadedBy'],
+                20,
+                2000
+            ) as $response) {
+                $responses[] = $response;
+                if (count($responses) >= 20) {
+                    break 2;
+                }
+            }
+        }
+        if (!empty($responses)) {
+            $preparedTask['responses'] = $responses;
+        }
+
+        foreach ([
+            'questions' => ['text', 'question', 'content', 'comment', 'author', 'organization'],
+            'comments' => ['text', 'comment', 'content', 'note', 'author', 'organization'],
+        ] as $collectionField => $collectionFields) {
+            $entries = docs_ai_task_search_compact_entries(
+                $task[$collectionField] ?? [],
+                $collectionFields,
+                30,
+                2000
+            );
+            if (!empty($entries)) {
+                $preparedTask[$collectionField] = $entries;
+            }
+        }
+
+        $preparedTasks[] = array_filter($preparedTask, static function ($value): bool {
+            return is_array($value) ? !empty($value) : $value !== '' && $value !== null;
+        });
+    }
+
+    return [
+        'version' => 2,
+        'source' => 'mini_app_tasks',
+        'telegramUserId' => $telegramUserId,
+        'generatedAt' => date('c'),
+        'tasksCount' => count($preparedTasks),
+        'tasks' => $preparedTasks,
+    ];
+}
+
+function docs_task_rag_resolve_base_url(): string
+{
+    $env = docs_ai_task_search_load_env();
+    $configured = trim((string) (
+        $env['TASK_RAG_BASE_URL']
+            ?? ($env['BIMMAX_TASK_RAG_BASE_URL'] ?? DOCS_TASK_RAG_DEFAULT_BASE_URL)
+    ));
+    if (filter_var($configured, FILTER_VALIDATE_URL) === false) {
+        return DOCS_TASK_RAG_DEFAULT_BASE_URL;
+    }
+
+    return rtrim($configured, '/');
+}
+
+function docs_task_rag_decode_response_payload(string $responseBody): ?array
+{
+    $normalizedBody = preg_replace('/^\xEF\xBB\xBF/', '', trim($responseBody));
+    if (!is_string($normalizedBody) || $normalizedBody === '') {
+        return null;
+    }
+
+    $decodeJson = static function (string $value) {
+        $flags = defined('JSON_INVALID_UTF8_SUBSTITUTE') ? JSON_INVALID_UTF8_SUBSTITUTE : 0;
+
+        return json_decode(trim($value), true, 512, $flags);
+    };
+    $decoded = $decodeJson($normalizedBody);
+    if ($decoded === null && json_last_error() !== JSON_ERROR_NONE) {
+        // Некоторые reverse proxy и webhook-обёртки добавляют перед JSON
+        // служебную строку. Извлекаем объект только когда он занимает остаток
+        // ответа целиком; HTML-страницы и произвольный текст не принимаем.
+        $objectStart = strpos($normalizedBody, '{');
+        $arrayStart = strpos($normalizedBody, '[');
+        $starts = array_filter([$objectStart, $arrayStart], static function ($position) {
+            return $position !== false;
+        });
+        if (!empty($starts)) {
+            $jsonStart = min($starts);
+            $opening = $normalizedBody[$jsonStart];
+            $closing = $opening === '{' ? '}' : ']';
+            $jsonEnd = strrpos($normalizedBody, $closing);
+            if ($jsonEnd !== false && $jsonEnd >= $jsonStart) {
+                $suffix = trim(substr($normalizedBody, $jsonEnd + 1));
+                if ($suffix === '') {
+                    $decoded = $decodeJson(substr($normalizedBody, $jsonStart, $jsonEnd - $jsonStart + 1));
+                }
+            }
+        }
+    }
+    for ($depth = 0; $depth < 4; $depth++) {
+        if (is_string($decoded)) {
+            $nested = $decodeJson($decoded);
+            if ($nested === null && json_last_error() !== JSON_ERROR_NONE) {
+                return null;
+            }
+            $decoded = $nested;
+            continue;
+        }
+        if (!is_array($decoded)) {
+            return null;
+        }
+
+        $hasResponseFields = array_key_exists('ok', $decoded)
+            || array_key_exists('success', $decoded)
+            || array_key_exists('status', $decoded)
+            || array_key_exists('action', $decoded)
+            || array_key_exists('tasks', $decoded);
+        if ($hasResponseFields) {
+            return $decoded;
+        }
+        $wrappedPayload = null;
+        foreach (['body', 'json', 'data', 'result', 'output'] as $wrapperKey) {
+            if (array_key_exists($wrapperKey, $decoded)
+                && (is_array($decoded[$wrapperKey]) || is_string($decoded[$wrapperKey]))) {
+                $wrappedPayload = $decoded[$wrapperKey];
+                break;
+            }
+        }
+        if ($wrappedPayload !== null) {
+            $decoded = $wrappedPayload;
+            continue;
+        }
+        if (count($decoded) === 1 && array_key_exists(0, $decoded)
+            && (is_array($decoded[0]) || is_string($decoded[0]))) {
+            $decoded = $decoded[0];
+            continue;
+        }
+
+        return null;
+    }
+
+    return is_array($decoded) ? $decoded : null;
+}
+
+function docs_task_rag_request(string $path, array $curlOptions): array
+{
+    if (!function_exists('curl_init')) {
+        return [
+            'ok' => false,
+            'httpStatus' => 0,
+            'error' => 'PHP cURL недоступен.',
+        ];
+    }
+
+    $curl = curl_init(docs_task_rag_resolve_base_url() . '/' . ltrim($path, '/'));
+    if ($curl === false) {
+        return [
+            'ok' => false,
+            'httpStatus' => 0,
+            'error' => 'Не удалось подготовить запрос к ИИ-поиску.',
+        ];
+    }
+
+    curl_setopt_array($curl, array_replace([
+        CURLOPT_POST => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_FAILONERROR => false,
+        CURLOPT_CONNECTTIMEOUT => DOCS_TASK_RAG_CONNECT_TIMEOUT_SECONDS,
+        CURLOPT_TIMEOUT => DOCS_TASK_RAG_REQUEST_TIMEOUT_SECONDS,
+        CURLOPT_FOLLOWLOCATION => false,
+        CURLOPT_ENCODING => '',
+    ], $curlOptions));
+
+    try {
+        $rawResponse = curl_exec($curl);
+        $curlErrorNumber = curl_errno($curl);
+        $httpStatus = (int) curl_getinfo($curl, CURLINFO_HTTP_CODE);
+        $curlError = trim((string) curl_error($curl));
+    } finally {
+        curl_close($curl);
+    }
+
+    if ($curlErrorNumber !== 0 || !is_string($rawResponse)) {
+        return [
+            'ok' => false,
+            'httpStatus' => $httpStatus,
+            'error' => $curlError !== '' ? $curlError : 'Сервер ИИ-поиска не вернул ответ.',
+            'curlErrorNumber' => $curlErrorNumber,
+            'diagnosticCode' => $curlErrorNumber > 0 ? 'RAG-CURL-' . $curlErrorNumber : 'RAG-NO-RESPONSE',
+        ];
+    }
+
+    if (strlen($rawResponse) > DOCS_TASK_RAG_MAX_RESPONSE_BYTES) {
+        return [
+            'ok' => false,
+            'httpStatus' => $httpStatus,
+            'error' => 'Ответ сервера ИИ-поиска превышает допустимый размер.',
+            'diagnosticCode' => 'RAG-TOO-LARGE',
+            'responseBytes' => strlen($rawResponse),
+        ];
+    }
+
+    $decoded = docs_task_rag_decode_response_payload($rawResponse);
+    if ($httpStatus < 200 || $httpStatus >= 300) {
+        $serverError = is_array($decoded)
+            ? sanitize_text_field((string) ($decoded['error'] ?? ($decoded['message'] ?? '')), 500)
+            : '';
+        return [
+            'ok' => false,
+            'httpStatus' => $httpStatus,
+            'error' => $serverError !== ''
+                ? $serverError
+                : ($curlError !== '' ? $curlError : 'Сервер ИИ-поиска вернул HTTP ' . $httpStatus . '.'),
+            'payload' => is_array($decoded) ? $decoded : [],
+            'rawResponse' => $rawResponse,
+            'diagnosticCode' => 'RAG-HTTP-' . $httpStatus,
+        ];
+    }
+    if (!is_array($decoded)) {
+        return [
+            'ok' => false,
+            'httpStatus' => $httpStatus,
+            'error' => 'Сервер ИИ-поиска вернул некорректный JSON.',
+            'responsePreview' => sanitize_text_field($rawResponse, 4000),
+            'rawResponse' => $rawResponse,
+            'diagnosticCode' => 'RAG-JSON',
+        ];
+    }
+
+    return [
+        'ok' => true,
+        'httpStatus' => $httpStatus,
+        'payload' => $decoded,
+        'rawResponse' => $rawResponse,
+    ];
+}
+
+function docs_task_rag_token_secret(): string
+{
+    $botToken = docs_resolve_telegram_bot_token();
+    if (is_string($botToken) && $botToken !== '') {
+        return hash('sha256', 'task-rag|' . $botToken, true);
+    }
+    $mainAdminSecret = docs_load_mainadmin_secret();
+
+    return is_string($mainAdminSecret) ? hash('sha256', 'task-rag|' . $mainAdminSecret, true) : '';
+}
+
+function docs_task_rag_base64url_encode(string $value): string
+{
+    return rtrim(strtr(base64_encode($value), '+/', '-_'), '=');
+}
+
+function docs_task_rag_base64url_decode(string $value): string
+{
+    $padding = strlen($value) % 4;
+    if ($padding !== 0) {
+        $value .= str_repeat('=', 4 - $padding);
+    }
+    $decoded = base64_decode(strtr($value, '-_', '+/'), true);
+
+    return is_string($decoded) ? $decoded : '';
+}
+
+function docs_task_rag_issue_ready_token(
+    string $telegramUserId,
+    string $generatedAt,
+    int $tasksCount,
+    string $folderId = 'all',
+    string $organization = ''
+): string
+{
+    $secret = docs_task_rag_token_secret();
+    if ($secret === '') {
+        return '';
+    }
+    $payload = json_encode([
+        'telegramUserId' => $telegramUserId,
+        'generatedAt' => $generatedAt,
+        'tasksCount' => max(0, $tasksCount),
+        'folderId' => docs_ai_task_search_normalize_folder_filter_id($folderId) ?: 'all',
+        'organization' => docs_normalize_organization_candidate($organization),
+        'expiresAt' => time() + DOCS_TASK_RAG_READY_TOKEN_TTL_SECONDS,
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if (!is_string($payload)) {
+        return '';
+    }
+    $encodedPayload = docs_task_rag_base64url_encode($payload);
+    $signature = docs_task_rag_base64url_encode(hash_hmac('sha256', $encodedPayload, $secret, true));
+
+    return $encodedPayload . '.' . $signature;
+}
+
+function docs_task_rag_ready_token_is_valid(
+    string $token,
+    string $telegramUserId,
+    string $folderId = 'all',
+    string $organization = ''
+): bool
+{
+    $secret = docs_task_rag_token_secret();
+    $parts = explode('.', trim($token), 2);
+    if ($secret === '' || count($parts) !== 2 || $parts[0] === '' || $parts[1] === '') {
+        return false;
+    }
+    $expectedSignature = docs_task_rag_base64url_encode(hash_hmac('sha256', $parts[0], $secret, true));
+    if (!hash_equals($expectedSignature, $parts[1])) {
+        return false;
+    }
+    $payload = json_decode(docs_task_rag_base64url_decode($parts[0]), true);
+    if (!is_array($payload)) {
+        return false;
+    }
+    $tokenTelegramUserId = normalize_identifier_value($payload['telegramUserId'] ?? '');
+    $tokenFolderId = docs_ai_task_search_normalize_folder_filter_id($payload['folderId'] ?? 'all') ?: 'all';
+    $requestedFolderId = docs_ai_task_search_normalize_folder_filter_id($folderId) ?: 'all';
+    $tokenOrganization = docs_normalize_organization_candidate((string) ($payload['organization'] ?? ''));
+    $requestedOrganization = docs_normalize_organization_candidate($organization);
+    $expiresAt = (int) ($payload['expiresAt'] ?? 0);
+
+    return $tokenTelegramUserId !== ''
+        && hash_equals($telegramUserId, $tokenTelegramUserId)
+        && hash_equals($requestedFolderId, $tokenFolderId)
+        && hash_equals(
+            mb_strtolower($requestedOrganization, 'UTF-8'),
+            mb_strtolower($tokenOrganization, 'UTF-8')
+        )
+        && $expiresAt >= time();
+}
+
+function docs_task_rag_sync_cache_path(string $telegramUserId): string
+{
+    $safeTelegramUserId = docs_sanitize_mini_app_user_tasks_snapshot_id($telegramUserId);
+
+    return rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR)
+        . DIRECTORY_SEPARATOR
+        . 'bimmax_task_rag_sync_'
+        . $safeTelegramUserId
+        . '.json';
+}
+
+function docs_task_rag_load_sync_cache(string $telegramUserId): array
+{
+    $path = docs_task_rag_sync_cache_path($telegramUserId);
+    if (!is_file($path) || !is_readable($path)) {
+        return [];
+    }
+    $raw = @file_get_contents($path);
+    $decoded = is_string($raw) && $raw !== '' ? json_decode($raw, true) : null;
+
+    return is_array($decoded) ? $decoded : [];
+}
+
+function docs_task_rag_save_sync_cache(string $telegramUserId, array $cache): bool
+{
+    $encoded = json_encode($cache, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if (!is_string($encoded)) {
+        return false;
+    }
+
+    return @file_put_contents(
+        docs_task_rag_sync_cache_path($telegramUserId),
+        $encoded . PHP_EOL,
+        LOCK_EX
+    ) !== false;
+}
+
+function docs_task_rag_snapshot_fingerprint(array $snapshot): string
+{
+    $hash = hash_init('sha256');
+    if ($hash === false) {
+        return '';
+    }
+
+    foreach (['version', 'source', 'telegramUserId', 'tasksCount', 'folderId', 'organization'] as $field) {
+        $encoded = json_encode([$field => $snapshot[$field] ?? null], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if (!is_string($encoded)) {
+            return '';
+        }
+        hash_update($hash, strlen($encoded) . ':' . $encoded . "\n");
+    }
+    $tasks = isset($snapshot['tasks']) && is_array($snapshot['tasks']) ? $snapshot['tasks'] : [];
+    foreach ($tasks as $task) {
+        $encodedTask = json_encode($task, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if (!is_string($encodedTask)) {
+            return '';
+        }
+        hash_update($hash, strlen($encodedTask) . ':' . $encodedTask . "\n");
+    }
+
+    return hash_final($hash);
+}
+
+function docs_task_rag_build_ready_payload(
+    string $telegramUserId,
+    array $remotePayload,
+    string $generatedAt,
+    int $fallbackTasksCount,
+    string $folderId = 'all',
+    string $organization = ''
+): array {
+    $indexedTasks = max(0, (int) ($remotePayload['indexedTasks'] ?? $fallbackTasksCount));
+    $normalizedFolderId = docs_ai_task_search_normalize_folder_filter_id($folderId) ?: 'all';
+    $normalizedOrganization = docs_normalize_organization_candidate($organization);
+    $readyToken = docs_task_rag_issue_ready_token(
+        $telegramUserId,
+        $generatedAt,
+        $indexedTasks,
+        $normalizedFolderId,
+        $normalizedOrganization
+    );
+    if ($readyToken === '') {
+        return [];
+    }
+
+    return [
+        'ok' => true,
+        'status' => 'ready',
+        'action' => sanitize_text_field((string) ($remotePayload['action'] ?? 'snapshot'), 80),
+        'message' => $indexedTasks > 0
+            ? 'Поиск готов. Можно задавать вопросы по задачам и текстам документов.'
+            : 'У вас пока нет доступных задач.',
+        'telegramUserId' => $telegramUserId,
+        'snapshotId' => sanitize_text_field((string) ($remotePayload['snapshotId'] ?? ''), 500),
+        'indexedTasks' => $indexedTasks,
+        'indexedChunks' => max(0, (int) ($remotePayload['indexedChunks'] ?? 0)),
+        'indexedOcrFiles' => max(0, (int) ($remotePayload['indexedOcrFiles'] ?? 0)),
+        'generatedAt' => $generatedAt,
+        'folderId' => $normalizedFolderId,
+        'organization' => $normalizedOrganization,
+        'readyToken' => $readyToken,
+        'readyUntil' => time() + DOCS_TASK_RAG_READY_TOKEN_TTL_SECONDS,
+    ];
+}
+
 function docs_ai_task_search_result_title(array $task): string
 {
-    $registryNumber = sanitize_text_field((string) ($task['registryNumber'] ?? ''), 120);
-    $entryNumber = sanitize_text_field((string) ($task['entryNumber'] ?? ''), 80);
     $summary = sanitize_text_field((string) ($task['summary'] ?? ($task['correspondent'] ?? '')), 220);
-    $prefix = $registryNumber !== '' ? 'Рег. № ' . $registryNumber : ($entryNumber !== '' ? 'Запись № ' . $entryNumber : 'Задача');
 
-    return trim($prefix . ($summary !== '' ? ' — ' . $summary : ''));
+    return $summary !== '' ? $summary : 'Найденная задача';
 }
 
 function docs_prepare_ai_task_search_result(array $task, string $chatId, string $folderId = ''): array
@@ -9641,6 +14536,129 @@ function docs_prepare_ai_task_search_result(array $task, string $chatId, string 
     return array_filter($result, static function ($item) {
         return $item !== '';
     });
+}
+
+function docs_normalize_task_rag_fragment_parts($parts): array
+{
+    if (!is_array($parts)) {
+        return [];
+    }
+
+    $normalized = [];
+    foreach (array_slice($parts, 0, 48) as $part) {
+        if (!is_array($part) || !isset($part['text']) || !is_scalar($part['text'])) {
+            continue;
+        }
+        $text = str_replace("\0", '', (string) $part['text']);
+        if ($text === '') {
+            continue;
+        }
+        if (mb_strlen($text, 'UTF-8') > 700) {
+            $text = mb_substr($text, 0, 700, 'UTF-8');
+        }
+        $normalized[] = [
+            'text' => $text,
+            'highlight' => ($part['highlight'] ?? false) === true,
+        ];
+    }
+
+    return $normalized;
+}
+
+function docs_prepare_task_rag_search_results(array $remoteTasks, string $telegramUserId): array
+{
+    $sourceLabels = [
+        'title' => 'Найдено в названии задачи',
+        'description' => 'Найдено в описании задачи',
+        'question' => 'Найдено в вопросе или поручении',
+        'comment' => 'Найдено в комментарии',
+        'response' => 'Найдено в комментарии или ответе',
+        'file_name' => 'Найдено в названии файла',
+        'file_description' => 'Найдено в описании файла',
+        'ocr' => 'Найдено в тексте документа',
+    ];
+    $results = [];
+    $seenTaskIds = [];
+
+    foreach (array_slice($remoteTasks, 0, DOCS_TASK_RAG_SEARCH_MAX_RESULTS) as $remoteTask) {
+        if (!is_array($remoteTask)) {
+            continue;
+        }
+        $taskId = normalize_identifier_value($remoteTask['taskId'] ?? ($remoteTask['id'] ?? ''));
+        if ($taskId === '' || isset($seenTaskIds[$taskId])) {
+            continue;
+        }
+
+        $source = isset($remoteTask['source']) && is_array($remoteTask['source'])
+            ? $remoteTask['source']
+            : [];
+        $sourceType = strtolower(sanitize_text_field((string) ($source['type'] ?? ''), 40));
+        if (!isset($sourceLabels[$sourceType])) {
+            continue;
+        }
+        $fragment = docs_ai_task_search_short_text($remoteTask['matchedFragment'] ?? '', 700);
+        $display = isset($remoteTask['display']) && is_array($remoteTask['display'])
+            ? $remoteTask['display']
+            : [];
+        $fragmentParts = docs_normalize_task_rag_fragment_parts($display['fragmentParts'] ?? []);
+        $hasHighlightedEvidence = false;
+        foreach ($fragmentParts as $fragmentPart) {
+            if (($fragmentPart['highlight'] ?? false) === true) {
+                $hasHighlightedEvidence = true;
+                break;
+            }
+        }
+        if ($fragment === '' || !$hasHighlightedEvidence) {
+            continue;
+        }
+
+        $baseTask = [
+            'id' => $taskId,
+            'entryNumber' => docs_ai_task_search_short_text($remoteTask['entryNumber'] ?? '', 80),
+            'registryNumber' => docs_ai_task_search_short_text($remoteTask['registryNumber'] ?? '', 120),
+            'documentNumber' => docs_ai_task_search_short_text($remoteTask['documentNumber'] ?? '', 120),
+            'organization' => docs_ai_task_search_short_text($remoteTask['organization'] ?? '', 200),
+            'status' => docs_ai_task_search_short_text($remoteTask['status'] ?? '', 120),
+            'dueDate' => sanitize_date_field(isset($remoteTask['dueDate']) ? (string) $remoteTask['dueDate'] : ''),
+            'summary' => docs_ai_task_search_short_text(
+                $remoteTask['title'] ?? 'Найденная задача',
+                500
+            ),
+        ];
+        $result = docs_prepare_ai_task_search_result($baseTask, $telegramUserId);
+        $result['taskId'] = $taskId;
+        $result['reason'] = docs_ai_task_search_short_text($remoteTask['reason'] ?? '', 500);
+        $result['matchedFragment'] = $fragment;
+        $result['matchedTerms'] = [];
+        foreach (isset($remoteTask['matchedTerms']) && is_array($remoteTask['matchedTerms'])
+            ? array_slice($remoteTask['matchedTerms'], 0, 12)
+            : [] as $term) {
+            $normalizedTerm = docs_ai_task_search_short_text($term, 120);
+            if ($normalizedTerm !== '') {
+                $result['matchedTerms'][$normalizedTerm] = true;
+            }
+        }
+        $result['matchedTerms'] = array_keys($result['matchedTerms']);
+        $result['source'] = [
+            'type' => $sourceType,
+            'label' => $sourceLabels[$sourceType],
+            'fileName' => in_array($sourceType, ['ocr', 'file_name', 'file_description'], true)
+                ? docs_ai_task_search_short_text($source['fileName'] ?? '', 255)
+                : '',
+        ];
+        $result['display'] = [
+            'sourceLabel' => $sourceLabels[$sourceType],
+            'fileName' => $result['source']['fileName'],
+            'reason' => $result['reason'],
+            'fragment' => $fragment,
+            'fragmentParts' => $fragmentParts,
+        ];
+
+        $seenTaskIds[$taskId] = true;
+        $results[] = $result;
+    }
+
+    return $results;
 }
 
 function docs_build_ai_task_search_answer(array $results, string $query): string
@@ -9671,7 +14689,6 @@ function docs_build_ai_task_search_explained_answer(array $results, string $quer
         if (!is_array($result)) {
             continue;
         }
-        $number = sanitize_text_field((string) ($result['registryNumber'] ?? ($result['entryNumber'] ?? ($result['documentNumber'] ?? ($result['id'] ?? '')))), 120);
         $title = sanitize_text_field((string) ($result['title'] ?? 'Задача'), 180);
         $reason = sanitize_text_field((string) ($result['matchPreview'] ?? ''), 300);
         if ($reason === '' && isset($result['matchReasons']) && is_array($result['matchReasons'])) {
@@ -9689,9 +14706,6 @@ function docs_build_ai_task_search_explained_answer(array $results, string $quer
             $reason = 'по актуальным полям задачи есть смысловое совпадение с запросом.';
         }
         $labelPrefix = ($index + 1) . '. ';
-        if ($number !== '') {
-            $labelPrefix .= '№ ' . $number . ' — ';
-        }
         $lines[] = $labelPrefix . $title . ': ' . $reason;
     }
 
@@ -9754,6 +14768,9 @@ function docs_ai_task_search_load_env(): array
         'AI_TASK_SEARCH_MAX_CHARS',
         'AI_TASK_SEARCH_RERANK_MAX_CANDIDATES',
         'AI_TASK_SEARCH_RERANK_MAX_CHARS',
+        'PRIVATE_OCR_WEBHOOK_URL',
+        'TASK_RAG_BASE_URL',
+        'BIMMAX_TASK_RAG_BASE_URL',
     ] as $key) {
         $value = getenv($key);
         if (is_string($value) && trim($value) !== '') {
@@ -9870,7 +14887,7 @@ function docs_ai_task_search_compact_task(array $task, int $index): array
     foreach (['files', 'attachments', 'fileList', 'taskFiles'] as $field) {
         foreach (docs_ai_task_search_compact_entries(
             $task[$field] ?? [],
-            ['originalName', 'name', 'storedName', 'url', 'aiBrief'],
+            ['originalName', 'name', 'storedName', 'url', 'aiBrief', 'ocrText'],
             16,
             1600
         ) as $entry) {
@@ -10005,6 +15022,34 @@ function docs_ai_task_search_normalize_folder_filter_id($value): string
     return sanitize_text_field((string) (is_scalar($value) || $value === null ? $value : ''), 120);
 }
 
+function docs_ai_task_search_resolve_request_scope(array $payload): array
+{
+    $folderId = docs_ai_task_search_normalize_folder_filter_id($payload['folderId'] ?? '');
+    if ($folderId === '' && isset($payload['folderScope'])) {
+        $folderScope = docs_ai_task_search_normalize_folder_filter_id($payload['folderScope']);
+        if ($folderScope === 'folder:no-folder') {
+            $folderId = 'no-folder';
+        } elseif (strpos($folderScope, 'folder:') === 0) {
+            $folderId = docs_ai_task_search_normalize_folder_filter_id(substr($folderScope, 7));
+        } elseif ($folderScope === 'all') {
+            $folderId = 'all';
+        }
+    }
+    if ($folderId === '') {
+        $folderId = 'all';
+    }
+
+    $organization = docs_normalize_organization_candidate((string) ($payload['organization'] ?? ''));
+    if (mb_strtolower($organization, 'UTF-8') === 'all') {
+        $organization = '';
+    }
+
+    return [
+        'folderId' => $folderId,
+        'organization' => $organization,
+    ];
+}
+
 function docs_ai_task_search_task_folder_id(array $task, string $telegramUserId): string
 {
     $folderByUser = isset($task['folderByUser']) && is_array($task['folderByUser']) ? $task['folderByUser'] : [];
@@ -10040,6 +15085,24 @@ function docs_ai_task_search_apply_folder_filter(array $tasks, string $folderId,
     }
 
     return $filtered;
+}
+
+function docs_ai_task_search_apply_organization_filter(array $tasks, string $organization): array
+{
+    $normalizedOrganization = docs_normalize_organization_candidate($organization);
+    if ($normalizedOrganization === '') {
+        return $tasks;
+    }
+
+    $organizationKey = mb_strtolower($normalizedOrganization, 'UTF-8');
+    return array_values(array_filter($tasks, static function ($task) use ($organizationKey): bool {
+        if (!is_array($task)) {
+            return false;
+        }
+        $taskOrganization = docs_normalize_organization_candidate((string) ($task['organization'] ?? ''));
+        return $taskOrganization !== ''
+            && mb_strtolower($taskOrganization, 'UTF-8') === $organizationKey;
+    }));
 }
 
 function docs_ai_task_search_normalize_local_text($value): string
@@ -10121,6 +15184,92 @@ function docs_ai_task_search_local_tokens(string $query): array
     return !empty($meaningfulTokens) ? $meaningfulTokens : $allTokens;
 }
 
+function docs_ai_task_search_local_fuzzy_key(string $token): string
+{
+    return strtr($token, [
+        'а' => 'a', 'б' => 'b', 'в' => 'v', 'г' => 'g', 'д' => 'd', 'е' => 'e',
+        'ж' => 'zh', 'з' => 'z', 'и' => 'i', 'й' => 'j', 'к' => 'k', 'л' => 'l',
+        'м' => 'm', 'н' => 'n', 'о' => 'o', 'п' => 'p', 'р' => 'r', 'с' => 's',
+        'т' => 't', 'у' => 'u', 'ф' => 'f', 'х' => 'h', 'ц' => 'c', 'ч' => 'ch',
+        'ш' => 'sh', 'щ' => 'sch', 'ъ' => '', 'ы' => 'y', 'ь' => '', 'э' => 'e',
+        'ю' => 'yu', 'я' => 'ya',
+    ]);
+}
+
+function docs_ai_task_search_local_token_match(string $haystack, string $token, ?array $haystackWords = null): array
+{
+    if ($token === '') {
+        return ['quality' => 0, 'term' => ''];
+    }
+    if (mb_strpos($haystack, $token, 0, 'UTF-8') !== false) {
+        return ['quality' => 2, 'term' => $token];
+    }
+
+    $tokenLength = mb_strlen($token, 'UTF-8');
+    if ($tokenLength < 5 || preg_match('/^\d+$/u', $token) === 1) {
+        return ['quality' => 0, 'term' => ''];
+    }
+    $maxDistance = $tokenLength >= 8 ? 2 : 1;
+    $tokenKey = docs_ai_task_search_local_fuzzy_key($token);
+    if ($tokenKey === '') {
+        return ['quality' => 0, 'term' => ''];
+    }
+
+    $tokenFirst = substr($tokenKey, 0, 1);
+    $checkWord = static function ($word) use ($tokenLength, $maxDistance, $tokenKey, $tokenFirst): array {
+        $word = trim((string) $word);
+        $wordLength = mb_strlen($word, 'UTF-8');
+        if ($word === '' || abs($wordLength - $tokenLength) > $maxDistance) {
+            return ['quality' => 0, 'term' => ''];
+        }
+        $wordKey = docs_ai_task_search_local_fuzzy_key($word);
+        if ($wordKey === '' || substr($wordKey, 0, 1) !== $tokenFirst) {
+            return ['quality' => 0, 'term' => ''];
+        }
+        if (levenshtein($tokenKey, $wordKey) <= $maxDistance) {
+            return ['quality' => 1, 'term' => $word];
+        }
+
+        return ['quality' => 0, 'term' => ''];
+    };
+
+    if (is_array($haystackWords)) {
+        foreach ($haystackWords as $word) {
+            $match = $checkWord($word);
+            if ((int) ($match['quality'] ?? 0) > 0) {
+                return $match;
+            }
+        }
+        return ['quality' => 0, 'term' => ''];
+    }
+
+    $tokenInitial = mb_substr($token, 0, 1, 'UTF-8');
+    $minimumTailLength = max(0, $tokenLength - $maxDistance - 1);
+    $maximumTailLength = max($minimumTailLength, $tokenLength + $maxDistance - 1);
+    $wordPattern = '/(?<![\p{L}\p{N}_-])'
+        . preg_quote($tokenInitial, '/')
+        . '[\p{L}\p{N}_-]{' . $minimumTailLength . ',' . $maximumTailLength . '}'
+        . '(?![\p{L}\p{N}_-])/iu';
+    $offset = 0;
+    $checked = 0;
+    $haystackBytes = strlen($haystack);
+    while ($offset < $haystackBytes
+        && $checked < DOCS_AI_TASK_SEARCH_LOCAL_FUZZY_CANDIDATE_LIMIT
+        && preg_match($wordPattern, $haystack, $matches, PREG_OFFSET_CAPTURE, $offset) === 1
+    ) {
+        $word = (string) ($matches[0][0] ?? '');
+        $wordOffset = (int) ($matches[0][1] ?? $offset);
+        $offset = max($offset + 1, $wordOffset + max(1, strlen($word)));
+        $checked++;
+        $match = $checkWord($word);
+        if ((int) ($match['quality'] ?? 0) > 0) {
+            return $match;
+        }
+    }
+
+    return ['quality' => 0, 'term' => ''];
+}
+
 function docs_ai_task_search_collect_local_text($value, array &$parts, int $depth = 0): void
 {
     if ($depth > 5 || count($parts) >= 700 || $value === null) {
@@ -10157,14 +15306,21 @@ function docs_ai_task_search_score_normalized_haystack(string $haystack, string 
 
     $score = 0;
     if ($normalizedQuery !== '' && mb_strlen($normalizedQuery, 'UTF-8') >= 3 && mb_strpos($haystack, $normalizedQuery, 0, 'UTF-8') !== false) {
-        $score += 80;
+        $score += 180;
     }
 
     $matchedTokens = 0;
+    $exactTokens = 0;
     foreach ($tokens as $token) {
-        if (mb_strpos($haystack, $token, 0, 'UTF-8') !== false) {
+        $match = docs_ai_task_search_local_token_match($haystack, (string) $token);
+        if ((int) ($match['quality'] ?? 0) > 0) {
             $matchedTokens++;
-            $score += mb_strlen($token, 'UTF-8') >= 5 ? 8 : 4;
+            if ((int) $match['quality'] === 2) {
+                $exactTokens++;
+                $score += mb_strlen((string) $token, 'UTF-8') >= 5 ? 10 : 5;
+            } else {
+                $score += 6;
+            }
         }
     }
     if ($matchedTokens !== count($tokens)) {
@@ -10176,6 +15332,7 @@ function docs_ai_task_search_score_normalized_haystack(string $haystack, string 
     if ($matchedTokens === count($tokens) && count($tokens) > 1) {
         $score += 25;
     }
+    $score += $exactTokens * 3;
 
     return $score;
 }
@@ -10186,24 +15343,273 @@ function docs_ai_task_search_local_score(array $compactTask, string $query, arra
         return 0;
     }
 
-    $parts = [];
-    docs_ai_task_search_collect_local_text($compactTask, $parts);
-    $normalizedQuery = docs_ai_task_search_normalize_local_text($query);
-    $haystack = docs_ai_task_search_normalize_local_text(implode(' ', $parts));
-    $score = docs_ai_task_search_score_normalized_haystack($haystack, $normalizedQuery, $tokens);
-    if ($score > 0 || !is_array($rawTask)) {
-        return $score;
+    $normalizedQuery = implode(' ', $tokens);
+    if (is_array($rawTask)) {
+        $bestScore = 0;
+        foreach (docs_ai_task_search_local_match_candidates($rawTask) as $candidate) {
+            $candidateText = docs_ai_task_search_normalize_local_text((string) ($candidate['text'] ?? ''));
+            $candidateScore = docs_ai_task_search_score_normalized_haystack(
+                $candidateText,
+                $normalizedQuery,
+                $tokens
+            );
+            if ($candidateScore <= 0) {
+                continue;
+            }
+            $bestScore = max($bestScore, $candidateScore + (int) ($candidate['priority'] ?? 0));
+        }
+        return $bestScore;
     }
 
-    $rawJson = json_encode($rawTask, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    if (!is_string($rawJson) || $rawJson === '') {
-        return 0;
-    }
+    $parts = [];
+    docs_ai_task_search_collect_local_text($compactTask, $parts);
     return docs_ai_task_search_score_normalized_haystack(
-        docs_ai_task_search_normalize_local_text($rawJson),
+        docs_ai_task_search_normalize_local_text(implode(' ', $parts)),
         $normalizedQuery,
         $tokens
     );
+}
+
+function docs_ai_task_search_add_local_match_candidate(
+    array &$candidates,
+    string $label,
+    $value,
+    int $priority,
+    string $context = ''
+): void {
+    if (!is_scalar($value) || count($candidates) >= 220) {
+        return;
+    }
+    $text = sanitize_text_field((string) $value, DOCS_PRIVATE_OCR_MAX_TEXT_LENGTH);
+    if ($text === '') {
+        return;
+    }
+    $candidates[] = [
+        'label' => sanitize_text_field($label, 120),
+        'text' => $text,
+        'priority' => $priority,
+        'context' => sanitize_text_field($context, 100),
+    ];
+}
+
+function docs_ai_task_search_add_local_entry_candidates(
+    array &$candidates,
+    $entries,
+    string $label,
+    array $fields,
+    int $priority
+): void {
+    if (!is_array($entries)) {
+        return;
+    }
+    foreach (array_slice($entries, 0, 80) as $entry) {
+        if (!is_array($entry)) {
+            docs_ai_task_search_add_local_match_candidate($candidates, $label, $entry, $priority);
+            continue;
+        }
+        foreach ($fields as $field) {
+            if (array_key_exists($field, $entry)) {
+                docs_ai_task_search_add_local_match_candidate($candidates, $label, $entry[$field], $priority);
+            }
+        }
+    }
+}
+
+function docs_ai_task_search_local_match_candidates(array $task): array
+{
+    $candidates = [];
+    foreach ([
+        ['Номер задачи', ['registryNumber', 'entryNumber', 'documentNumber', 'id'], 95],
+        ['Тема', ['summary', 'content', 'description', 'document'], 90],
+        ['Поручение', ['instruction', 'resolution', 'assignmentInstruction', 'assignmentComment'], 88],
+        ['Статус', ['status', 'statusLabel'], 78],
+        ['Организация', ['organization'], 76],
+        ['Дата', ['registrationDate', 'documentDate', 'dueDate'], 70],
+    ] as $config) {
+        foreach ($config[1] as $field) {
+            if (array_key_exists($field, $task)) {
+                docs_ai_task_search_add_local_match_candidate($candidates, $config[0], $task[$field], $config[2]);
+            }
+        }
+    }
+
+    foreach ([
+        ['Корреспондент', ['correspondent', 'sender', 'author'], 82],
+        ['Исполнитель', ['executor', 'assignee', 'responsible'], 80],
+    ] as $config) {
+        foreach ($config[1] as $field) {
+            if (!array_key_exists($field, $task)) {
+                continue;
+            }
+            docs_ai_task_search_add_local_entry_candidates(
+                $candidates,
+                [$task[$field]],
+                $config[0],
+                ['name', 'responsible', 'fio', 'fullName', 'username', 'email', 'title'],
+                $config[2]
+            );
+        }
+    }
+
+    foreach (['files', 'attachments', 'fileList', 'taskFiles'] as $field) {
+        $files = isset($task[$field]) && is_array($task[$field]) ? $task[$field] : [];
+        foreach (array_slice($files, 0, 80) as $index => $file) {
+            if (!is_array($file)) {
+                docs_ai_task_search_add_local_match_candidate($candidates, 'Файл', $file, 74);
+                continue;
+            }
+            $fileName = sanitize_text_field((string) ($file['originalName'] ?? ($file['name'] ?? ($file['storedName'] ?? ''))), 100);
+            docs_ai_task_search_add_local_match_candidate(
+                $candidates,
+                'OCR',
+                $file['ocrText'] ?? '',
+                100,
+                $fileName !== '' ? $fileName : 'Файл ' . ($index + 1)
+            );
+            foreach (['originalName', 'name', 'storedName'] as $nameField) {
+                docs_ai_task_search_add_local_match_candidate($candidates, 'Имя файла', $file[$nameField] ?? '', 84);
+            }
+            docs_ai_task_search_add_local_match_candidate(
+                $candidates,
+                $fileName !== '' ? 'Описание · ' . $fileName : 'Описание файла',
+                $file['aiBrief'] ?? '',
+                86
+            );
+        }
+    }
+
+    foreach (['responses', 'answers', 'executorResponses'] as $field) {
+        docs_ai_task_search_add_local_entry_candidates(
+            $candidates,
+            $task[$field] ?? [],
+            'Ответ',
+            ['textContent', 'comment', 'note', 'originalName', 'name', 'storedName'],
+            89
+        );
+    }
+    foreach (['responsibles', 'assignees', 'executors', 'subordinates', 'directors'] as $field) {
+        docs_ai_task_search_add_local_entry_candidates(
+            $candidates,
+            $task[$field] ?? [],
+            'Участник',
+            ['name', 'responsible', 'fio', 'fullName', 'username', 'role'],
+            80
+        );
+    }
+
+    return $candidates;
+}
+
+function docs_ai_task_search_local_match_preview(string $text, array $tokens, int $limit = 180): string
+{
+    $cleanText = sanitize_text_field($text, DOCS_PRIVATE_OCR_MAX_TEXT_LENGTH);
+    if ($cleanText === '') {
+        return '';
+    }
+
+    $normalizedText = docs_ai_task_search_normalize_local_text($cleanText);
+    $firstPosition = null;
+    foreach ($tokens as $token) {
+        $position = mb_strpos($normalizedText, $token, 0, 'UTF-8');
+        if ($position !== false && ($firstPosition === null || $position < $firstPosition)) {
+            $firstPosition = $position;
+        }
+    }
+
+    $textLength = mb_strlen($cleanText, 'UTF-8');
+    $start = $firstPosition === null ? 0 : max(0, $firstPosition - 48);
+    if ($start + $limit > $textLength) {
+        $start = max(0, $textLength - $limit);
+    }
+    $preview = mb_substr($cleanText, $start, $limit, 'UTF-8');
+
+    return ($start > 0 ? '…' : '')
+        . $preview
+        . ($start + $limit < $textLength ? '…' : '');
+}
+
+function docs_ai_task_search_local_match_reasons(array $task, string $query, int $limit = 2): array
+{
+    $tokens = docs_ai_task_search_local_tokens($query);
+    if (empty($tokens)) {
+        return [];
+    }
+    $normalizedQuery = implode(' ', $tokens);
+    $ranked = [];
+
+    foreach (docs_ai_task_search_local_match_candidates($task) as $candidate) {
+        $normalizedText = docs_ai_task_search_normalize_local_text((string) ($candidate['text'] ?? ''));
+        if ($normalizedText === '') {
+            continue;
+        }
+        $matchedTokens = [];
+        $previewTokens = [];
+        $exactTokenCount = 0;
+        foreach ($tokens as $token) {
+            $match = docs_ai_task_search_local_token_match($normalizedText, (string) $token);
+            if ((int) ($match['quality'] ?? 0) > 0) {
+                $matchedTokens[] = $token;
+                $previewTokens[] = (string) ($match['term'] ?? $token);
+                if ((int) $match['quality'] === 2) {
+                    $exactTokenCount++;
+                }
+            }
+        }
+        if (count($matchedTokens) !== count($tokens)) {
+            continue;
+        }
+        $hasExactQuery = $normalizedQuery !== ''
+            && mb_strpos($normalizedText, $normalizedQuery, 0, 'UTF-8') !== false;
+        $ranked[] = [
+            'label' => (string) ($candidate['label'] ?? 'Совпадение'),
+            'text' => (string) ($candidate['text'] ?? ''),
+            'context' => (string) ($candidate['context'] ?? ''),
+            'tokens' => $matchedTokens,
+            'previewTokens' => array_values(array_unique($previewTokens)),
+            'score' => count($matchedTokens) * 100
+                + ($hasExactQuery ? 220 : 0)
+                + ($exactTokenCount * 12)
+                + (int) ($candidate['priority'] ?? 0),
+        ];
+    }
+
+    usort($ranked, static function (array $left, array $right): int {
+        return ((int) ($right['score'] ?? 0)) <=> ((int) ($left['score'] ?? 0));
+    });
+
+    $selected = [];
+    $coveredTokens = [];
+    foreach ($ranked as $candidate) {
+        $addsToken = empty($selected);
+        foreach ($candidate['tokens'] as $token) {
+            if (!isset($coveredTokens[$token])) {
+                $addsToken = true;
+                break;
+            }
+        }
+        if (!$addsToken) {
+            continue;
+        }
+        foreach ($candidate['tokens'] as $token) {
+            $coveredTokens[$token] = true;
+        }
+        $preview = docs_ai_task_search_local_match_preview(
+            (string) $candidate['text'],
+            isset($candidate['previewTokens']) && is_array($candidate['previewTokens'])
+                ? $candidate['previewTokens']
+                : (array) $candidate['tokens']
+        );
+        $context = sanitize_text_field((string) ($candidate['context'] ?? ''), 100);
+        $selected[] = [
+            'label' => sanitize_text_field((string) $candidate['label'], 120),
+            'preview' => $context !== '' ? $context . ' · ' . $preview : $preview,
+        ];
+        if (count($selected) >= max(1, $limit) || count($coveredTokens) >= count($tokens)) {
+            break;
+        }
+    }
+
+    return $selected;
 }
 
 function docs_ai_task_search_local_matches(array $compactTasks, string $query, int $limit, array $rawTaskMap = []): array
@@ -10227,10 +15633,16 @@ function docs_ai_task_search_local_matches(array $compactTasks, string $query, i
         if ($score <= 0) {
             continue;
         }
+        $matchReasons = is_array($rawTask)
+            ? docs_ai_task_search_local_match_reasons($rawTask, $query)
+            : [];
         $ranked[] = [
             'key' => $key,
             'score' => $score,
-            'reason' => 'Найдено совпадение по словам запроса в задаче, файлах или ответах.',
+            'reason' => !empty($matchReasons)
+                ? (string) ($matchReasons[0]['preview'] ?? '')
+                : 'Найдено совпадение по словам запроса в задаче, файлах или ответах.',
+            'matchReasons' => $matchReasons,
         ];
     }
 
@@ -10246,6 +15658,9 @@ function docs_ai_task_search_local_matches(array $compactTasks, string $query, i
         $matches[] = [
             'key' => (string) $item['key'],
             'reason' => (string) $item['reason'],
+            'matchReasons' => isset($item['matchReasons']) && is_array($item['matchReasons'])
+                ? $item['matchReasons']
+                : [],
         ];
     }
 
@@ -10891,10 +16306,12 @@ function docs_run_local_task_search(array $snapshot, string $query, string $chat
         $reason = sanitize_text_field((string) ($match['reason'] ?? 'Найдено локальное совпадение по JSON задач.'), 350);
         $result = docs_prepare_ai_task_search_result($taskMap[$key], $chatId, docs_ai_task_search_task_folder_id($taskMap[$key], $chatId));
         $result['matchPreview'] = $reason;
-        $result['matchReasons'] = [[
-            'label' => 'Совпадение',
-            'preview' => $reason,
-        ]];
+        $result['matchReasons'] = isset($match['matchReasons']) && is_array($match['matchReasons']) && !empty($match['matchReasons'])
+            ? array_slice($match['matchReasons'], 0, 2)
+            : [[
+                'label' => 'Совпадение',
+                'preview' => $reason,
+            ]];
         $result['score'] = max(1, $limit - count($results));
         $results[] = $result;
     }
@@ -11738,8 +17155,35 @@ function save_registry(string $folder, array $records): void
 {
     $dir = ensure_organization_directory($folder);
     $file = $dir . '/' . REGISTRY_FILENAME;
+    docs_remove_ocr_text_from_registry_records($records);
     $json = json_encode(array_values($records), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     file_put_contents($file, $json, LOCK_EX);
+}
+
+function docs_remove_ocr_text_from_registry_records(array &$records): bool
+{
+    $changed = false;
+    foreach ($records as &$record) {
+        if (!is_array($record) || !isset($record['files']) || !is_array($record['files'])) {
+            continue;
+        }
+        foreach ($record['files'] as &$file) {
+            if (!is_array($file)) {
+                continue;
+            }
+            if (isset($file['ocrText'])) {
+                if (!isset($file['ocrTextLength'])) {
+                    $file['ocrTextLength'] = strlen((string) $file['ocrText']);
+                }
+                unset($file['ocrText']);
+                $changed = true;
+            }
+        }
+        unset($file);
+    }
+    unset($record);
+
+    return $changed;
 }
 
 function docs_lock_registry(string $folder): array
@@ -11804,6 +17248,7 @@ function docs_save_registry_locked($handle, array $records): bool
         return false;
     }
 
+    docs_remove_ocr_text_from_registry_records($records);
     $json = json_encode(array_values($records), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     if ($json === false) {
         return false;
@@ -16145,8 +21590,8 @@ function sanitize_assignee_payload($value, bool $refreshTimestamp = false): arra
         'department' => sanitize_text_field($value['department'] ?? '', 160),
         'position' => sanitize_text_field($value['position'] ?? '', 160),
         'note' => sanitize_text_field($value['note'] ?? '', 200),
-        'telegram' => sanitize_text_field($value['telegram'] ?? '', 120),
-        'chatId' => sanitize_text_field($value['chatId'] ?? '', 40),
+        'telegram' => sanitize_text_field($value['telegram'] ?? ($value['telegramId'] ?? ($value['telegram_id'] ?? '')), 120),
+        'chatId' => sanitize_text_field($value['chatId'] ?? ($value['chat_id'] ?? ''), 40),
         'login' => sanitize_text_field($value['login'] ?? '', 120),
         'email' => sanitize_text_field($value['email'] ?? '', 160),
         'assignedBy' => sanitize_text_field($value['assignedBy'] ?? '', 200),
@@ -16740,7 +22185,17 @@ function docs_director_participant_matches_filter(array $entry, array $filter): 
     }
 
     $entryIds = [];
-    foreach (['telegram', 'chatId', 'chat_id', 'telegramId', 'telegram_user_id'] as $field) {
+    foreach ([
+        'telegram',
+        'telegramId',
+        'telegram_id',
+        'telegram_user_id',
+        'chatId',
+        'chat_id',
+        'userId',
+        'user_id',
+        'id',
+    ] as $field) {
         if (empty($entry[$field])) {
             continue;
         }
@@ -20066,7 +25521,12 @@ function docs_compare_records_by_registration_date($a, $b): int
     return strcmp($first['id'], $second['id']);
 }
 
-function docs_prepare_records_for_response(array $records, string $organization, string $folder): array
+function docs_prepare_records_for_response(
+    array $records,
+    string $organization,
+    string $folder,
+    bool $includeOcrText = true
+): array
 {
     foreach ($records as $position => &$record) {
         if (!is_array($record)) {
@@ -20126,6 +25586,10 @@ function docs_prepare_records_for_response(array $records, string $organization,
                 }
                 if (isset($file['briefai'])) {
                     unset($file['briefai']);
+                }
+                if (!$includeOcrText && isset($file['ocrText'])) {
+                    $file['ocrTextLength'] = strlen((string) $file['ocrText']);
+                    unset($file['ocrText']);
                 }
             }
             unset($file);
@@ -21798,7 +27262,6 @@ switch ($action) {
         if (!is_array($payload)) {
             $payload = [];
         }
-
         $expectedToken = getenv('BIMMAX_DOCS_OVERDUE_DIGEST_TOKEN');
         $expectedToken = is_string($expectedToken) ? trim($expectedToken) : '';
         if ($expectedToken === '') {
@@ -21905,6 +27368,455 @@ switch ($action) {
         docs_handle_mini_app_doc_load_log($method);
         break;
 
+    case 'mini_app_ai_task_sync':
+        if (strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
+            respond_error('Некорректный метод запроса.', 405);
+        }
+        $requestContext = docs_build_request_user_context();
+        $telegramUserId = docs_require_verified_telegram_user_id($requestContext);
+        $syncPayload = load_json_payload();
+        if (!is_array($syncPayload)) {
+            $syncPayload = [];
+        }
+        $syncScope = docs_ai_task_search_resolve_request_scope($syncPayload);
+        $requestedFolderId = $syncScope['folderId'];
+        $requestedOrganization = $syncScope['organization'];
+        if (!class_exists('CURLFile')) {
+            respond_error('PHP cURL не поддерживает отправку JSON-файла.', 500, [
+                'syncStatus' => 'curl_file_unavailable',
+            ]);
+        }
+
+        $liveSnapshotResult = docs_build_live_ai_task_search_snapshot($telegramUserId, $requestContext);
+        if (empty($liveSnapshotResult['ok'])
+            || !isset($liveSnapshotResult['snapshot']['tasks'])
+            || !is_array($liveSnapshotResult['snapshot']['tasks'])) {
+            respond_error(
+                (string) ($liveSnapshotResult['message'] ?? 'Не удалось сформировать актуальный файл задач.'),
+                500,
+                ['syncStatus' => $liveSnapshotResult['error'] ?? 'live_registry_unavailable']
+            );
+        }
+
+        $liveTasks = $liveSnapshotResult['snapshot']['tasks'];
+        $liveTasks = docs_ai_task_search_apply_folder_filter(
+            $liveTasks,
+            $requestedFolderId,
+            $telegramUserId
+        );
+        $liveTasks = docs_ai_task_search_apply_organization_filter(
+            $liveTasks,
+            $requestedOrganization
+        );
+        $storedSnapshotResult = docs_load_mini_app_user_tasks_snapshot($telegramUserId);
+        if (!empty($storedSnapshotResult['ok'])
+            && isset($storedSnapshotResult['snapshot'])
+            && is_array($storedSnapshotResult['snapshot'])) {
+            $liveTasks = docs_merge_task_rag_ocr_snapshot($liveTasks, $storedSnapshotResult['snapshot']);
+        }
+        $ragSnapshot = docs_prepare_task_rag_snapshot($telegramUserId, $liveTasks);
+        $ragSnapshot['folderId'] = $requestedFolderId;
+        $ragSnapshot['organization'] = $requestedOrganization;
+        $snapshotFingerprint = docs_task_rag_snapshot_fingerprint($ragSnapshot);
+        if ($snapshotFingerprint === '') {
+            respond_error('Не удалось вычислить версию файла задач.', 500, [
+                'syncStatus' => 'snapshot_fingerprint_failed',
+            ]);
+        }
+        $syncCache = docs_task_rag_load_sync_cache($telegramUserId);
+        $cacheMatchesSnapshot = isset($syncCache['fingerprint'])
+            && is_string($syncCache['fingerprint'])
+            && hash_equals($snapshotFingerprint, $syncCache['fingerprint']);
+        if ($cacheMatchesSnapshot
+            && (string) ($syncCache['status'] ?? '') === 'ready'
+            && (int) ($syncCache['readyUntil'] ?? 0) >= time()
+        ) {
+            $cachedReadyPayload = docs_task_rag_build_ready_payload(
+                $telegramUserId,
+                [
+                    'action' => 'snapshot_cached',
+                    'snapshotId' => (string) ($syncCache['snapshotId'] ?? ''),
+                    'indexedTasks' => max(0, (int) ($syncCache['indexedTasks'] ?? 0)),
+                ],
+                (string) ($syncCache['generatedAt'] ?? $ragSnapshot['generatedAt']),
+                (int) $ragSnapshot['tasksCount'],
+                $requestedFolderId,
+                $requestedOrganization
+            );
+            if (!empty($cachedReadyPayload)) {
+                $cachedReadyPayload['cached'] = true;
+                respond_success($cachedReadyPayload);
+            }
+        }
+        if ($cacheMatchesSnapshot
+            && (string) ($syncCache['status'] ?? '') === 'processing'
+            && (int) ($syncCache['startedAt'] ?? 0) >= time() - DOCS_TASK_RAG_READY_TOKEN_TTL_SECONDS
+            && trim((string) ($syncCache['snapshotId'] ?? '')) !== ''
+        ) {
+            respond_success([
+                'ok' => true,
+                'status' => 'processing',
+                'action' => 'snapshot_cached',
+                'message' => 'Индексация этого снимка уже выполняется.',
+                'telegramUserId' => $telegramUserId,
+                'snapshotId' => sanitize_text_field((string) $syncCache['snapshotId'], 500),
+                'tasksCount' => max(0, (int) ($syncCache['tasksCount'] ?? $ragSnapshot['tasksCount'])),
+                'indexedTasks' => 0,
+                'generatedAt' => (string) $ragSnapshot['generatedAt'],
+                'folderId' => $requestedFolderId,
+                'organization' => $requestedOrganization,
+                'pollAfterMs' => 1200,
+                'cached' => true,
+            ]);
+        }
+
+        $encodedSnapshot = json_encode(
+            $ragSnapshot,
+            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+        );
+        if (!is_string($encodedSnapshot)) {
+            respond_error('Не удалось сформировать JSON-файл задач.', 500, [
+                'syncStatus' => 'snapshot_encode_failed',
+            ]);
+        }
+
+        $tempPath = tempnam(sys_get_temp_dir(), 'docs_task_rag_');
+        if (!is_string($tempPath) || $tempPath === '') {
+            respond_error('Не удалось создать временный JSON-файл задач.', 500, [
+                'syncStatus' => 'temp_file_failed',
+            ]);
+        }
+        try {
+            if (@file_put_contents($tempPath, $encodedSnapshot . PHP_EOL, LOCK_EX) === false) {
+                respond_error('Не удалось записать временный JSON-файл задач.', 500, [
+                    'syncStatus' => 'temp_write_failed',
+                ]);
+            }
+            $safeTelegramUserId = docs_sanitize_mini_app_user_tasks_snapshot_id($telegramUserId);
+            $syncResponse = docs_task_rag_request('sync', [
+                CURLOPT_TIMEOUT => 20,
+                CURLOPT_POSTFIELDS => [
+                    'file' => new CURLFile(
+                        $tempPath,
+                        'application/json',
+                        $safeTelegramUserId . '.json'
+                    ),
+                ],
+            ]);
+        } finally {
+            @unlink($tempPath);
+        }
+
+        if (empty($syncResponse['ok'])) {
+            $upstreamStatus = (int) ($syncResponse['httpStatus'] ?? 0);
+            $curlErrorNumber = (int) ($syncResponse['curlErrorNumber'] ?? 0);
+            $diagnosticCode = sanitize_text_field(
+                (string) ($syncResponse['diagnosticCode'] ?? ''),
+                80
+            );
+            if ($diagnosticCode === '') {
+                $diagnosticCode = $curlErrorNumber > 0
+                    ? 'RAG-CURL-' . $curlErrorNumber
+                    : ($upstreamStatus > 0 ? 'RAG-HTTP-' . $upstreamStatus : 'RAG-NO-RESPONSE');
+            }
+            log_docs_event('Task RAG sync request failed', [
+                'telegramUserId' => $telegramUserId,
+                'httpStatus' => $upstreamStatus,
+                'error' => sanitize_text_field((string) ($syncResponse['error'] ?? ''), 1000),
+                'response' => isset($syncResponse['payload']) && is_array($syncResponse['payload'])
+                    ? $syncResponse['payload']
+                    : [],
+                'snapshotBytes' => strlen($encodedSnapshot),
+                'tasksCount' => (int) ($ragSnapshot['tasksCount'] ?? 0),
+            ]);
+            respond_error(
+                'Не удалось подготовить ИИ-поиск. Попробуйте открыть поиск ещё раз.',
+                502,
+                [
+                    'syncStatus' => 'upstream_unavailable',
+                    'upstreamStatus' => $upstreamStatus,
+                    'serverResponse' => isset($syncResponse['rawResponse']) && is_string($syncResponse['rawResponse'])
+                        ? $syncResponse['rawResponse']
+                        : '',
+                    'transportDiagnostic' => implode("\n", array_filter([
+                        'Этап: загрузка файла задач',
+                        'Адрес: ' . docs_task_rag_resolve_base_url() . '/sync',
+                        'Диагностический код: ' . $diagnosticCode,
+                        'HTTP-статус: ' . $upstreamStatus,
+                        'Ошибка cURL: ' . sanitize_text_field((string) ($syncResponse['error'] ?? ''), 1000),
+                    ])),
+                ]
+            );
+        }
+        $remotePayload = isset($syncResponse['payload']) && is_array($syncResponse['payload'])
+            ? $syncResponse['payload']
+            : [];
+        $remoteTelegramUserId = normalize_identifier_value($remotePayload['telegramUserId'] ?? '');
+        $remoteStatus = strtolower(trim((string) ($remotePayload['status'] ?? '')));
+        $remoteAccepted = (($remotePayload['ok'] ?? null) === true || ($remotePayload['success'] ?? null) === true)
+            && in_array($remoteStatus, ['processing', 'ready'], true)
+            && $remoteTelegramUserId !== ''
+            && hash_equals($telegramUserId, $remoteTelegramUserId);
+        if (!$remoteAccepted) {
+            log_docs_event('Task RAG sync invalid response', [
+                'telegramUserId' => $telegramUserId,
+                'httpStatus' => (int) ($syncResponse['httpStatus'] ?? 0),
+                'response' => $remotePayload,
+                'snapshotBytes' => strlen($encodedSnapshot),
+                'tasksCount' => (int) ($ragSnapshot['tasksCount'] ?? 0),
+            ]);
+            respond_error(
+                'Не удалось подготовить ИИ-поиск. Попробуйте открыть поиск ещё раз.',
+                503,
+                [
+                    'syncStatus' => sanitize_text_field((string) ($remotePayload['status'] ?? 'not_ready'), 80),
+                    'upstreamStatus' => (int) ($syncResponse['httpStatus'] ?? 0),
+                    'serverResponse' => isset($syncResponse['rawResponse']) && is_string($syncResponse['rawResponse'])
+                        ? $syncResponse['rawResponse']
+                        : '',
+                    'transportDiagnostic' => implode("\n", [
+                        'Этап: проверка ответа загрузки',
+                        'Адрес: ' . docs_task_rag_resolve_base_url() . '/sync',
+                        'HTTP-статус: ' . (int) ($syncResponse['httpStatus'] ?? 0),
+                        'Статус n8n: ' . sanitize_text_field((string) ($remotePayload['status'] ?? ''), 80),
+                    ]),
+                ]
+            );
+        }
+
+        if ($remoteStatus === 'processing') {
+            $snapshotId = sanitize_text_field((string) ($remotePayload['snapshotId'] ?? ''), 500);
+            if ($snapshotId === '') {
+                respond_error('Сервер не вернул идентификатор фоновой индексации.', 503, [
+                    'syncStatus' => 'snapshot_id_missing',
+                ]);
+            }
+            docs_task_rag_save_sync_cache($telegramUserId, [
+                'fingerprint' => $snapshotFingerprint,
+                'status' => 'processing',
+                'snapshotId' => $snapshotId,
+                'tasksCount' => max(0, (int) ($remotePayload['tasksCount'] ?? $ragSnapshot['tasksCount'])),
+                'indexedTasks' => 0,
+                'generatedAt' => (string) $ragSnapshot['generatedAt'],
+                'folderId' => $requestedFolderId,
+                'organization' => $requestedOrganization,
+                'startedAt' => time(),
+                'readyUntil' => 0,
+            ]);
+            respond_success([
+                'ok' => true,
+                'status' => 'processing',
+                'action' => 'snapshot',
+                'message' => 'Задачи приняты. Подготавливаю поиск в фоне.',
+                'telegramUserId' => $telegramUserId,
+                'snapshotId' => $snapshotId,
+                'tasksCount' => max(0, (int) ($remotePayload['tasksCount'] ?? $ragSnapshot['tasksCount'])),
+                'indexedTasks' => 0,
+                'generatedAt' => $ragSnapshot['generatedAt'],
+                'folderId' => $requestedFolderId,
+                'organization' => $requestedOrganization,
+                'pollAfterMs' => 1500,
+            ]);
+        }
+
+        $readyPayload = docs_task_rag_build_ready_payload(
+            $telegramUserId,
+            $remotePayload,
+            (string) $ragSnapshot['generatedAt'],
+            (int) $ragSnapshot['tasksCount'],
+            $requestedFolderId,
+            $requestedOrganization
+        );
+        if (empty($readyPayload)) {
+            respond_error('Не удалось создать защищённый маркер готовности ИИ-поиска.', 500, [
+                'syncStatus' => 'ready_token_unavailable',
+            ]);
+        }
+        docs_task_rag_save_sync_cache($telegramUserId, [
+            'fingerprint' => $snapshotFingerprint,
+            'status' => 'ready',
+            'snapshotId' => (string) ($readyPayload['snapshotId'] ?? ''),
+            'tasksCount' => (int) $ragSnapshot['tasksCount'],
+            'indexedTasks' => (int) ($readyPayload['indexedTasks'] ?? 0),
+            'generatedAt' => (string) $ragSnapshot['generatedAt'],
+            'folderId' => $requestedFolderId,
+            'organization' => $requestedOrganization,
+            'startedAt' => time(),
+            'readyUntil' => time() + DOCS_TASK_RAG_READY_TOKEN_TTL_SECONDS,
+        ]);
+
+        respond_success($readyPayload);
+        break;
+
+    case 'mini_app_ai_task_sync_status':
+        if (strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
+            respond_error('Некорректный метод запроса.', 405);
+        }
+        $requestContext = docs_build_request_user_context();
+        $telegramUserId = docs_require_verified_telegram_user_id($requestContext);
+        $payload = load_json_payload();
+        if (!is_array($payload)) {
+            $payload = [];
+        }
+        $statusScope = docs_ai_task_search_resolve_request_scope($payload);
+        $requestedFolderId = $statusScope['folderId'];
+        $requestedOrganization = $statusScope['organization'];
+        $snapshotId = sanitize_text_field((string) ($payload['snapshotId'] ?? ''), 500);
+        if ($snapshotId === '') {
+            respond_error('Не указан идентификатор фоновой индексации.', 422);
+        }
+        $statusCache = docs_task_rag_load_sync_cache($telegramUserId);
+        $cachedSnapshotId = sanitize_text_field((string) ($statusCache['snapshotId'] ?? ''), 500);
+        $cachedFolderId = docs_ai_task_search_normalize_folder_filter_id($statusCache['folderId'] ?? 'all') ?: 'all';
+        $cachedOrganization = docs_normalize_organization_candidate((string) ($statusCache['organization'] ?? ''));
+        if ($cachedSnapshotId === ''
+            || !hash_equals($snapshotId, $cachedSnapshotId)
+            || !hash_equals($requestedFolderId, $cachedFolderId)
+            || !hash_equals(
+                mb_strtolower($requestedOrganization, 'UTF-8'),
+                mb_strtolower($cachedOrganization, 'UTF-8')
+            )
+        ) {
+            respond_error('Область поиска изменилась. Подготовьте актуальный файл задач.', 409, [
+                'requiresTaskRagSync' => true,
+            ]);
+        }
+        $statusRequestBody = json_encode([
+            'telegramUserId' => $telegramUserId,
+            'snapshotId' => $snapshotId,
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if (!is_string($statusRequestBody)) {
+            respond_error('Не удалось сформировать запрос статуса.', 500);
+        }
+        $statusResponse = docs_task_rag_request('status', [
+            CURLOPT_TIMEOUT => DOCS_TASK_RAG_STATUS_TIMEOUT_SECONDS,
+            CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+            CURLOPT_POSTFIELDS => $statusRequestBody,
+        ]);
+        if (empty($statusResponse['ok'])) {
+            $upstreamStatus = (int) ($statusResponse['httpStatus'] ?? 0);
+            $curlErrorNumber = (int) ($statusResponse['curlErrorNumber'] ?? 0);
+            $diagnosticCode = sanitize_text_field(
+                (string) ($statusResponse['diagnosticCode'] ?? ''),
+                80
+            );
+            if ($diagnosticCode === '') {
+                $diagnosticCode = $curlErrorNumber > 0
+                    ? 'RAG-CURL-' . $curlErrorNumber
+                    : ($upstreamStatus > 0 ? 'RAG-HTTP-' . $upstreamStatus : 'RAG-NO-RESPONSE');
+            }
+            respond_error('Не удалось проверить готовность ИИ-поиска.', 502, [
+                'syncStatus' => 'status_upstream_unavailable',
+                'upstreamStatus' => $upstreamStatus,
+                'serverResponse' => isset($statusResponse['rawResponse']) && is_string($statusResponse['rawResponse'])
+                    ? $statusResponse['rawResponse']
+                    : '',
+                'transportDiagnostic' => implode("\n", array_filter([
+                    'Этап: проверка готовности индекса',
+                    'Адрес: ' . docs_task_rag_resolve_base_url() . '/status',
+                    'Диагностический код: ' . $diagnosticCode,
+                    'HTTP-статус: ' . $upstreamStatus,
+                    'Ошибка cURL: ' . sanitize_text_field((string) ($statusResponse['error'] ?? ''), 1000),
+                ])),
+            ]);
+        }
+        $remotePayload = isset($statusResponse['payload']) && is_array($statusResponse['payload'])
+            ? $statusResponse['payload']
+            : [];
+        $remoteTelegramUserId = normalize_identifier_value($remotePayload['telegramUserId'] ?? '');
+        $remoteSnapshotId = sanitize_text_field((string) ($remotePayload['snapshotId'] ?? ''), 500);
+        $remoteStatus = strtolower(trim((string) ($remotePayload['status'] ?? '')));
+        $validStatus = (($remotePayload['ok'] ?? null) === true || ($remotePayload['success'] ?? null) === true)
+            && in_array($remoteStatus, ['processing', 'ready', 'error'], true)
+            && $remoteTelegramUserId !== ''
+            && hash_equals($telegramUserId, $remoteTelegramUserId)
+            && $remoteSnapshotId !== ''
+            && hash_equals($snapshotId, $remoteSnapshotId);
+        if (!$validStatus) {
+            respond_error('Сервер вернул некорректный статус ИИ-поиска.', 503, [
+                'syncStatus' => $remoteStatus !== '' ? $remoteStatus : 'invalid_status',
+                'serverResponse' => isset($statusResponse['rawResponse']) && is_string($statusResponse['rawResponse'])
+                    ? $statusResponse['rawResponse']
+                    : '',
+                'transportDiagnostic' => implode("\n", [
+                    'Этап: проверка ответа статуса',
+                    'Адрес: ' . docs_task_rag_resolve_base_url() . '/status',
+                    'HTTP-статус: ' . (int) ($statusResponse['httpStatus'] ?? 0),
+                    'Статус n8n: ' . ($remoteStatus !== '' ? $remoteStatus : 'пусто'),
+                ]),
+            ]);
+        }
+        if ($remoteStatus === 'error') {
+            $syncCache = docs_task_rag_load_sync_cache($telegramUserId);
+            if (isset($syncCache['snapshotId'])
+                && is_string($syncCache['snapshotId'])
+                && hash_equals($snapshotId, $syncCache['snapshotId'])
+            ) {
+                $syncCache['status'] = 'error';
+                $syncCache['completedAt'] = time();
+                $syncCache['readyUntil'] = 0;
+                docs_task_rag_save_sync_cache($telegramUserId, $syncCache);
+            }
+            respond_success([
+                'ok' => true,
+                'status' => 'error',
+                'action' => 'snapshot_status',
+                'message' => 'Не удалось подготовить поиск. Нажмите «Повторить поиск».',
+                'telegramUserId' => $telegramUserId,
+                'snapshotId' => $snapshotId,
+                'tasksCount' => max(0, (int) ($remotePayload['tasksCount'] ?? 0)),
+                'indexedTasks' => 0,
+                'folderId' => $requestedFolderId,
+                'organization' => $requestedOrganization,
+            ]);
+        }
+        if ($remoteStatus === 'processing') {
+            respond_success([
+                'ok' => true,
+                'status' => 'processing',
+                'action' => 'snapshot_status',
+                'telegramUserId' => $telegramUserId,
+                'snapshotId' => $snapshotId,
+                'tasksCount' => max(0, (int) ($remotePayload['tasksCount'] ?? 0)),
+                'indexedTasks' => 0,
+                'startedAt' => sanitize_text_field((string) ($remotePayload['startedAt'] ?? ''), 100),
+                'folderId' => $requestedFolderId,
+                'organization' => $requestedOrganization,
+                'pollAfterMs' => 1800,
+            ]);
+        }
+        $generatedAt = sanitize_text_field(
+            (string) ($remotePayload['completedAt'] ?? ($remotePayload['startedAt'] ?? date('c'))),
+            100
+        );
+        $readyPayload = docs_task_rag_build_ready_payload(
+            $telegramUserId,
+            $remotePayload,
+            $generatedAt !== '' ? $generatedAt : date('c'),
+            max(0, (int) ($remotePayload['tasksCount'] ?? 0)),
+            $requestedFolderId,
+            $requestedOrganization
+        );
+        if (empty($readyPayload)) {
+            respond_error('Не удалось создать защищённый маркер готовности ИИ-поиска.', 500, [
+                'syncStatus' => 'ready_token_unavailable',
+            ]);
+        }
+        $syncCache = docs_task_rag_load_sync_cache($telegramUserId);
+        if (isset($syncCache['snapshotId'])
+            && is_string($syncCache['snapshotId'])
+            && hash_equals($snapshotId, $syncCache['snapshotId'])
+        ) {
+            $syncCache['status'] = 'ready';
+            $syncCache['indexedTasks'] = (int) ($readyPayload['indexedTasks'] ?? 0);
+            $syncCache['generatedAt'] = $generatedAt !== '' ? $generatedAt : date('c');
+            $syncCache['completedAt'] = time();
+            $syncCache['readyUntil'] = time() + DOCS_TASK_RAG_READY_TOKEN_TTL_SECONDS;
+            docs_task_rag_save_sync_cache($telegramUserId, $syncCache);
+        }
+        respond_success($readyPayload);
+        break;
+
     case 'mini_app_ai_task_search':
         $requestContext = docs_build_request_user_context();
         $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
@@ -21912,45 +27824,7 @@ switch ($action) {
             respond_error('Некорректный метод запроса.', 405);
         }
 
-        $telegramInitDataContext = [];
-        if (isset($requestContext['telegramInitData']) && is_array($requestContext['telegramInitData'])) {
-            $telegramInitDataContext = $requestContext['telegramInitData'];
-        }
-        if (!empty($telegramInitDataContext['present']) && empty($telegramInitDataContext['valid'])) {
-            respond_error('Не удалось подтвердить данные Telegram. Откройте мини-приложение заново из чата с ботом.', 401, [
-                'telegramInitDataError' => isset($telegramInitDataContext['error']) ? (string) $telegramInitDataContext['error'] : 'invalid',
-                'telegramInitDataPresent' => true,
-                'requiresTelegramReauth' => true,
-            ]);
-        }
-
-        $verifiedTelegramUserId = '';
-        if (!empty($telegramInitDataContext['valid'])) {
-            $verifiedTelegramUserId = normalize_identifier_value(
-                $telegramInitDataContext['source']['telegram_user_id']
-                    ?? ($telegramInitDataContext['user']['id'] ?? '')
-            );
-        } else {
-            $sessionAuth = docs_get_session_auth();
-            if (is_array($sessionAuth)) {
-                foreach (['telegramId', 'chatId'] as $sessionIdField) {
-                    $verifiedTelegramUserId = normalize_identifier_value($sessionAuth[$sessionIdField] ?? '');
-                    if ($verifiedTelegramUserId !== '') {
-                        break;
-                    }
-                }
-            }
-        }
-        if ($verifiedTelegramUserId === '') {
-            respond_error('Поиск доступен только после подтверждения пользователя Telegram.', 401, [
-                'requiresTelegramReauth' => true,
-            ]);
-        }
-
-        $requestedTelegramUserId = normalize_identifier_value($requestContext['raw']['telegram_user_id'] ?? '');
-        if ($requestedTelegramUserId !== '' && !hash_equals($verifiedTelegramUserId, $requestedTelegramUserId)) {
-            respond_error('Telegram ID запроса не совпадает с подтверждённым пользователем.', 403);
-        }
+        $verifiedTelegramUserId = docs_require_verified_telegram_user_id($requestContext);
 
         $payload = load_json_payload();
         if (!is_array($payload) || empty($payload)) {
@@ -21960,30 +27834,214 @@ switch ($action) {
             $payload = [];
         }
 
-        $query = sanitize_text_field((string) ($payload['query'] ?? ''), 500);
+        $query = sanitize_text_field((string) ($payload['query'] ?? ''), 2000);
         if ($query === '' || mb_strlen($query, 'UTF-8') < 2) {
             respond_error('Введите запрос для поиска задач.', 400);
         }
 
         $telegramUserId = $verifiedTelegramUserId;
 
-        $limit = isset($payload['limit']) ? (int) $payload['limit'] : DOCS_AI_TASK_SEARCH_LOCAL_MAX_RESULTS;
-        $limit = max(1, min($limit, DOCS_AI_TASK_SEARCH_LOCAL_MAX_RESULTS));
-        $searchMode = 'local';
-        $requestedFolderId = docs_ai_task_search_normalize_folder_filter_id($payload['folderId'] ?? '');
-        if ($requestedFolderId === '' && isset($payload['folderScope'])) {
-            $requestedScope = docs_ai_task_search_normalize_folder_filter_id($payload['folderScope']);
-            if ($requestedScope === 'folder:no-folder') {
-                $requestedFolderId = 'no-folder';
-            } elseif (strpos($requestedScope, 'folder:') === 0) {
-                $requestedFolderId = docs_ai_task_search_normalize_folder_filter_id(substr($requestedScope, 7));
-            } elseif ($requestedScope === 'all') {
-                $requestedFolderId = 'all';
+        $searchMode = strtolower(sanitize_text_field((string) ($payload['mode'] ?? 'ai'), 20));
+        $searchMode = $searchMode === 'local' ? 'local' : 'ai';
+        $defaultLimit = $searchMode === 'ai'
+            ? DOCS_TASK_RAG_SEARCH_MAX_RESULTS
+            : DOCS_AI_TASK_SEARCH_LOCAL_MAX_RESULTS;
+        $maxLimit = $searchMode === 'ai'
+            ? DOCS_TASK_RAG_SEARCH_MAX_RESULTS
+            : DOCS_AI_TASK_SEARCH_LOCAL_MAX_RESULTS;
+        $limit = isset($payload['limit']) ? (int) $payload['limit'] : $defaultLimit;
+        $limit = max(1, min($limit, $maxLimit));
+
+        $searchScope = docs_ai_task_search_resolve_request_scope($payload);
+        $requestedFolderId = $searchScope['folderId'];
+        $requestedOrganization = $searchScope['organization'];
+
+        if ($searchMode === 'ai') {
+            $readyToken = isset($_SERVER['HTTP_X_TASK_RAG_READY_TOKEN'])
+                && is_string($_SERVER['HTTP_X_TASK_RAG_READY_TOKEN'])
+                    ? trim($_SERVER['HTTP_X_TASK_RAG_READY_TOKEN'])
+                    : '';
+            if ($readyToken === '' && isset($payload['readyToken']) && is_string($payload['readyToken'])) {
+                $readyToken = $payload['readyToken'];
             }
+            if (!docs_task_rag_ready_token_is_valid(
+                $readyToken,
+                $verifiedTelegramUserId,
+                $requestedFolderId,
+                $requestedOrganization
+            )) {
+                respond_error('Сначала дождитесь актуальной загрузки задач в ИИ-поиск.', 409, [
+                    'requiresTaskRagSync' => true,
+                ]);
+            }
+            $searchBody = json_encode([
+                'telegramUserId' => $verifiedTelegramUserId,
+                'query' => $query,
+                'folderId' => $requestedFolderId,
+                'organization' => $requestedOrganization,
+                'limit' => $limit,
+            ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            if (!is_string($searchBody)) {
+                respond_error('Не удалось сформировать запрос ИИ-поиска.', 500);
+            }
+            $remoteSearch = docs_task_rag_request('search', [
+                CURLOPT_HTTPHEADER => [
+                    'Content-Type: application/json',
+                    'Accept: application/json',
+                ],
+                CURLOPT_POSTFIELDS => $searchBody,
+            ]);
+            if (empty($remoteSearch['ok'])) {
+                $upstreamStatus = (int) ($remoteSearch['httpStatus'] ?? 0);
+                $curlErrorNumber = (int) ($remoteSearch['curlErrorNumber'] ?? 0);
+                $providedDiagnosticCode = sanitize_text_field(
+                    (string) ($remoteSearch['diagnosticCode'] ?? ''),
+                    80
+                );
+                if ($providedDiagnosticCode !== '') {
+                    $diagnosticCode = $providedDiagnosticCode;
+                } elseif ($curlErrorNumber > 0) {
+                    $diagnosticCode = 'RAG-CURL-' . $curlErrorNumber;
+                } elseif ($upstreamStatus > 0) {
+                    $diagnosticCode = 'RAG-HTTP-' . $upstreamStatus;
+                } elseif (!empty($remoteSearch['responsePreview'])) {
+                    $diagnosticCode = 'RAG-JSON';
+                } else {
+                    $diagnosticCode = 'RAG-NO-RESPONSE';
+                }
+                log_docs_event('Task RAG search request failed', [
+                    'telegramUserId' => $verifiedTelegramUserId,
+                    'diagnosticCode' => $diagnosticCode,
+                    'httpStatus' => $upstreamStatus,
+                    'curlErrorNumber' => $curlErrorNumber,
+                    'responseBytes' => (int) ($remoteSearch['responseBytes'] ?? 0),
+                    'error' => sanitize_text_field((string) ($remoteSearch['error'] ?? ''), 1000),
+                    'responsePreview' => sanitize_text_field((string) ($remoteSearch['responsePreview'] ?? ''), 4000),
+                    'response' => isset($remoteSearch['payload']) && is_array($remoteSearch['payload'])
+                        ? $remoteSearch['payload']
+                        : [],
+                    'queryLength' => mb_strlen($query, 'UTF-8'),
+                ]);
+                respond_error('Сервис поиска временно недоступен. Попробуйте ещё раз.', 502, [
+                    'serverResponse' => isset($remoteSearch['rawResponse']) && is_string($remoteSearch['rawResponse'])
+                        ? $remoteSearch['rawResponse']
+                        : '',
+                    'transportDiagnostic' => implode("\n", array_filter([
+                        'Адрес: ' . docs_task_rag_resolve_base_url() . '/search',
+                        'Диагностический код: ' . $diagnosticCode,
+                        'HTTP-статус: ' . $upstreamStatus,
+                        'Ошибка cURL: ' . sanitize_text_field((string) ($remoteSearch['error'] ?? ''), 1000),
+                    ])),
+                ]);
+            }
+
+            $remotePayload = isset($remoteSearch['payload']) && is_array($remoteSearch['payload'])
+                ? $remoteSearch['payload']
+                : [];
+            $remoteStatus = strtolower(sanitize_text_field((string) ($remotePayload['status'] ?? ''), 20));
+            $remoteMatchFound = $remotePayload['matchFound'] ?? null;
+            $remoteTasks = $remotePayload['tasks'] ?? null;
+            $remoteOk = ($remotePayload['ok'] ?? false) === true;
+
+            // Поддерживаем как актуальный v2-контракт, так и опубликованную ранее
+            // версию workflow, где найденные tasks возвращались без status и
+            // matchFound. Наличие непустого массива задач позволяет безопасно
+            // определить только успешный результат; пустой результат по-прежнему
+            // принимается исключительно с явным NO_RELEVANT_MATCHES.
+            $hasRemoteTasks = is_array($remoteTasks) && count($remoteTasks) > 0;
+            $isCompatibleFound = $remoteOk
+                && $hasRemoteTasks
+                && ($remoteStatus === '' || $remoteStatus === 'found')
+                && ($remoteMatchFound === null || $remoteMatchFound === true);
+            if ($isCompatibleFound) {
+                $remoteStatus = 'found';
+                $remoteMatchFound = true;
+            }
+
+            $isFound = $remoteOk
+                && $remoteStatus === 'found'
+                && $remoteMatchFound === true
+                && $hasRemoteTasks;
+            $isEmpty = $remoteOk
+                && $remoteStatus === 'empty'
+                && $remoteMatchFound === false
+                && ($remotePayload['reasonCode'] ?? '') === 'NO_RELEVANT_MATCHES'
+                && $remoteTasks === [];
+            if (!$isFound && !$isEmpty) {
+                log_docs_event('Task RAG search returned unknown contract', [
+                    'telegramUserId' => $verifiedTelegramUserId,
+                    'httpStatus' => (int) ($remoteSearch['httpStatus'] ?? 0),
+                    'status' => $remoteStatus,
+                    'matchFound' => $remoteMatchFound,
+                    'reasonCode' => sanitize_text_field((string) ($remotePayload['reasonCode'] ?? ''), 80),
+                    'queryLength' => mb_strlen($query, 'UTF-8'),
+                ]);
+                respond_error('Сервис поиска временно недоступен. Попробуйте ещё раз.', 502, [
+                    'serverResponse' => isset($remoteSearch['rawResponse']) && is_string($remoteSearch['rawResponse'])
+                        ? $remoteSearch['rawResponse']
+                        : '',
+                ]);
+            }
+
+            $normalizedRemoteTasks = $isFound
+                ? docs_prepare_task_rag_search_results($remoteTasks, $verifiedTelegramUserId)
+                : [];
+            if ($isFound && empty($normalizedRemoteTasks)) {
+                log_docs_event('Task RAG rejected results without visible evidence', [
+                    'telegramUserId' => $verifiedTelegramUserId,
+                    'httpStatus' => (int) ($remoteSearch['httpStatus'] ?? 0),
+                    'tasksCount' => is_array($remoteTasks) ? count($remoteTasks) : 0,
+                    'queryLength' => mb_strlen($query, 'UTF-8'),
+                ]);
+                $isFound = false;
+                $isEmpty = true;
+                $remoteStatus = 'empty';
+                $remoteMatchFound = false;
+                $remotePayload['summary'] = [];
+                $remotePayload['display'] = [];
+            }
+
+            $summary = isset($remotePayload['summary']) && is_array($remotePayload['summary'])
+                ? $remotePayload['summary']
+                : [];
+            $display = isset($remotePayload['display']) && is_array($remotePayload['display'])
+                ? $remotePayload['display']
+                : [];
+            $summaryLabel = sanitize_text_field((string) ($summary['label'] ?? ''), 300);
+            $summaryText = sanitize_text_field((string) ($summary['text'] ?? ''), 4000);
+            if ($isFound) {
+                $remoteAnswer = sanitize_text_field(
+                    (string) ($remotePayload['answer'] ?? ($remotePayload['chat']['text'] ?? '')),
+                    4000
+                );
+                $answerText = $summaryText !== '' ? $summaryText : $remoteAnswer;
+                $sameSummaryText = $summaryLabel !== ''
+                    && $answerText !== ''
+                    && mb_strtolower($summaryLabel, 'UTF-8') === mb_strtolower($answerText, 'UTF-8');
+                $answer = $sameSummaryText
+                    ? $summaryLabel
+                    : ($summaryLabel !== '' && $answerText !== ''
+                        ? $summaryLabel . "\n\n" . $answerText
+                        : ($answerText !== '' ? $answerText : 'Найдены подходящие задачи.'));
+            } else {
+                $emptyMessage = sanitize_text_field(
+                    (string) ($display['message'] ?? 'Я не нашёл задач с конкретным текстовым доказательством по этому запросу. Попробуйте изменить запрос или убрать одно из условий.'),
+                    1000
+                );
+                $answer = 'Подходящие задачи не найдены' . ($emptyMessage !== '' ? "\n\n" . $emptyMessage : '');
+            }
+            respond_success([
+                'query' => $query,
+                'searchMode' => 'ai',
+                'status' => $remoteStatus,
+                'matchFound' => $remoteMatchFound,
+                'reasonCode' => $isEmpty ? 'NO_RELEVANT_MATCHES' : '',
+                'answer' => $answer,
+                'results' => $isFound ? $normalizedRemoteTasks : [],
+                'matched' => $isFound ? count($normalizedRemoteTasks) : 0,
+            ]);
         }
-        if ($requestedFolderId === '') {
-            $requestedFolderId = 'all';
-        }
+
         $liveSnapshotResult = docs_build_live_ai_task_search_snapshot($telegramUserId, $requestContext);
         if (empty($liveSnapshotResult['ok'])
             || !isset($liveSnapshotResult['snapshot'])
@@ -22004,6 +28062,21 @@ switch ($action) {
             : [];
         $scopedSnapshot = $snapshotResult['snapshot'];
         $scopedSnapshot['tasks'] = docs_ai_task_search_apply_folder_filter($snapshotTasks, $requestedFolderId, $telegramUserId);
+        $scopedSnapshot['tasks'] = docs_ai_task_search_apply_organization_filter(
+            $scopedSnapshot['tasks'],
+            $requestedOrganization
+        );
+        $storedSnapshotResult = docs_load_mini_app_user_tasks_snapshot($telegramUserId);
+        if (!empty($storedSnapshotResult['ok'])
+            && isset($storedSnapshotResult['snapshot'])
+            && is_array($storedSnapshotResult['snapshot'])
+        ) {
+            $scopedSnapshot['tasks'] = docs_merge_task_rag_ocr_snapshot(
+                $scopedSnapshot['tasks'],
+                $storedSnapshotResult['snapshot']
+            );
+            $scopedSnapshot['source'] = 'filtered_live_registry_with_stored_ocr';
+        }
         $scopedTaskCount = is_array($scopedSnapshot['tasks']) ? count($scopedSnapshot['tasks']) : 0;
         $localLimit = max(1, min(DOCS_AI_TASK_SEARCH_LOCAL_MAX_RESULTS, $scopedTaskCount > 0 ? $scopedTaskCount : $limit));
         $search = docs_run_local_task_search($scopedSnapshot, $query, $telegramUserId, $localLimit);
@@ -23336,6 +29409,12 @@ switch ($action) {
             ? $settings['block3']
             : [];
         $subordinates = docs_build_subordinate_directory($subordinatesRaw, $responsibles);
+        $participantDirectoryEntries = array_merge($responsibles, $block2, $subordinatesRaw);
+        $previousTaskParticipation = docs_collect_record_telegram_participation(
+            $records[$recordIndex],
+            $folder,
+            $participantDirectoryEntries
+        );
 
         docs_log_file_debug('Mini app update task settings loaded', [
             'clientRequestId' => $clientRequestId !== '' ? $clientRequestId : null,
@@ -24989,6 +31068,13 @@ switch ($action) {
             $records[$recordIndex]['directors'] = $originalDirectors;
         }
 
+        $updatedTaskParticipation = docs_collect_record_telegram_participation(
+            $records[$recordIndex],
+            $folder,
+            $participantDirectoryEntries
+        );
+        $participantMembershipChanged = docs_index_telegram_participation($previousTaskParticipation)
+            !== docs_index_telegram_participation($updatedTaskParticipation);
         $records[$recordIndex]['updatedAt'] = date('c');
 
         if ($registryHandle !== null) {
@@ -25101,11 +31187,39 @@ switch ($action) {
             });
         }
 
-        if (in_array($updateType, ['assign', 'assign_add', 'subordinates', 'subordinates_add'], true)
-            && !empty($assignedAssignees)) {
-            respond_success_with_background_task($responsePayload, static function () use ($assignedAssignees, $updatedRecord, $organizationCandidate): void {
-                docs_send_task_assignment_notifications($assignedAssignees, $updatedRecord, $organizationCandidate);
-            });
+        $isAssignmentUpdate = in_array($updateType, [
+            'assign',
+            'assign_add',
+            'assign_remove',
+            'subordinates',
+            'subordinates_add',
+            'subordinates_remove',
+        ], true);
+        if ($isAssignmentUpdate && (!empty($assignedAssignees) || $participantMembershipChanged)) {
+            respond_success_with_background_fallback(
+                $responsePayload,
+                static function () use (
+                    $assignedAssignees,
+                    $updatedRecord,
+                    $organizationCandidate,
+                    $participantMembershipChanged,
+                    $folder,
+                    $previousTaskParticipation,
+                    $updatedTaskParticipation
+                ): void {
+                    if (!empty($assignedAssignees)) {
+                        docs_send_task_assignment_notifications($assignedAssignees, $updatedRecord, $organizationCandidate);
+                    }
+                    if ($participantMembershipChanged) {
+                        docs_sync_task_snapshots_after_participation_change(
+                            $updatedRecord,
+                            $folder,
+                            $previousTaskParticipation,
+                            $updatedTaskParticipation
+                        );
+                    }
+                }
+            );
         }
 
         respond_success($responsePayload);
@@ -27048,6 +33162,16 @@ switch ($action) {
 
         $folder = sanitize_folder_name($organization);
         $records = load_registry($folder);
+        if (docs_remove_ocr_text_from_registry_records($records)) {
+            [$registryCleanupHandle, $lockedRegistryRecords] = docs_lock_registry($folder);
+            if ($registryCleanupHandle !== null) {
+                docs_remove_ocr_text_from_registry_records($lockedRegistryRecords);
+                if (docs_save_registry_locked($registryCleanupHandle, $lockedRegistryRecords)) {
+                    $records = $lockedRegistryRecords;
+                }
+                docs_unlock_registry($registryCleanupHandle);
+            }
+        }
         $settings = load_admin_settings($folder);
         $responsibles = isset($settings['responsibles']) && is_array($settings['responsibles'])
             ? $settings['responsibles']
@@ -27055,7 +33179,7 @@ switch ($action) {
         $block2 = isset($settings['block2']) && is_array($settings['block2'])
             ? $settings['block2']
             : [];
-        $preparedRecords = docs_prepare_records_for_response($records, $organization, $folder);
+        $preparedRecords = docs_prepare_records_for_response($records, $organization, $folder, false);
         $filter = $accessContext['forceAccess'] ? null : ($accessContext['filter'] ?? null);
         $filteredRecords = $filter !== null
             ? filter_documents_for_assignee($preparedRecords, $filter, $responsibles)
@@ -27331,6 +33455,7 @@ switch ($action) {
                             'uploadedAt' => date('c'),
                             'url' => build_public_path($folder, $storedName),
                             'aiBrief' => $aiBrief,
+                            'ocr' => docs_build_new_file_ocr_state(true),
                         ];
                         $record['files'][] = docs_prepare_incoming_file_storage_upload($createdFileStorageUploads, $fileEntry, $folder, $storedName, $target, [
                             'source' => 'incoming',
@@ -27388,6 +33513,7 @@ switch ($action) {
                             'uploadedAt' => date('c'),
                             'url' => build_public_path($folder, $storedNameSingle),
                             'aiBrief' => $aiBriefSingle,
+                            'ocr' => docs_build_new_file_ocr_state(true),
                         ];
                         $record['files'][] = docs_prepare_incoming_file_storage_upload($createdFileStorageUploads, $fileEntrySingle, $folder, $storedNameSingle, $targetSingle, [
                             'source' => 'incoming',
@@ -27499,15 +33625,22 @@ switch ($action) {
                 $folder,
                 $assignedForNotification,
                 $createdDocument,
-                $organization
+                $organization,
+                $documentId
             ): void {
                 if (!empty($createdFileStorageUploads)) {
                     docs_sync_uploaded_files_to_cold_storage($folder, $createdFileStorageUploads);
                 }
-                if (empty($assignedForNotification)) {
-                    return;
+                if (!empty($assignedForNotification)) {
+                    docs_send_task_assignment_notifications($assignedForNotification, $createdDocument, $organization);
                 }
-                docs_send_task_assignment_notifications($assignedForNotification, $createdDocument, $organization);
+                if (!empty($createdFileStorageUploads)) {
+                    docs_process_uploaded_files_ocr(
+                        $folder,
+                        $documentId,
+                        $createdFileStorageUploads
+                    );
+                }
             };
 
             respond_success_with_background_fallback($responsePayload, $backgroundTask);
@@ -28065,6 +34198,10 @@ switch ($action) {
         $block2 = isset($settings['block2']) && is_array($settings['block2'])
             ? $settings['block2']
             : [];
+        $block3 = isset($settings['block3']) && is_array($settings['block3'])
+            ? $settings['block3']
+            : [];
+        $participantDirectoryEntries = array_merge($responsibles, $block2, $block3);
         $userFilter = null;
         if ($isUserSession) {
             $userFilter = docs_build_session_user_filter_from_auth(is_array($sessionAuth) ? $sessionAuth : []);
@@ -28100,6 +34237,9 @@ switch ($action) {
         $assignmentNotifications = [];
         $assignmentNotificationIndex = [];
         $updatedRecordSanitized = null;
+        $previousTaskParticipation = [];
+        $updatedTaskParticipation = [];
+        $participantMembershipChanged = false;
         $documentFilesPendingDeletion = [];
         $documentFilesCreatedDuringUpdate = [];
         $updatedFileStorageUploads = [];
@@ -28217,6 +34357,12 @@ switch ($action) {
                     'requiresResponsible' => true,
                 ]);
             }
+
+            $previousTaskParticipation = docs_collect_record_telegram_participation(
+                $record,
+                $folder,
+                $participantDirectoryEntries
+            );
 
             $fields = $payload['fields'] ?? [];
             if (!is_array($fields)) {
@@ -29073,6 +35219,7 @@ switch ($action) {
                                     'uploadedAt' => date('c'),
                                     'url' => build_public_path($folder, $storedName),
                                     'aiBrief' => $aiBrief,
+                                    'ocr' => docs_build_new_file_ocr_state(true),
                                 ];
                                 $record['files'][] = docs_prepare_incoming_file_storage_upload($updatedFileStorageUploads, $fileEntry, $folder, $storedName, $target, [
                                     'source' => 'incoming',
@@ -29131,6 +35278,7 @@ switch ($action) {
                                     'uploadedAt' => date('c'),
                                     'url' => build_public_path($folder, $storedNameSingle),
                                     'aiBrief' => $aiBriefSingle,
+                                    'ocr' => docs_build_new_file_ocr_state(true),
                                 ];
                                 $record['files'][] = docs_prepare_incoming_file_storage_upload($updatedFileStorageUploads, $fileEntrySingle, $folder, $storedNameSingle, $targetSingle, [
                                     'source' => 'incoming',
@@ -29190,6 +35338,13 @@ switch ($action) {
                 }
             }
 
+            $updatedTaskParticipation = docs_collect_record_telegram_participation(
+                $record,
+                $folder,
+                $participantDirectoryEntries
+            );
+            $participantMembershipChanged = docs_index_telegram_participation($previousTaskParticipation)
+                !== docs_index_telegram_participation($updatedTaskParticipation);
             $record['updatedAt'] = date('c');
             $updated = true;
             $updatedRecordSanitized = $record;
@@ -29275,22 +35430,42 @@ switch ($action) {
         ];
 
         $shouldNotifyAssignments = !empty($assignmentNotifications) && $notificationRecord !== null;
-        if (!empty($updatedFileStorageUploads) || $shouldNotifyAssignments) {
+        $shouldSyncParticipantSnapshots = $participantMembershipChanged && is_array($updatedRecordSanitized);
+        if (!empty($updatedFileStorageUploads) || $shouldNotifyAssignments || $shouldSyncParticipantSnapshots) {
             $backgroundTask = function () use (
                 $updatedFileStorageUploads,
                 $folder,
                 $shouldNotifyAssignments,
                 $assignmentNotifications,
                 $notificationRecord,
-                $organization
+                $organization,
+                $documentId,
+                $shouldSyncParticipantSnapshots,
+                $updatedRecordSanitized,
+                $previousTaskParticipation,
+                $updatedTaskParticipation
             ): void {
                 if (!empty($updatedFileStorageUploads)) {
                     docs_sync_uploaded_files_to_cold_storage($folder, $updatedFileStorageUploads);
                 }
-                if (!$shouldNotifyAssignments || $notificationRecord === null) {
-                    return;
+                if ($shouldNotifyAssignments && $notificationRecord !== null) {
+                    docs_send_task_assignment_notifications($assignmentNotifications, $notificationRecord, $organization);
                 }
-                docs_send_task_assignment_notifications($assignmentNotifications, $notificationRecord, $organization);
+                if ($shouldSyncParticipantSnapshots && is_array($updatedRecordSanitized)) {
+                    docs_sync_task_snapshots_after_participation_change(
+                        $updatedRecordSanitized,
+                        $folder,
+                        $previousTaskParticipation,
+                        $updatedTaskParticipation
+                    );
+                }
+                if (!empty($updatedFileStorageUploads)) {
+                    docs_process_uploaded_files_ocr(
+                        $folder,
+                        $documentId,
+                        $updatedFileStorageUploads
+                    );
+                }
             };
 
             respond_success_with_background_fallback($responsePayload, $backgroundTask);
@@ -30609,6 +36784,519 @@ switch ($action) {
             'storage' => docs_collect_storage_size_summary($organization),
         ]);
         break;
+
+    case 'admin_ocr_backfill':
+        if ($method !== 'GET' && $method !== 'POST') {
+            respond_error('Некорректный метод запроса.', 405);
+        }
+
+        $payload = $method === 'POST' ? load_json_payload() : $_GET;
+        if (!is_array($payload) || empty($payload)) {
+            $payload = $_POST;
+        }
+        if (!is_array($payload)) {
+            $payload = [];
+        }
+        $compactResponse = !empty($payload['compact']);
+        $itemsOptions = $compactResponse ? docs_admin_state_items_options($payload) : [];
+        $auditItemsOptions = $compactResponse
+            ? ['offset' => 0, 'limit' => 0, 'search' => '', 'filter' => 'all']
+            : [];
+
+        $requestedOrganization = docs_normalize_organization_candidate((string) ($payload['organization'] ?? ''));
+        $accessContext = docs_resolve_access_context($requestedOrganization !== '' ? $requestedOrganization : null, true);
+        docs_require_admin_session($accessContext);
+        $organization = is_string($accessContext['active'] ?? null) ? $accessContext['active'] : '';
+        if ($organization === '') {
+            respond_error('Организация не выбрана.', 400);
+        }
+        $folder = sanitize_folder_name($organization);
+        $operation = $method === 'POST'
+            ? strtolower(sanitize_text_field((string) ($payload['operation'] ?? 'status'), 40))
+            : 'status';
+
+        $cronMutation = null;
+        $snapshotAuditResult = null;
+        if ($operation === 'cron_install') {
+            $cronMutation = docs_install_ocr_cron();
+        } elseif ($operation === 'cron_remove') {
+            $cronMutation = docs_remove_ocr_cron();
+        } elseif (in_array($operation, ['start', 'resume'], true)) {
+            $currentCronStatus = docs_get_ocr_cron_status();
+            if (empty($currentCronStatus['installed']) || empty($currentCronStatus['enabled'])) {
+                $cronMutation = docs_install_ocr_cron();
+            }
+        }
+
+        $state = docs_load_ocr_backfill_state($folder);
+        if (is_array($cronMutation) && empty($cronMutation['ok'])) {
+            respond_error(
+                'Фоновый OCR не запущен: '
+                    . (string) ($cronMutation['message'] ?? 'не удалось установить cron.'),
+                500,
+                [
+                    'organization' => $organization,
+                    'operation' => $operation,
+                    'backfill' => docs_summarize_ocr_backfill_state($state, $itemsOptions),
+                    'cron' => $cronMutation,
+                ]
+            );
+        }
+        if ($operation === 'start') {
+            if (in_array((string) ($state['status'] ?? ''), ['running', 'paused'], true)
+                && !empty($state['items'])) {
+                respond_error('Очередь уже создана. Продолжите или завершите текущую обработку.', 409, [
+                    'backfill' => docs_summarize_ocr_backfill_state($state, $itemsOptions),
+                ]);
+            }
+            $state = docs_create_ocr_backfill_state($folder, $organization);
+            $snapshotAuditResult = docs_start_telegram_snapshot_audit();
+        } elseif ($operation === 'pause') {
+            if ((string) ($state['status'] ?? '') === 'running') {
+                $state['status'] = 'paused';
+                $state['pausedAt'] = date('c');
+                docs_save_ocr_backfill_state($folder, $state);
+            }
+        } elseif ($operation === 'resume') {
+            if ((string) ($state['status'] ?? '') === 'paused') {
+                $state['status'] = 'running';
+                $state['pausedAt'] = '';
+                docs_save_ocr_backfill_state($folder, $state);
+            }
+        } elseif (!in_array($operation, ['status', 'kick', 'cron_install', 'cron_remove'], true)) {
+            respond_error('Неизвестная операция очереди OCR.', 400);
+        }
+
+        $stateSummary = docs_summarize_ocr_backfill_state($state, $itemsOptions);
+        $cronStatus = is_array($cronMutation) ? $cronMutation : docs_get_ocr_cron_status();
+        $responsePayload = [
+            'organization' => $organization,
+            'operation' => $operation,
+            'backfill' => $stateSummary,
+            'cron' => $cronStatus,
+            'snapshotAudit' => docs_summarize_telegram_snapshot_audit_state(
+                docs_load_telegram_snapshot_audit_state(),
+                $auditItemsOptions
+            ),
+        ];
+        if (is_array($cronMutation) && !empty($cronMutation['message'])) {
+            $responsePayload['message'] = (string) $cronMutation['message'];
+        }
+        $shouldKick = in_array($operation, ['start', 'resume', 'kick'], true)
+            && in_array((string) ($state['status'] ?? ''), ['running', 'paused'], true);
+        if ($shouldKick) {
+            $responsePayload['message'] = $operation === 'start'
+                ? 'Создана полная очередь нового OCR и запущена фоновая сверка всех Telegram JSON.'
+                : 'Обработка очереди продолжена.';
+            respond_success_with_background_fallback(
+                $responsePayload,
+                static function () use ($folder): void {
+                    docs_run_ocr_backfill_worker_step($folder);
+                }
+            );
+        }
+
+        respond_success($responsePayload);
+        break;
+
+    case 'admin_telegram_snapshot_audit':
+        if ($method !== 'GET' && $method !== 'POST') {
+            respond_error('Некорректный метод запроса.', 405);
+        }
+
+        $payload = $method === 'POST' ? load_json_payload() : $_GET;
+        if (!is_array($payload) || empty($payload)) {
+            $payload = $_POST;
+        }
+        if (!is_array($payload)) {
+            $payload = [];
+        }
+        $itemsOptions = !empty($payload['compact'])
+            ? docs_admin_state_items_options($payload)
+            : [];
+
+        $requestedOrganization = docs_normalize_organization_candidate((string) ($payload['organization'] ?? ''));
+        $accessContext = docs_resolve_access_context($requestedOrganization !== '' ? $requestedOrganization : null, true);
+        docs_require_admin_session($accessContext);
+        $operation = $method === 'POST'
+            ? strtolower(sanitize_text_field((string) ($payload['operation'] ?? 'status'), 40))
+            : 'status';
+
+        $result = null;
+        $cronMutation = null;
+        if (in_array($operation, ['start', 'retry_failed'], true)) {
+            $cronStatus = docs_get_ocr_cron_status();
+            if (empty($cronStatus['installed']) || empty($cronStatus['enabled'])) {
+                $cronMutation = docs_install_ocr_cron();
+                if (empty($cronMutation['ok'])) {
+                    respond_error(
+                        'Фоновая проверка Telegram JSON не запущена: '
+                            . (string) ($cronMutation['message'] ?? 'не удалось установить cron.'),
+                        500,
+                        [
+                            'snapshotAudit' => docs_summarize_telegram_snapshot_audit_state(
+                                docs_load_telegram_snapshot_audit_state()
+                            ),
+                            'cron' => $cronMutation,
+                        ]
+                    );
+                }
+            }
+        }
+
+        if ($operation === 'start') {
+            $result = docs_start_telegram_snapshot_audit();
+        } elseif ($operation === 'retry_failed') {
+            $result = docs_retry_failed_telegram_snapshot_audit_items();
+        } elseif ($operation !== 'status') {
+            respond_error('Неизвестная операция проверки Telegram JSON.', 400);
+        }
+
+        $stateSummary = docs_summarize_telegram_snapshot_audit_state(
+            docs_load_telegram_snapshot_audit_state(),
+            $itemsOptions
+        );
+        if (is_array($result) && empty($result['ok'])) {
+            respond_error(
+                (string) ($result['message'] ?? 'Не удалось управлять проверкой Telegram JSON.'),
+                409,
+                [
+                    'snapshotAudit' => $stateSummary,
+                    'cron' => is_array($cronMutation) ? $cronMutation : docs_get_ocr_cron_status(),
+                ]
+            );
+        }
+
+        respond_success([
+            'operation' => $operation,
+            'snapshotAudit' => $stateSummary,
+            'cron' => is_array($cronMutation) ? $cronMutation : docs_get_ocr_cron_status(),
+            'message' => is_array($result) ? (string) ($result['message'] ?? '') : '',
+        ]);
+        break;
+
+    case 'admin_ocr_s3_check':
+        if ($method !== 'POST') {
+            respond_error('Некорректный метод запроса.', 405);
+        }
+
+        $payload = load_json_payload();
+        if (!is_array($payload) || empty($payload)) {
+            $payload = $_POST;
+        }
+        if (!is_array($payload)) {
+            $payload = [];
+        }
+
+        $requestedOrganization = docs_normalize_organization_candidate((string) ($payload['organization'] ?? ''));
+        $accessContext = docs_resolve_access_context($requestedOrganization !== '' ? $requestedOrganization : null, true);
+        docs_require_admin_session($accessContext);
+        $organization = is_string($accessContext['active'] ?? null) ? $accessContext['active'] : '';
+        if ($organization === '') {
+            respond_error('Организация не выбрана.', 400);
+        }
+
+        $documentId = sanitize_text_field((string) ($payload['documentId'] ?? ''), 200);
+        $storedName = sanitize_text_field((string) ($payload['storedName'] ?? ''), 255);
+        if ($documentId === '' || $storedName === '') {
+            respond_error('Не указан OCR-файл.', 400);
+        }
+
+        $folder = sanitize_folder_name($organization);
+        $match = docs_find_ocr_backfill_record_file($folder, $documentId, $storedName);
+        $targetRecord = isset($match['record']) && is_array($match['record']) ? $match['record'] : [];
+        $targetFile = isset($match['file']) && is_array($match['file']) ? $match['file'] : [];
+        if (empty($targetRecord) || empty($targetFile)) {
+            respond_error('Файл задачи не найден.', 404);
+        }
+
+        $ocr = isset($targetFile['ocr']) && is_array($targetFile['ocr']) ? $targetFile['ocr'] : [];
+        if (strtolower(trim((string) ($ocr['status'] ?? ''))) !== 'completed') {
+            respond_error('Проверка S3 доступна после завершения OCR.', 409);
+        }
+
+        try {
+            $check = docs_check_task_file_ocr_in_participant_snapshots($targetRecord, $folder, $storedName);
+        } catch (Throwable $error) {
+            docs_write_response_log('Не удалось проверить OCR-текст в пользовательских JSON S3', [
+                'folder' => $folder,
+                'documentId' => $documentId,
+                'storedName' => $storedName,
+                'error' => $error->getMessage(),
+            ]);
+            respond_error(
+                'Не удалось проверить telegramId.json: '
+                    . sanitize_text_field($error->getMessage(), 300),
+                502
+            );
+        }
+        $allPresent = !empty($check['allPresent']);
+        $presentCount = max(0, (int) ($check['presentCount'] ?? 0));
+        $participantsTotal = max(0, (int) ($check['participantsTotal'] ?? 0));
+        $snapshotStatus = $allPresent ? 'synced' : ($presentCount > 0 ? 'partial' : 'error');
+        $snapshotError = '';
+        if (!$allPresent) {
+            $snapshotError = $participantsTotal === 0
+                ? 'У задачи не найдены участники с Telegram ID.'
+                : 'OCR-текст отсутствует в '
+                    . max(0, $participantsTotal - $presentCount)
+                    . ' из '
+                    . $participantsTotal
+                    . ' пользовательских JSON S3.';
+        }
+        docs_update_record_ocr_snapshot_status(
+            $folder,
+            $documentId,
+            $snapshotStatus,
+            $presentCount,
+            $snapshotError,
+            [$storedName]
+        );
+
+        $responsePayload = [
+            'documentId' => $documentId,
+            'storedName' => $storedName,
+            'allPresent' => $allPresent,
+            'snapshotStatus' => $snapshotStatus,
+            'participantsTotal' => $participantsTotal,
+            'presentCount' => $presentCount,
+            'missingCount' => max(0, (int) ($check['missingCount'] ?? 0)),
+            'participants' => isset($check['participants']) && is_array($check['participants'])
+                ? $check['participants']
+                : [],
+            'message' => $allPresent
+                ? 'OCR-текст найден во всех telegramId.json участников.'
+                : $snapshotError,
+        ];
+        if (!$allPresent && $participantsTotal > 0) {
+            $responsePayload['repairQueued'] = true;
+            $responsePayload['message'] = $snapshotError
+                . ' Автоматическое восстановление OCR-текста запущено.';
+            respond_success_with_background_fallback(
+                $responsePayload,
+                static function () use ($targetRecord, $folder): void {
+                    $currentParticipation = docs_collect_record_telegram_participation($targetRecord, $folder);
+                    docs_sync_task_snapshots_after_participation_change(
+                        $targetRecord,
+                        $folder,
+                        [],
+                        $currentParticipation
+                    );
+                }
+            );
+        }
+
+        respond_success($responsePayload);
+        break;
+
+    case 'admin_ocr_result':
+        if ($method !== 'POST') {
+            respond_error('Некорректный метод запроса.', 405);
+        }
+
+        $payload = load_json_payload();
+        if (!is_array($payload) || empty($payload)) {
+            $payload = $_POST;
+        }
+        if (!is_array($payload)) {
+            $payload = [];
+        }
+
+        $requestedOrganization = docs_normalize_organization_candidate((string) ($payload['organization'] ?? ''));
+        $accessContext = docs_resolve_access_context($requestedOrganization !== '' ? $requestedOrganization : null, true);
+        docs_require_admin_session($accessContext);
+        $organization = is_string($accessContext['active'] ?? null) ? $accessContext['active'] : '';
+        if ($organization === '') {
+            respond_error('Организация не выбрана.', 400);
+        }
+
+        $documentId = sanitize_text_field((string) ($payload['documentId'] ?? ''), 200);
+        $storedName = sanitize_text_field((string) ($payload['storedName'] ?? ''), 255);
+        if ($documentId === '' || $storedName === '') {
+            respond_error('Не указан OCR-файл.', 400);
+        }
+
+        $targetRecord = null;
+        $targetFile = null;
+        foreach (load_registry(sanitize_folder_name($organization)) as $record) {
+            if (!is_array($record) || (string) ($record['id'] ?? '') !== $documentId) {
+                continue;
+            }
+            foreach (isset($record['files']) && is_array($record['files']) ? $record['files'] : [] as $file) {
+                if (is_array($file) && (string) ($file['storedName'] ?? '') === $storedName) {
+                    $targetRecord = $record;
+                    $targetFile = $file;
+                    break 2;
+                }
+            }
+        }
+        if (!is_array($targetFile)) {
+            respond_error('Файл задачи не найден.', 404);
+        }
+
+        $ocr = isset($targetFile['ocr']) && is_array($targetFile['ocr']) ? $targetFile['ocr'] : [];
+        if (strtolower(trim((string) ($ocr['status'] ?? ''))) !== 'completed') {
+            respond_error('OCR этого файла ещё не завершён.', 409);
+        }
+
+        $jobId = sanitize_text_field((string) ($ocr['jobId'] ?? ''), 160);
+        $ocrResult = $jobId !== ''
+            ? docs_fetch_private_ocr_job_result($jobId)
+            : ['ok' => false, 'error' => 'job_id_missing'];
+        if (empty($ocrResult['ok']) && is_array($targetRecord)) {
+            $ocrResult = docs_find_task_file_ocr_text_in_participant_snapshots(
+                $targetRecord,
+                sanitize_folder_name($organization),
+                $storedName
+            );
+        }
+        if (empty($ocrResult['ok'])) {
+            respond_error(
+                sanitize_text_field((string) ($ocrResult['error'] ?? 'Не удалось получить OCR-текст.'), 500),
+                (int) ($ocrResult['httpStatus'] ?? 0) === 404 ? 404 : 502
+            );
+        }
+
+        respond_success([
+            'documentId' => $documentId,
+            'storedName' => $storedName,
+            'jobId' => $jobId,
+            'source' => (string) ($ocrResult['source'] ?? ($jobId !== '' ? 'ocr_job' : 's3_snapshot')),
+            'sourceLocation' => (string) ($ocrResult['sourceLocation'] ?? (
+                $jobId !== ''
+                    ? 'OCR jobs: ' . docs_resolve_private_ocr_webhook_url() . '/result?' . http_build_query(['job_id' => $jobId])
+                    : ''
+            )),
+            'text' => (string) ($ocrResult['text'] ?? ''),
+            'textLength' => mb_strlen((string) ($ocrResult['text'] ?? ''), 'UTF-8'),
+            'pagesCount' => (int) ($ocrResult['pagesCount'] ?? 0),
+            'textTruncated' => !empty($ocrResult['textTruncated']),
+        ]);
+        break;
+
+    case 'admin_ocr_retry':
+        if ($method !== 'POST') {
+            respond_error('Некорректный метод запроса.', 405);
+        }
+
+        $payload = load_json_payload();
+        if (!is_array($payload) || empty($payload)) {
+            $payload = $_POST;
+        }
+        if (!is_array($payload)) {
+            $payload = [];
+        }
+
+        $requestedOrganization = docs_normalize_organization_candidate((string) ($payload['organization'] ?? ''));
+        $accessContext = docs_resolve_access_context($requestedOrganization !== '' ? $requestedOrganization : null, true);
+        docs_require_admin_session($accessContext);
+        $organization = is_string($accessContext['active'] ?? null) ? $accessContext['active'] : '';
+        if ($organization === '') {
+            respond_error('Организация не выбрана.', 400);
+        }
+
+        $documentId = sanitize_text_field((string) ($payload['documentId'] ?? ''), 200);
+        $storedName = sanitize_text_field((string) ($payload['storedName'] ?? ''), 255);
+        if ($documentId === '' || $storedName === '') {
+            respond_error('Не указан файл для повторного OCR.', 400);
+        }
+
+        $folder = sanitize_folder_name($organization);
+        $targetFile = null;
+        foreach (load_registry($folder) as $record) {
+            if (!is_array($record) || (string) ($record['id'] ?? '') !== $documentId) {
+                continue;
+            }
+            foreach (isset($record['files']) && is_array($record['files']) ? $record['files'] : [] as $file) {
+                if (!is_array($file) || (string) ($file['storedName'] ?? '') !== $storedName) {
+                    continue;
+                }
+                $targetFile = $file;
+                break 2;
+            }
+        }
+        if (!is_array($targetFile)) {
+            respond_error('Файл задачи не найден.', 404);
+        }
+
+        $ocr = isset($targetFile['ocr']) && is_array($targetFile['ocr']) ? $targetFile['ocr'] : [];
+        $ocrStatus = strtolower(trim((string) ($ocr['status'] ?? '')));
+        $snapshotStatus = strtolower(trim((string) ($ocr['snapshotStatus'] ?? '')));
+        $canRetry = in_array($ocrStatus, ['failed', 'error'], true)
+            || in_array($snapshotStatus, ['error', 'partial'], true);
+        if (!$canRetry) {
+            respond_error('Повторный запуск разрешён только для файлов с ошибкой OCR или S3.', 409);
+        }
+
+        $retryRequiresNewOcr = in_array($ocrStatus, ['failed', 'error'], true);
+        $resolvedPath = '';
+        if ($retryRequiresNewOcr) {
+            $organizationDirectory = ensure_organization_directory($folder);
+            $pathCandidates = [];
+            foreach (docs_file_public_relative_candidates($folder, $targetFile, $storedName) as $relativePath) {
+                $normalizedRelativePath = docs_normalize_cold_storage_relative_path($relativePath);
+                if ($normalizedRelativePath !== '') {
+                    $pathCandidates[] = $organizationDirectory . '/' . $normalizedRelativePath;
+                }
+            }
+            $resolvedPath = docs_resolve_file_path_with_cold_storage(
+                $folder,
+                $targetFile,
+                $pathCandidates,
+                microtime(true) + 90
+            );
+            if ($resolvedPath === '') {
+                respond_error('Файл недоступен локально и в S3.', 404);
+            }
+        }
+
+        $retryUploads = [[
+            'file' => $targetFile,
+            'relativePath' => $storedName,
+            'localPath' => $resolvedPath,
+            'context' => [
+                'source' => 'admin_ocr_retry',
+                'record' => $documentId,
+            ],
+        ]];
+        if ($retryRequiresNewOcr) {
+            docs_mark_uploaded_files_ocr_processing($folder, $documentId, $retryUploads);
+        }
+
+        $processingFile = null;
+        foreach (load_registry($folder) as $record) {
+            if (!is_array($record) || (string) ($record['id'] ?? '') !== $documentId) {
+                continue;
+            }
+            foreach (isset($record['files']) && is_array($record['files']) ? $record['files'] : [] as $file) {
+                if (is_array($file) && (string) ($file['storedName'] ?? '') === $storedName) {
+                    $processingFile = $file;
+                    break 2;
+                }
+            }
+        }
+        if (!is_array($processingFile)) {
+            respond_error('Не удалось обновить статус файла перед OCR.', 500);
+        }
+
+        $responsePayload = [
+            'message' => $retryRequiresNewOcr
+                ? 'Повторный OCR добавлен в последовательную очередь.'
+                : 'Повторная доставка готового OCR-текста в S3 добавлена в очередь.',
+            'organization' => $organization,
+            'documentId' => $documentId,
+            'queued' => true,
+            'file' => $processingFile,
+        ];
+        $backgroundTask = static function () use (
+            $folder,
+            $documentId,
+            $retryUploads,
+            $retryRequiresNewOcr
+        ): void {
+            docs_process_uploaded_files_ocr($folder, $documentId, $retryUploads, $retryRequiresNewOcr);
+        };
+        respond_success_with_background_fallback($responsePayload, $backgroundTask);
 
     case 'storage_archive_test_summary':
         if ($method !== 'GET' && $method !== 'POST') {

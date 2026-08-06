@@ -10,3 +10,5 @@
 /lg/backfill-cursor*.json
 /lg/docs_ocr_*.lock
 /documents/.ocr-queue/
+/documents/*/ocr_backfill_state.json
+/documents/*/.ocr_backfill_worker.lock
