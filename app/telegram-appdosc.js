@@ -901,6 +901,7 @@ const RESPONSIBLE_PANEL_TITLE = 'Назначенные задачи по отв
 const SUBORDINATE_PANEL_TITLE = 'Назначенные задачи на подчинённых';
 const WORK_INSTRUCTION_LABEL = 'Подготовить ответ';
 const WORK_INSTRUCTION_KEYS = new Set(['подготовить ответ']);
+const ASSIGNMENT_INSTRUCTION_EMPTY_LABEL = 'Без статуса';
 const INSTRUCTION_OPTIONS = ['В работу', WORK_INSTRUCTION_LABEL, 'Для информации', 'Для участия', 'Пояснить', 'Предоставить объяснение', 'Предоставить информацию'];
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'heic', 'heif', 'avif', 'tif', 'tiff', 'ico', 'jfif', 'jxl']);
 const VIDEO_EXTENSIONS = new Set(['mp4', 'mov', 'webm', 'mkv', 'avi', 'm4v', '3gp', 'ogv', 'mpeg', 'mpg']);
@@ -9521,8 +9522,33 @@ function bindAssigneePickerKeyboardViewport(sheet, searchInput) {
     return () => {};
   }
 
+  const html = document.documentElement;
+  const body = document.body;
   const visualViewport = window.visualViewport || null;
+  const scrollX = typeof window.pageXOffset === 'number' ? window.pageXOffset : 0;
+  const scrollY = typeof window.pageYOffset === 'number' ? window.pageYOffset : 0;
+  const previousHtmlOverflow = html ? html.style.overflow : '';
+  const previousHtmlHeight = html ? html.style.height : '';
+  const previousBodyPosition = body ? body.style.position : '';
+  const previousBodyTop = body ? body.style.top : '';
+  const previousBodyLeft = body ? body.style.left : '';
+  const previousBodyRight = body ? body.style.right : '';
+  const previousBodyWidth = body ? body.style.width : '';
+  const previousBodyOverflow = body ? body.style.overflow : '';
   let rafId = 0;
+
+  if (html) {
+    html.style.overflow = 'hidden';
+    html.style.height = '100%';
+  }
+  if (body) {
+    body.style.position = 'fixed';
+    body.style.top = `-${scrollY}px`;
+    body.style.left = `-${scrollX}px`;
+    body.style.right = '0';
+    body.style.width = '100%';
+    body.style.overflow = 'hidden';
+  }
 
   const resetLayout = () => {
     if (rafId) {
@@ -9598,6 +9624,21 @@ function bindAssigneePickerKeyboardViewport(sheet, searchInput) {
       searchInput.removeEventListener('focus', focusSearch);
     }
     resetLayout();
+    if (html) {
+      html.style.overflow = previousHtmlOverflow;
+      html.style.height = previousHtmlHeight;
+    }
+    if (body) {
+      body.style.position = previousBodyPosition;
+      body.style.top = previousBodyTop;
+      body.style.left = previousBodyLeft;
+      body.style.right = previousBodyRight;
+      body.style.width = previousBodyWidth;
+      body.style.overflow = previousBodyOverflow;
+    }
+    if (typeof window.scrollTo === 'function') {
+      window.scrollTo(scrollX, scrollY);
+    }
   };
 }
 
@@ -21298,7 +21339,7 @@ function getCurrentResponsibleAssignmentCompletionSummary(task) {
       return;
     }
     const role = normalizeAssignmentRole(entry.role || 'responsible') || 'responsible';
-    if (role === 'subordinate' && !assignmentInstructionRequiresWork(entry)) {
+    if (!assignmentInstructionRequiresWork(entry)) {
       return;
     }
     const keys = collectStatusHistoryKeysForAssignment(entry);
@@ -27365,18 +27406,19 @@ function getAssignmentTemplateCardController(card) {
         });
         return result;
       },
-      apply(template) {
-        const result = { added: 0, skipped: 0, missing: 0 };
-        ['responsible', 'subordinate'].forEach((roleName) => {
+      async apply(template) {
+        const result = { added: 0, skipped: 0, missing: 0, failed: false };
+        for (const roleName of ['responsible', 'subordinate']) {
           const roleController = this.roles[roleName];
           if (!roleController || typeof roleController.applyTemplate !== 'function') {
-            return;
+            continue;
           }
-          const roleResult = roleController.applyTemplate(template) || {};
+          const roleResult = await roleController.applyTemplate(template) || {};
           result.added += Number(roleResult.added || 0);
           result.skipped += Number(roleResult.skipped || 0);
           result.missing += Number(roleResult.missing || 0);
-        });
+          result.failed = result.failed || roleResult.saved === false;
+        }
         return result;
       },
     };
@@ -28281,16 +28323,19 @@ function setupAssignmentTemplateControls({
     }
   };
 
-  const applyTemplateByIndex = (index) => {
+  const applyTemplateByIndex = async (index) => {
     const template = templates[index];
     if (!template) {
       return;
     }
 
-    const result = controller ? controller.apply(template) : (applyTemplate(template) || {});
+    const result = controller
+      ? await controller.apply(template)
+      : (await applyTemplate(template) || {});
     const added = Number(result.added || 0);
     const skipped = Number(result.skipped || 0);
     const missing = Number(result.missing || 0);
+    const failed = result.failed === true || result.saved === false;
     const details = [];
     if (skipped) {
       details.push(`пропущено ${skipped}`);
@@ -28298,7 +28343,10 @@ function setupAssignmentTemplateControls({
     if (missing) {
       details.push(`без Telegram ID ${missing}`);
     }
-    if (typeof setStatus === 'function') {
+    if (added) {
+      refreshTasksInBackground();
+    }
+    if (!failed && typeof setStatus === 'function') {
       if (added) {
         setStatus('success', details.length
           ? `Из шаблона добавлено: ${added}, ${details.join(', ')}.`
@@ -28309,13 +28357,20 @@ function setupAssignmentTemplateControls({
     }
   };
 
-  const confirmTemplateApply = () => {
+  const confirmTemplateApply = async () => {
     if (pendingTemplateApplyIndex < 0 || !templates[pendingTemplateApplyIndex]) {
       closeManager();
       return;
     }
-    applyTemplateByIndex(pendingTemplateApplyIndex);
+    const templateIndex = pendingTemplateApplyIndex;
     closeManager();
+    try {
+      await applyTemplateByIndex(templateIndex);
+    } catch (error) {
+      if (typeof setStatus === 'function') {
+        setStatus('error', error instanceof Error ? error.message : 'Не удалось применить шаблон.');
+      }
+    }
   };
 
   const editTemplateByIndex = (index) => {
@@ -29461,7 +29516,7 @@ function setupAssignmentControls(card, task) {
 
     const placeholder = document.createElement('option');
     placeholder.value = '';
-    placeholder.textContent = 'Не выбрано';
+    placeholder.textContent = ASSIGNMENT_INSTRUCTION_EMPTY_LABEL;
     selectElement.appendChild(placeholder);
 
     INSTRUCTION_OPTIONS.forEach((option) => {
@@ -29822,18 +29877,19 @@ function setupAssignmentControls(card, task) {
     return row;
   };
 
-  const handleBulkAssign = async () => {
+  const handleBulkAssign = async (options = {}) => {
+    const shouldRefresh = !(options && options.skipRefresh === true);
     if (!canUseResponsibleAuthorScope) {
-      return;
+      return false;
     }
 
     if (bulkButton.dataset.loading === 'true') {
-      return;
+      return false;
     }
 
     if (!task.id) {
       setStatus('error', 'Не удалось определить задачу.');
-      return;
+      return false;
     }
 
     const payloadAssignments = [];
@@ -29904,7 +29960,7 @@ function setupAssignmentControls(card, task) {
           controls.instructionSelect,
         );
       });
-      return;
+      return false;
     }
 
     setActionButtonLoading(bulkButton, true);
@@ -29995,7 +30051,10 @@ function setupAssignmentControls(card, task) {
       setStatus('success', updatesOnly
         ? 'Данные ответственного обновлены.'
         : (payloadAssignments.length > 1 ? 'Ответственные назначены.' : 'Ответственный назначен.'));
-      refreshTasksInBackground();
+      if (shouldRefresh) {
+        refreshTasksInBackground();
+      }
+      return true;
     } catch (error) {
       restoreTaskAssignmentSnapshot(task, rollbackSnapshot);
       refreshDirectorStateAfterLocalTaskMutation();
@@ -30016,6 +30075,7 @@ function setupAssignmentControls(card, task) {
       });
       setStatus('error', message);
       setBulkAssignFeedback(bulkButton, 'Назначение неуспешно', updateBulkState, 'error');
+      return false;
     } finally {
       setActionButtonLoading(bulkButton, false);
       updateBulkState();
@@ -30273,7 +30333,7 @@ function setupAssignmentControls(card, task) {
     closeSheet();
   };
 
-  const applyResponsibleTemplate = (template) => {
+  const applyResponsibleTemplate = async (template) => {
     if (!canManageResponsibles || !template) {
       return { added: 0, skipped: 0, missing: 0 };
     }
@@ -30340,7 +30400,7 @@ function setupAssignmentControls(card, task) {
         assigned: false,
         comment: normalizedEntry.assignmentComment || resolveCommentForEntry(selectedValue, normalizedValue, referenceEntry),
         dueDate: normalizedEntry.assignmentDueDate || resolveDueForEntry(selectedValue, normalizedValue, referenceEntry),
-        instruction: normalizedEntry.assignmentInstruction || resolveInstructionForEntry(selectedValue, normalizedValue, referenceEntry),
+        instruction: '',
         referenceEntry,
       });
       if (row) {
@@ -30356,7 +30416,9 @@ function setupAssignmentControls(card, task) {
     }
     populateComboOptions();
     updateBulkState();
-    return { added, skipped, missing };
+    closeSheet();
+    const saved = added ? await handleBulkAssign({ skipRefresh: true }) : true;
+    return { added, skipped, missing, saved };
   };
 
   const previewResponsibleTemplate = (template) => {
@@ -30904,7 +30966,7 @@ function setupSubordinateControls(card, task) {
 
     const placeholder = document.createElement('option');
     placeholder.value = '';
-    placeholder.textContent = 'Не выбрано';
+    placeholder.textContent = ASSIGNMENT_INSTRUCTION_EMPTY_LABEL;
     selectElement.appendChild(placeholder);
 
     INSTRUCTION_OPTIONS.forEach((option) => {
@@ -31268,18 +31330,19 @@ function setupSubordinateControls(card, task) {
     return row;
   };
 
-  const handleBulkAssign = async () => {
+  const handleBulkAssign = async (options = {}) => {
+    const shouldRefresh = !(options && options.skipRefresh === true);
     if (!canUseSubordinateAuthorScope) {
-      return;
+      return false;
     }
 
     if (bulkButton.dataset.loading === 'true') {
-      return;
+      return false;
     }
 
     if (!task.id) {
       setStatus('error', 'Не удалось определить задачу.');
-      return;
+      return false;
     }
 
     const payloadAssignments = [];
@@ -31328,7 +31391,7 @@ function setupSubordinateControls(card, task) {
         const controls = rowControls.get(row) || {};
         setAssignmentRowBusy(row, false, controls.assignButton, controls.removeButton, controls.commentInput, controls.deadlineInput, controls.instructionSelect);
       });
-      return;
+      return false;
     }
 
     setActionButtonLoading(bulkButton, true);
@@ -31401,7 +31464,10 @@ function setupSubordinateControls(card, task) {
       setStatus('success', updatesOnly
         ? 'Данные подчинённого обновлены.'
         : (payloadAssignments.length > 1 ? 'Подчинённые назначены.' : 'Подчинённый назначен.'));
-      refreshTasksInBackground();
+      if (shouldRefresh) {
+        refreshTasksInBackground();
+      }
+      return true;
     } catch (error) {
       restoreTaskAssignmentSnapshot(task, rollbackSnapshot);
       refreshDirectorStateAfterLocalTaskMutation();
@@ -31423,6 +31489,7 @@ function setupSubordinateControls(card, task) {
       });
       setStatus('error', message);
       setBulkAssignFeedback(bulkButton, 'Назначение неуспешно', updateBulkState, 'error');
+      return false;
     } finally {
       setActionButtonLoading(bulkButton, false);
       updateBulkState();
@@ -31638,7 +31705,7 @@ function setupSubordinateControls(card, task) {
     closeSheet();
   };
 
-  const applySubordinateTemplate = (template) => {
+  const applySubordinateTemplate = async (template) => {
     if (!canManageSubordinates || !template) {
       return { added: 0, skipped: 0, missing: 0 };
     }
@@ -31705,7 +31772,7 @@ function setupSubordinateControls(card, task) {
         assigned: Boolean(currentIdentifiers.has(normalizedValue)),
         comment: normalizedEntry.assignmentComment || resolveCommentForEntry(selectedValue, normalizedValue, matchedEntry),
         dueDate: normalizedEntry.assignmentDueDate || resolveDueForEntry(selectedValue, normalizedValue, matchedEntry),
-        instruction: normalizedEntry.assignmentInstruction || resolveInstructionForEntry(selectedValue, normalizedValue, matchedEntry),
+        instruction: '',
         referenceEntry: referenceEntry || matchedEntry || null,
       });
       if (row) {
@@ -31722,7 +31789,9 @@ function setupSubordinateControls(card, task) {
     }
     populateComboOptions();
     updateBulkState();
-    return { added, skipped, missing };
+    closeSheet();
+    const saved = added ? await handleBulkAssign({ skipRefresh: true }) : true;
+    return { added, skipped, missing, saved };
   };
 
   const previewSubordinateTemplate = (template) => {

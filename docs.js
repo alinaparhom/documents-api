@@ -693,7 +693,6 @@
     s3RefreshButton: null,
     s3TestButton: null,
     s3CloseButton: null,
-    ocrButton: null,
     templateButton: null,
     templateModal: null,
     templateStatus: null,
