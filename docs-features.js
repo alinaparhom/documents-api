@@ -1,10 +1,6 @@
 export function createDocumentsFeatures(core) {
   var ADMIN_S3_READ_MAX_BYTES = core.ADMIN_S3_READ_MAX_BYTES;
   var DATE_TIME_FORMATTER = core.DATE_TIME_FORMATTER;
-  var OCR_BROWSER_MAX_PDF_PAGES = core.OCR_BROWSER_MAX_PDF_PAGES;
-  var OCR_BROWSER_PDF_SCALE = core.OCR_BROWSER_PDF_SCALE;
-  var OCR_BROWSER_TESSERACT_CDN_URL = core.OCR_BROWSER_TESSERACT_CDN_URL;
-  var OCR_CLIENT_TIMEOUT_MS = core.OCR_CLIENT_TIMEOUT_MS;
   var adminElements = core.adminElements;
   var appendTelegramUserIdToFormData = core.appendTelegramUserIdToFormData;
   var applyAdminSettings = core.applyAdminSettings;
@@ -27,7 +23,12 @@ export function createDocumentsFeatures(core) {
   var uploadFormDataWithProgress = core.uploadFormDataWithProgress;
   var adminRenderTokens = {};
   var lastFocusedElement = null;
-
+  var cronManagementView = {
+    loading: false,
+    removing: false,
+    data: null,
+    error: ''
+  };
 function ensureResponsesStyle() {
     if (document.getElementById('documents-responses-style')) {
       return;
@@ -559,14 +560,53 @@ function ensureResponsesStyle() {
     return normalizeAiBriefText(text);
   }
 
-  function getDirectAiAnalyzeUrl(apiUrl) {
-    var endpoint = apiUrl || (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
-    return String(endpoint).replace(/[?&]action=ai_response_analyze$/i, '') + '?action=ai_response_analyze';
-  }
+  async function requestPrivateAiBriefForSource(source) {
+    var sourceLabel = source && source.label ? String(source.label) : 'document';
+    var preparedFile = source && source.fileObject instanceof File ? source.fileObject : null;
+    if (!preparedFile && source && source.url) {
+      var fileResponse = await fetch(String(source.url), {
+        credentials: 'same-origin',
+        cache: 'no-store'
+      });
+      if (!fileResponse.ok) {
+        throw new Error('Не удалось загрузить файл для анализа (' + fileResponse.status + ').');
+      }
+      var fileBlob = await fileResponse.blob();
+      var fileName = ensureUploadFileName(sourceLabel, fileBlob.type, 'document');
+      preparedFile = new File([fileBlob], fileName, { type: fileBlob.type || 'application/octet-stream' });
+    }
+    if (!(preparedFile instanceof File)) {
+      throw new Error('Не удалось подготовить файл для «Кратко ИИ».');
+    }
 
-  function getDirectAiSummaryUrl(apiUrl) {
-    var endpoint = apiUrl || (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
-    return String(endpoint).replace(/[?&]action=generate_summary$/i, '') + '?action=generate_summary';
+    var formData = new FormData();
+    formData.append('action', 'ai_brief_generate');
+    formData.append('organization', state.organization || '');
+    formData.append('file', preparedFile, ensureUploadFileName(preparedFile.name, preparedFile.type, sourceLabel));
+    appendTelegramUserIdToFormData(formData);
+
+    var response = await fetch(buildApiUrl('ai_brief_generate'), {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: formData
+    });
+    var payload = await response.json().catch(function() { return null; });
+    if (!response.ok || !payload || payload.success !== true) {
+      throw new Error(payload && (payload.error || payload.message)
+        ? String(payload.error || payload.message)
+        : 'Не удалось получить «Кратко ИИ» (' + response.status + ').');
+    }
+    var summary = normalizeAiBriefText(payload.summary || '');
+    if (!summary) {
+      throw new Error('ИИ вернул пустой краткий вывод.');
+    }
+
+    return {
+      summary: summary,
+      model: normalizeTextInputValue(payload.model || ''),
+      provider: normalizeTextInputValue(payload.provider || ''),
+      ocrEngine: 'private'
+    };
   }
 
   function inferUploadExtensionFromType(type) {
@@ -592,670 +632,10 @@ function ensureResponsesStyle() {
     return ext ? (base + '.' + ext) : base;
   }
 
-  var browserTesseractLoader = null;
-
-  function ensureBrowserTesseractLoaded() {
-    if (typeof window !== 'undefined' && window.Tesseract && typeof window.Tesseract.createWorker === 'function') {
-      return Promise.resolve(window.Tesseract);
-    }
-    if (browserTesseractLoader) {
-      return browserTesseractLoader;
-    }
-
-    browserTesseractLoader = new Promise(function(resolve, reject) {
-      var scriptDirectory = getDocsScriptDirectory();
-      var candidates = [];
-      var explicitUrl = window.DOCUMENTS_TESSERACT_URL ? String(window.DOCUMENTS_TESSERACT_URL).trim() : '';
-      if (explicitUrl) {
-        candidates.push(explicitUrl);
-      }
-      if (scriptDirectory) {
-        candidates.push(scriptDirectory + 'tesseract/tesseract.min.js');
-      }
-      candidates.push(OCR_BROWSER_TESSERACT_CDN_URL);
-
-      var candidateIndex = 0;
-      function loadNextCandidate() {
-        if (window.Tesseract && typeof window.Tesseract.createWorker === 'function') {
-          resolve(window.Tesseract);
-          return;
-        }
-        if (candidateIndex >= candidates.length) {
-          browserTesseractLoader = null;
-          reject(new Error('Не удалось загрузить Tesseract.js для браузерного OCR.'));
-          return;
-        }
-
-        var script = document.createElement('script');
-        script.src = candidates[candidateIndex];
-        script.async = true;
-        candidateIndex += 1;
-        script.onload = function() {
-          script.onload = null;
-          script.onerror = null;
-          if (window.Tesseract && typeof window.Tesseract.createWorker === 'function') {
-            resolve(window.Tesseract);
-            return;
-          }
-          loadNextCandidate();
-        };
-        script.onerror = function() {
-          script.onload = null;
-          script.onerror = null;
-          loadNextCandidate();
-        };
-        document.head.appendChild(script);
-      }
-
-      loadNextCandidate();
-    });
-
-    return browserTesseractLoader;
-  }
-
-  function createOcrAbortError() {
-    var error = new Error('OCR-запрос отменён.');
-    error.name = 'AbortError';
-    return error;
-  }
-
-  function normalizeBrowserOcrText(text) {
-    return String(text || '')
-      .replace(/\r\n?/g, '\n')
-      .replace(/[ \t]+\n/g, '\n')
-      .replace(/\n{4,}/g, '\n\n\n')
-      .trim();
-  }
-
-  function shouldUseBrowserOcrFallback(error) {
-    if (typeof window === 'undefined' || typeof window.WebAssembly !== 'object' || typeof window.Worker !== 'function') {
-      return false;
-    }
-    if (error && error.name === 'AbortError') {
-      return false;
-    }
-    var status = Number(error && error.ocrServerStatus) || 0;
-    return status >= 500 || (status === 0 && error instanceof TypeError);
-  }
-
-  async function recognizeFileWithBrowserTesseract(file, source) {
-    if (!file) {
-      throw new Error('Файл для браузерного OCR не подготовлен.');
-    }
-
-    var signal = source && source.abortController ? source.abortController.signal : null;
-    var worker = null;
-    var loadingTask = null;
-    var aborted = Boolean(signal && signal.aborted);
-    var abortHandler = function() {
-      aborted = true;
-      if (worker && typeof worker.terminate === 'function') {
-        var activeWorker = worker;
-        worker = null;
-        Promise.resolve(activeWorker.terminate()).catch(function() {});
-      }
-    };
-    if (signal) {
-      signal.addEventListener('abort', abortHandler, { once: true });
-    }
-
-    try {
-      if (aborted) {
-        throw createOcrAbortError();
-      }
-      var tesseract = await ensureBrowserTesseractLoaded();
-      if (aborted) {
-        throw createOcrAbortError();
-      }
-      worker = await tesseract.createWorker(['rus', 'eng'], 1, {
-        logger: function(message) {
-          if (source && typeof source.onBrowserProgress === 'function') {
-            source.onBrowserProgress(message || {});
-          }
-        }
-      });
-      if (aborted) {
-        throw createOcrAbortError();
-      }
-
-      var fileName = String((file && file.name) || (source && source.label) || 'ocr-file');
-      var fileType = String((file && file.type) || '').toLowerCase();
-      var isPdf = fileType === 'application/pdf' || /\.pdf$/i.test(fileName);
-      var textParts = [];
-
-      if (!isPdf) {
-        var imageResult = await worker.recognize(file);
-        var imageText = normalizeBrowserOcrText(imageResult && imageResult.data ? imageResult.data.text : '');
-        if (imageText) {
-          textParts.push(imageText);
-        }
-      } else {
-        var pdfjsLib = await ensureBriefPdfJsLoaded();
-        applyBriefPdfJsWorker(pdfjsLib);
-        var bytes = await file.arrayBuffer();
-        loadingTask = pdfjsLib.getDocument({ data: bytes });
-        var pdf = await loadingTask.promise;
-        var pagesToProcess = Math.min(pdf.numPages, OCR_BROWSER_MAX_PDF_PAGES);
-        for (var pageNumber = 1; pageNumber <= pagesToProcess; pageNumber += 1) {
-          if (aborted) {
-            throw createOcrAbortError();
-          }
-          var page = await pdf.getPage(pageNumber);
-          var viewport = page.getViewport({ scale: OCR_BROWSER_PDF_SCALE });
-          var canvas = document.createElement('canvas');
-          canvas.width = Math.max(1, Math.floor(viewport.width));
-          canvas.height = Math.max(1, Math.floor(viewport.height));
-          var context = canvas.getContext('2d', { alpha: false });
-          if (!context) {
-            throw new Error('Браузер не смог подготовить страницу PDF для OCR.');
-          }
-          await page.render({ canvasContext: context, viewport: viewport }).promise;
-          var pageResult = await worker.recognize(canvas);
-          var pageText = normalizeBrowserOcrText(pageResult && pageResult.data ? pageResult.data.text : '');
-          if (pageText) {
-            textParts.push(pageText);
-          }
-          canvas.width = 1;
-          canvas.height = 1;
-          if (typeof page.cleanup === 'function') {
-            page.cleanup();
-          }
-        }
-        if (pdf.numPages > pagesToProcess && source && typeof source.onPartial === 'function') {
-          source.onPartial('Браузерный OCR обработал первые ' + pagesToProcess + ' из ' + pdf.numPages + ' страниц.');
-        }
-      }
-
-      var resultText = normalizeBrowserOcrText(textParts.join('\n\n'));
-      if (!resultText) {
-        throw new Error('Браузерный OCR не нашёл текст.');
-      }
-      return resultText;
-    } finally {
-      if (signal) {
-        signal.removeEventListener('abort', abortHandler);
-      }
-      if (loadingTask && typeof loadingTask.destroy === 'function') {
-        Promise.resolve(loadingTask.destroy()).catch(function() {});
-      }
-      if (worker && typeof worker.terminate === 'function') {
-        await Promise.resolve(worker.terminate()).catch(function() {});
-      }
-    }
-  }
-
-  function requestOcrTextForSource(source, apiUrl) {
-    var endpoint = apiUrl || (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
-    var formData = new FormData();
-    formData.append('action', 'ocr_extract');
-    formData.append('language', 'rus');
-    var abortController = source && source.abortController
-      ? source.abortController
-      : (typeof AbortController === 'function' ? new AbortController() : null);
-    var requestTimedOut = false;
-    var timeoutId = abortController ? window.setTimeout(function() {
-      requestTimedOut = true;
-      abortController.abort();
-    }, OCR_CLIENT_TIMEOUT_MS) : null;
-
-    function clearOcrTimeout() {
-      if (timeoutId !== null) {
-        window.clearTimeout(timeoutId);
-        timeoutId = null;
-      }
-    }
-
-    function buildFetchOptions(options) {
-      var nextOptions = options || {};
-      if (abortController) {
-        nextOptions.signal = abortController.signal;
-      }
-      return nextOptions;
-    }
-
-    var preparedFile = null;
-    var prepareSource = Promise.resolve();
-    if (source && source.fileObject) {
-      var localName = ensureUploadFileName(source.fileObject.name, source.fileObject.type, source && source.label ? source.label : 'ocr-file');
-      preparedFile = source.fileObject;
-      formData.append('file', preparedFile, localName);
-    } else if (source && source.url) {
-      prepareSource = fetch(String(source.url), buildFetchOptions({
-        credentials: 'same-origin',
-        cache: 'no-store'
-      }))
-        .then(function(fileResponse) {
-          if (!fileResponse.ok) {
-            throw new Error('Не удалось загрузить файл для OCR (' + fileResponse.status + ')');
-          }
-          return fileResponse.blob();
-        })
-        .then(function(fileBlob) {
-          var fileName = ensureUploadFileName(
-            source && source.label ? String(source.label) : '',
-            fileBlob.type,
-            'ocr-file'
-          );
-          preparedFile = new File([fileBlob], fileName, { type: fileBlob.type || 'application/octet-stream' });
-          formData.append('file', preparedFile, fileName);
-        });
-    } else {
-      clearOcrTimeout();
-      return Promise.reject(new Error('Источник для OCR не найден.'));
-    }
-
-    return prepareSource.then(function() {
-      return fetch(endpoint, buildFetchOptions({
-        method: 'POST',
-        credentials: 'same-origin',
-        cache: 'no-store',
-        body: formData
-      }));
-    }).then(function(response) {
-      return response.json().catch(function() { return null; }).then(function(payload) {
-        if (!response.ok || !payload || payload.ok !== true) {
-          var errorMessage = payload && payload.error ? String(payload.error) : ('Ошибка OCR (' + response.status + ')');
-          if (payload && payload.requestId) {
-            errorMessage += ' Код запроса: ' + String(payload.requestId) + '.';
-          }
-          var serverError = new Error(errorMessage);
-          serverError.ocrServerStatus = response.status;
-          throw serverError;
-        }
-        var extractedText = payload && payload.text ? String(payload.text).trim() : '';
-        if (!extractedText) {
-          throw new Error('OCR не вернул текст.');
-        }
-        if (payload.partial === true && source && typeof source.onPartial === 'function') {
-          source.onPartial(payload.warning ? String(payload.warning) : 'Распознаны не все страницы документа.');
-        }
-        return extractedText;
-      });
-    }).catch(function(error) {
-      if (error && error.name === 'AbortError') {
-        var timeoutSeconds = Math.round(OCR_CLIENT_TIMEOUT_MS / 1000);
-        throw new Error(requestTimedOut
-          ? 'Локальный OCR не завершился за ' + timeoutSeconds + ' секунд. Уменьшите PDF или лимит страниц.'
-          : 'OCR-запрос отменён.');
-      }
-      if (shouldUseBrowserOcrFallback(error)) {
-        if (source && typeof source.onBrowserFallback === 'function') {
-          source.onBrowserFallback();
-        }
-        return recognizeFileWithBrowserTesseract(preparedFile, source).catch(function(browserError) {
-          if (browserError && browserError.name === 'AbortError') {
-            var timeoutSeconds = Math.round(OCR_CLIENT_TIMEOUT_MS / 1000);
-            throw new Error(requestTimedOut
-              ? 'Браузерный OCR не завершился за ' + timeoutSeconds + ' секунд. Уменьшите PDF или количество страниц.'
-              : 'OCR-запрос отменён.');
-          }
-          var serverMessage = error && error.message ? String(error.message) : 'Серверный OCR недоступен.';
-          var browserMessage = browserError && browserError.message ? String(browserError.message) : 'неизвестная ошибка';
-          throw new Error(serverMessage + ' Браузерный fallback также не выполнен: ' + browserMessage);
-        });
-      }
-      throw error;
-    }).finally(function() {
-      clearOcrTimeout();
-    });
-  }
-
-  function requestAiBriefSummaryForText(source, sourceText, apiUrl, aiMode) {
-    var endpoint = getDirectAiSummaryUrl(apiUrl);
-    var briefText = String(sourceText || '').trim();
-    if (!briefText) {
-      return Promise.reject(new Error('Текст для анализа пустой.'));
-    }
-    var sourceLabel = source && source.label ? String(source.label) : 'Файл';
-    var textLimits = [12000, 7000, 3500, 1800];
-    function requestWithLimit(limitIndex) {
-      var safeIndex = Math.max(0, Math.min(limitIndex, textLimits.length - 1));
-      var textLimit = textLimits[safeIndex];
-      var clippedText = briefText.slice(0, textLimit);
-      var extractedTexts = [
-        {
-          name: sourceLabel,
-          type: 'text/plain',
-          text: clippedText
-        }
-      ];
-      var formData = new FormData();
-      formData.append('extractedTexts', JSON.stringify(extractedTexts));
-      formData.append('mode', aiMode === 'paid' ? 'paid' : 'free');
-      return fetch(endpoint, {
-        method: 'POST',
-        credentials: 'same-origin',
-        body: formData
-      }).then(function(response) {
-        return response.json().catch(function() { return null; }).then(function(payload) {
-          if (!response.ok || !payload || payload.ok !== true) {
-            var statusCode = response && typeof response.status === 'number' ? response.status : 0;
-            var serverError = payload && payload.error ? String(payload.error).trim() : '';
-            var isContextOverflow = statusCode === 413
-              || /контекст.+слишком большой|too many tokens|max context|payload too large/i.test(serverError);
-            if (isContextOverflow && safeIndex < textLimits.length - 1) {
-              return requestWithLimit(safeIndex + 1);
-            }
-            var retryAfterSeconds = Math.max(10, Number(payload && payload.retryAfterSeconds) || 45);
-            var retryHint = ' Повторите через ' + retryAfterSeconds + ' сек.';
-            if (statusCode === 429) {
-              throw new Error((serverError || 'Слишком много запросов к ИИ.') + retryHint);
-            }
-            if (statusCode >= 500) {
-              throw new Error((serverError || 'ИИ-сервис перегружен или временно недоступен.') + retryHint);
-            }
-            if (isContextOverflow) {
-              throw new Error('Не удалось уместить контекст даже после сжатия. Откройте файл и запустите «Кратко ИИ» ещё раз.');
-            }
-            throw new Error(serverError || ('Ошибка ИИ (' + statusCode + ').'));
-          }
-          if (!isMeaningfulAiBriefPayload(payload)) {
-            throw new Error('ИИ не вернул осмысленный summary. Повторите запрос.');
-          }
-          return payload;
-        });
-      });
-    }
-    return requestWithLimit(0);
-  }
-
-  var briefPdfJsLoader = null;
-  var briefPdfJsWorkerSrc = '';
-
-  function getDocsScriptDirectory() {
-    var scripts = document.getElementsByTagName('script');
-    for (var index = scripts.length - 1; index >= 0; index -= 1) {
-      var source = scripts[index] && scripts[index].src ? String(scripts[index].src) : '';
-      var docsIndex = source.indexOf('/docs.js');
-      if (docsIndex === -1) {
-        docsIndex = source.indexOf('/js/documents/docs.js');
-      }
-      if (docsIndex !== -1) {
-        return source.slice(0, source.lastIndexOf('/') + 1);
-      }
-    }
-
-    return '';
-  }
-
-  function addPdfJsScriptCandidate(candidates, seen, source) {
-    var value = source ? String(source).trim() : '';
-    if (!value) {
-      return;
-    }
-
-    var key = value;
-    try {
-      key = new URL(value, window.location.href).href.replace(/[?#].*$/g, '');
-    } catch (error) {}
-
-    if (seen[key]) {
-      return;
-    }
-    seen[key] = true;
-    candidates.push(value);
-  }
-
-  function resolvePdfJsWorkerSrc(scriptSrc) {
-    var explicitWorker = window.DOCUMENTS_PDFJS_WORKER_URL ? String(window.DOCUMENTS_PDFJS_WORKER_URL).trim() : '';
-    if (explicitWorker) {
-      return explicitWorker;
-    }
-
-    try {
-      var baseSource = scriptSrc || '';
-      if (!baseSource || baseSource === '/pdf/pdf.min.js') {
-        var scriptDirectory = getDocsScriptDirectory();
-        if (scriptDirectory) {
-          baseSource = scriptDirectory + 'pdf/pdf.min.js';
-        }
-      }
-
-      return new URL('pdf.worker.min.js', baseSource || window.location.href).href;
-    } catch (error) {
-      return 'pdf/pdf.worker.min.js';
-    }
-  }
-
-  function applyBriefPdfJsWorker(pdfjsLib) {
-    if (pdfjsLib && pdfjsLib.GlobalWorkerOptions) {
-      pdfjsLib.GlobalWorkerOptions.workerSrc = briefPdfJsWorkerSrc || resolvePdfJsWorkerSrc('/pdf/pdf.min.js');
-    }
-  }
-
-  function ensureBriefPdfJsLoaded() {
-    if (typeof window !== 'undefined' && window.pdfjsLib) {
-      applyBriefPdfJsWorker(window.pdfjsLib);
-      return Promise.resolve(window.pdfjsLib);
-    }
-    if (briefPdfJsLoader) {
-      return briefPdfJsLoader;
-    }
-    briefPdfJsLoader = new Promise(function(resolve, reject) {
-      var scriptDirectory = getDocsScriptDirectory();
-      var candidates = [];
-      var seenCandidates = Object.create(null);
-      addPdfJsScriptCandidate(candidates, seenCandidates, window.DOCUMENTS_PDFJS_URL || '');
-      if (scriptDirectory) {
-        addPdfJsScriptCandidate(candidates, seenCandidates, scriptDirectory + 'pdf/pdf.min.js');
-      }
-      addPdfJsScriptCandidate(candidates, seenCandidates, '/pdf/pdf.min.js');
-      addPdfJsScriptCandidate(candidates, seenCandidates, 'pdf/pdf.min.js');
-      addPdfJsScriptCandidate(candidates, seenCandidates, './pdf/pdf.min.js');
-
-      var candidateIndex = 0;
-      function loadNextCandidate() {
-        if (window.pdfjsLib) {
-          applyBriefPdfJsWorker(window.pdfjsLib);
-          resolve(window.pdfjsLib);
-          return;
-        }
-        if (candidateIndex >= candidates.length) {
-          briefPdfJsLoader = null;
-          reject(new Error('Не удалось загрузить PDF библиотеку. Проверьте, что pdf/pdf.min.js доступен на сервере.'));
-          return;
-        }
-
-        var script = document.createElement('script');
-        script.src = candidates[candidateIndex];
-        candidateIndex += 1;
-        script.onload = function() {
-          if (window.pdfjsLib) {
-            briefPdfJsWorkerSrc = resolvePdfJsWorkerSrc(script.src);
-            applyBriefPdfJsWorker(window.pdfjsLib);
-            resolve(window.pdfjsLib);
-            return;
-          }
-          loadNextCandidate();
-        };
-        script.onerror = function() {
-          loadNextCandidate();
-        };
-        document.head.appendChild(script);
-      }
-
-      loadNextCandidate();
-    });
-    return briefPdfJsLoader;
-  }
-
-  async function convertPdfToImageFileForBrief(file, fallbackName) {
-    var fileName = String(fallbackName || (file && file.name) || 'brief-file');
-    var isPdf = file && ((file.type && String(file.type).toLowerCase() === 'application/pdf') || /\.pdf$/i.test(fileName));
-    if (!isPdf || !file) {
-      return file;
-    }
-    try {
-      var pdfjsLib = await ensureBriefPdfJsLoaded();
-      applyBriefPdfJsWorker(pdfjsLib);
-      var bytes = await file.arrayBuffer();
-      var loadingTask = pdfjsLib.getDocument({ data: bytes });
-      var pdf = await loadingTask.promise;
-      var page = await pdf.getPage(1);
-      var viewport = page.getViewport({ scale: 2 });
-      var canvas = document.createElement('canvas');
-      canvas.width = Math.max(1, Math.floor(viewport.width));
-      canvas.height = Math.max(1, Math.floor(viewport.height));
-      var ctx = canvas.getContext('2d');
-      if (!ctx) return file;
-      await page.render({ canvasContext: ctx, viewport: viewport }).promise;
-      var blob = await new Promise(function(resolve) {
-        canvas.toBlob(function(nextBlob) { resolve(nextBlob); }, 'image/jpeg', 0.9);
-      });
-      if (!blob) return file;
-      return new File([blob], fileName.replace(/\.pdf$/i, '') + '.jpg', { type: 'image/jpeg' });
-    } catch (_) {
-      return file;
-    }
-  }
-
-  function getGroqPaidBriefEndpoints(apiUrl) {
-    var configuredEndpoint = window.GROQ_PAID_API_URL
-      ? String(window.GROQ_PAID_API_URL).trim()
-      : '';
-    var documentsApiEndpoint = apiUrl || window.DOCUMENTS_AI_API_URL || '';
-    var documentsApiPath = documentsApiEndpoint
-      ? String(documentsApiEndpoint).replace(/[?#].*$/g, '')
-      : '';
-    var siblingEndpoint = /api-docs\.php$/i.test(documentsApiPath)
-      ? documentsApiPath.replace(/api-docs\.php$/i, 'api-groq-paid.php')
-      : '';
-    var endpoints = [
-      configuredEndpoint,
-      siblingEndpoint,
-      '/js/documents/api-groq-paid.php',
-      '/api-groq-paid.php'
-    ];
-    return endpoints.filter(function(endpoint, index) {
-      return endpoint && endpoints.indexOf(endpoint) === index;
-    });
-  }
-
-  function postGroqPaidForBrief(createFormData, apiUrl) {
-    var endpoints = getGroqPaidBriefEndpoints(apiUrl);
-    var lastError = null;
-    return endpoints.reduce(function(chain, endpoint) {
-      return chain.catch(function() {
-        return fetch(endpoint, {
-          method: 'POST',
-          credentials: 'same-origin',
-          body: createFormData()
-        }).then(function(response) {
-          if (response.status === 404 || response.status === 405) {
-            throw new Error('ENDPOINT_UNAVAILABLE');
-          }
-          return response.json().catch(function() { return null; }).then(function(payload) {
-            return { response: response, payload: payload };
-          });
-        });
-      });
-    }, Promise.reject(new Error('INIT'))).catch(function(error) {
-      lastError = error;
-      throw lastError;
-    });
-  }
-
-  async function requestAiBriefSummaryForFileDirect(source, apiUrl) {
-    var sourceLabel = source && source.label ? String(source.label) : 'Файл';
-    var fileForVip = null;
-    var extractedText = '';
-    if (source && source.fileObject instanceof File) {
-      fileForVip = source.fileObject;
-    } else if (source && source.url) {
-      var fetched = await fetch(String(source.url), { credentials: 'same-origin' });
-      if (fetched.ok) {
-        var blob = await fetched.blob();
-        var fileName = sourceLabel || 'brief-file';
-        fileForVip = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
-      }
-    }
-    extractedText = await requestOcrTextForSource(source, apiUrl);
-    if (!String(extractedText || '').trim()) {
-      throw new Error('OCR не вернул текст для выбранного файла.');
-    }
-    if (!(fileForVip instanceof File)) {
-      throw new Error('Не удалось подготовить файл для платного ИИ.');
-    }
-    fileForVip = await convertPdfToImageFileForBrief(fileForVip, sourceLabel);
-    var request = await postGroqPaidForBrief(function() {
-      var formData = new FormData();
-      formData.append('action', 'generate_summary');
-      formData.append('files', fileForVip, fileForVip.name || sourceLabel);
-      if (String(extractedText || '').trim()) {
-        formData.append('extractedTexts', JSON.stringify([{
-          name: sourceLabel,
-          type: 'text/plain',
-          text: String(extractedText).slice(0, 16000)
-        }]));
-      }
-      return formData;
-    }, apiUrl);
-    var response = request && request.response;
-    var payload = request && request.payload;
-    if (!response.ok || !payload || payload.ok !== true) {
-      throw new Error(payload && payload.error ? payload.error : ('Ошибка ИИ (' + response.status + ')'));
-    }
-    if (!isMeaningfulAiBriefPayload(payload)) {
-      throw new Error('ИИ не вернул осмысленный краткий вывод. Повторите запрос.');
-    }
-    return payload;
-  }
-
-  async function requestAiBriefSummaryByAttachment(source, apiUrl, aiMode) {
-    var sourceLabel = source && source.label ? String(source.label) : 'Файл';
-    var fileForSummary = null;
-    if (source && source.fileObject instanceof File) {
-      fileForSummary = source.fileObject;
-    } else if (source && source.url) {
-      var fetched = await fetch(String(source.url), { credentials: 'same-origin' });
-      if (fetched.ok) {
-        var blob = await fetched.blob();
-        var fileName = sourceLabel || 'brief-file';
-        fileForSummary = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
-      }
-    }
-    if (!(fileForSummary instanceof File)) {
-      throw new Error('Не удалось подготовить файл для краткого вывода.');
-    }
-    var endpoint = getDirectAiSummaryUrl(apiUrl);
-    var formData = new FormData();
-    formData.append('mode', aiMode === 'paid' ? 'paid' : 'free');
-    formData.append('attachment', fileForSummary, fileForSummary.name || sourceLabel);
-    var response = await fetch(endpoint, {
-      method: 'POST',
-      credentials: 'same-origin',
-      body: formData
-    });
-    var payload = await response.json().catch(function() { return null; });
-    if (!response.ok || !payload || payload.ok !== true) {
-      throw new Error(payload && payload.error ? payload.error : ('Ошибка ИИ (' + response.status + ')'));
-    }
-    if (!isMeaningfulAiBriefPayload(payload)) {
-      throw new Error('ИИ не вернул осмысленный summary. Повторите запрос.');
-    }
-    return payload;
-  }
-
   function openAiBriefSummaryModal(config) {
     var options = config && typeof config === 'object' ? config : {};
-    var openFromModule = window.openDocumentsAiBriefSummaryModal;
-    if (typeof openFromModule === 'function') {
-      openFromModule(options);
-      return Promise.resolve(true);
-    }
-    return ensureAiResponseModalScript()
-      .then(function() {
-        if (typeof window.openDocumentsAiBriefSummaryModal !== 'function') {
-          throw new Error('Модуль «Кратко ИИ» не инициализирован.');
-        }
-        window.openDocumentsAiBriefSummaryModal(options);
-        return true;
-      })
-      .catch(function(error) {
-        var showStatusMessage = typeof options.showMessage === 'function' ? options.showMessage : showMessage;
-        showStatusMessage('error', error && error.message ? error.message : 'Не удалось открыть «Кратко ИИ».');
-        return false;
-      });
+    openAiConclusionModal(options);
+    return Promise.resolve(true);
   }
 
 
@@ -1270,27 +650,22 @@ function ensureResponsesStyle() {
     var header = createElement('div', 'documents-brief-header');
     var titleWrap = createElement('div', '');
     titleWrap.appendChild(createElement('div', 'documents-brief-title', 'Вывод'));
-    titleWrap.appendChild(createElement('div', 'documents-brief-subtitle', 'Нажмите файл, получите OCR-текст, затем отправьте его в ИИ.'));
-    titleWrap.appendChild(createElement('div', 'documents-brief-subtitle', '⚠️ ИИ анализирует только первые 5 страниц документа.'));
+    titleWrap.appendChild(createElement('div', 'documents-brief-subtitle', 'Файл обрабатывается приватным OCR, затем выбранной администратором ИИ-моделью.'));
     var closeButton = createElement('button', 'documents-button documents-button--secondary', 'Закрыть');
     var body = createElement('div', 'documents-brief-body');
     var list = createElement('div', 'documents-brief-list');
     var preview = createElement('pre', 'documents-brief-preview documents-conclusion-preview', 'Выберите файл из задачи или новый файл.');
-    var metaCompact = createElement('div', 'documents-conclusion-meta', 'Шаг 1: клик по файлу → OCR');
-    var actions = createElement('div', 'documents-conclusion-actions');
-    var sendToAiButton = createElement('button', 'documents-button documents-button--ai', 'Отправить ИИ');
-    sendToAiButton.type = 'button';
-    sendToAiButton.disabled = true;
-    actions.appendChild(sendToAiButton);
+    var metaCompact = createElement('div', 'documents-conclusion-meta', 'Выберите файл для анализа.');
 
     var sources = [];
-    var activeSource = null;
-    var activeOcrText = '';
     linkedFiles.forEach(function(file, index) {
       sources.push({
         id: 'linked_' + index,
         label: file && file.name ? String(file.name) : ('Файл ' + (index + 1)),
-        url: file && file.url ? String(file.url) : ''
+        url: file && file.url ? String(file.url) : '',
+        storedName: file && file.storedName ? String(file.storedName) : '',
+        originalName: file && file.originalName ? String(file.originalName) : '',
+        aiBrief: file && file.aiBrief ? String(file.aiBrief) : ''
       });
     });
     pendingFiles.forEach(function(file, index) {
@@ -1318,27 +693,34 @@ function ensureResponsesStyle() {
       button.addEventListener('click', function() {
         setActive(button);
         button.disabled = true;
-        sendToAiButton.disabled = true;
         preview.classList.add('is-loading');
-        preview.textContent = '⏳ Извлекаю OCR текст...';
-        metaCompact.textContent = 'Подготовка OCR...';
+        preview.textContent = '⏳ Приватный OCR распознаёт файл, затем ИИ формирует краткий вывод...';
+        metaCompact.textContent = 'Обработка на приватном сервере...';
         var startedAt = Date.now();
-        requestOcrTextForSource(source, options.apiUrl)
-          .then(function(ocrText) {
-            activeSource = source;
-            activeOcrText = String(ocrText || '').trim();
+        requestPrivateAiBriefForSource(source)
+          .then(function(aiPayload) {
+            var summaryText = normalizeAiBriefText(aiPayload && aiPayload.summary ? aiPayload.summary : '');
+            if (!summaryText) {
+              throw new Error('ИИ вернул пустой краткий вывод.');
+            }
             preview.classList.remove('is-loading');
-            preview.textContent = activeOcrText || 'OCR не вернул текст.';
-            sendToAiButton.disabled = !activeOcrText;
-            metaCompact.textContent = 'OCR готов за ' + ((Date.now() - startedAt) / 1000).toFixed(1) + ' сек. Шаг 2: нажмите «Отправить ИИ».';
+            preview.textContent = summaryText;
+            source.aiBrief = summaryText;
+            metaCompact.textContent = 'Готово за ' + ((Date.now() - startedAt) / 1000).toFixed(1)
+              + ' сек • Модель: ' + String(aiPayload.model || '—') + ' • OCR: приватный сервер';
+            if (typeof options.onBriefReady === 'function') {
+              return Promise.resolve(options.onBriefReady(source, summaryText)).catch(function(error) {
+                showStatusMessage('warning', 'Краткий вывод получен, но не сохранён: '
+                  + (error && error.message ? error.message : 'ошибка сохранения'));
+              });
+            }
+            return null;
           })
           .catch(function(error) {
-            activeSource = null;
-            activeOcrText = '';
             preview.classList.remove('is-loading');
-            preview.textContent = 'Ошибка OCR: ' + (error && error.message ? error.message : 'неизвестная ошибка');
-            metaCompact.textContent = 'OCR не выполнен.';
-            showStatusMessage('warning', 'Не удалось получить OCR для файла «' + source.label + '».');
+            preview.textContent = 'Ошибка: ' + (error && error.message ? error.message : 'неизвестная ошибка');
+            metaCompact.textContent = 'Анализ не выполнен.';
+            showStatusMessage('warning', 'Не удалось получить «Кратко ИИ» для файла «' + source.label + '».');
           })
           .finally(function() {
             button.disabled = false;
@@ -1346,34 +728,6 @@ function ensureResponsesStyle() {
       });
       list.appendChild(button);
     }
-
-    sendToAiButton.addEventListener('click', function() {
-      if (!activeSource || !activeOcrText) {
-        showStatusMessage('warning', 'Сначала выберите файл и дождитесь OCR.');
-        return;
-      }
-      sendToAiButton.disabled = true;
-      preview.classList.add('is-loading');
-      metaCompact.textContent = '⏳ Отправляю OCR текст в ИИ...';
-      var startedAt = Date.now();
-      requestAiBriefSummaryForText(activeSource, activeOcrText, options.apiUrl, 'paid')
-        .then(function(aiPayload) {
-          preview.classList.remove('is-loading');
-          var summaryText = String(aiPayload && aiPayload.summary ? aiPayload.summary : '').trim();
-          preview.textContent = summaryText || extractPlainAiBriefText(aiPayload) || 'Пустой ответ от ИИ.';
-          var elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
-          metaCompact.textContent = 'Готово за ' + elapsed + ' сек • Модель: ' + String(aiPayload && aiPayload.model ? aiPayload.model : '—');
-        })
-        .catch(function(error) {
-          preview.classList.remove('is-loading');
-          metaCompact.textContent = 'Ошибка отправки в ИИ.';
-          preview.textContent = 'Ошибка ИИ: ' + (error && error.message ? error.message : 'неизвестная ошибка');
-          showStatusMessage('warning', 'Не удалось получить вывод по OCR.');
-        })
-        .finally(function() {
-          sendToAiButton.disabled = false;
-        });
-    });
 
     sources.forEach(addSourceButton);
     if (!sources.length) {
@@ -1392,7 +746,6 @@ function ensureResponsesStyle() {
     header.appendChild(closeButton);
     panel.appendChild(header);
     panel.appendChild(metaCompact);
-    panel.appendChild(actions);
     body.appendChild(list);
     body.appendChild(preview);
     panel.appendChild(body);
@@ -2534,6 +1887,11 @@ function ensureAdminTemplateStyles() {
       '.documents-template-modal__button--secondary{background:rgba(148,163,184,0.18);color:#0f172a;}' +
       '.documents-template-modal__button:hover:not(:disabled){transform:translateY(-1px);}' +
       '.documents-admin__s3-button{margin-right:8px;}' +
+      '.documents-admin__ai-settings{display:grid;grid-template-columns:minmax(180px,260px) minmax(0,1fr);gap:10px 16px;align-items:center;padding:14px;border:1px solid rgba(148,163,184,0.3);border-radius:16px;background:rgba(255,255,255,0.74);}' +
+      '.documents-admin__ai-settings-label{font-size:13px;font-weight:800;color:#0f172a;}' +
+      '.documents-admin__ai-settings-hint{grid-column:1 / -1;margin:0;color:#64748b;font-size:12px;line-height:1.45;}' +
+      '.documents-admin__ai-settings-select{width:100%;min-height:38px;border:1px solid rgba(148,163,184,0.4);border-radius:10px;background:#fff;color:#0f172a;padding:0 10px;font-size:13px;font-weight:700;}' +
+      '.documents-admin__ai-settings-select:focus{outline:2px solid rgba(37,99,235,0.2);border-color:rgba(37,99,235,0.55);}' +
       '.documents-s3-modal{position:fixed;inset:0;z-index:1900;display:none;align-items:center;justify-content:center;padding:16px;background:rgba(15,23,42,0.32);backdrop-filter:blur(10px);}' +
       '.documents-s3-modal.is-visible{display:flex;}' +
       '.documents-s3-modal__panel{width:min(1320px,calc(100vw - 24px));height:min(920px,calc(100dvh - 24px));max-height:calc(100dvh - 24px);overflow:hidden;border-radius:22px;background:linear-gradient(165deg, rgba(255,255,255,0.96), rgba(248,250,252,0.92));border:1px solid rgba(255,255,255,0.95);box-shadow:0 28px 60px rgba(15,23,42,0.22);padding:18px;display:grid;grid-template-rows:auto auto auto minmax(0,1fr) auto;gap:14px;}' +
@@ -2593,11 +1951,14 @@ function ensureAdminTemplateStyles() {
       '.documents-s3-modal__button--primary{background:linear-gradient(120deg,#2563eb,#38bdf8);color:#fff;box-shadow:0 16px 28px rgba(37,99,235,0.28);}' +
       '.documents-s3-modal__button--secondary{background:rgba(148,163,184,0.18);color:#0f172a;}' +
       '.documents-s3-modal__button:hover:not(:disabled){transform:translateY(-1px);}' +
+      '.documents-admin__ocr-button{margin-right:8px;}' +
       '@media (max-width: 720px){' +
       '.documents-template-modal{padding:8px;align-items:flex-end;}' +
       '.documents-template-modal__panel{width:100%;max-height:calc(100vh - 16px);border-radius:20px;padding:14px;}' +
       '.documents-template-modal__actions{display:grid;grid-template-columns:1fr;}' +
       '.documents-template-modal__button{width:100%;}' +
+      '.documents-admin__ai-settings{grid-template-columns:1fr;}' +
+      '.documents-admin__ai-settings-hint{grid-column:auto;}' +
       '.documents-s3-modal{padding:8px;align-items:flex-end;}' +
       '.documents-s3-modal__panel{width:100%;height:calc(100dvh - 16px);max-height:calc(100dvh - 16px);border-radius:20px;padding:14px;}' +
       '.documents-s3-modal__grid{grid-template-columns:repeat(2,minmax(0,1fr));}' +
@@ -2657,6 +2018,10 @@ function ensureAdminTemplateStyles() {
     s3Button.type = 'button';
     headerActions.appendChild(s3Button);
 
+    var cronManagementButton = createElement('button', 'documents-admin__log-button documents-admin__cron-button', 'Cron');
+    cronManagementButton.type = 'button';
+    headerActions.appendChild(cronManagementButton);
+
     var logButton = createElement('button', 'documents-admin__log-button', 'Журнал мини-приложения');
     logButton.type = 'button';
     logButton.setAttribute('aria-expanded', 'false');
@@ -2707,6 +2072,24 @@ function ensureAdminTemplateStyles() {
     logPanel.appendChild(logHint);
 
     body.appendChild(logPanel);
+
+    var aiSettings = createElement('section', 'documents-admin__ai-settings');
+    var aiSettingsLabel = createElement('label', 'documents-admin__ai-settings-label', 'Модель для «Кратко ИИ»');
+    var aiProviderSelect = document.createElement('select');
+    aiProviderSelect.className = 'documents-admin__ai-settings-select';
+    aiProviderSelect.innerHTML = '' +
+      '<option value="default">Основная модель из .env</option>' +
+      '<option value="deepseek">DeepSeek</option>';
+    aiSettingsLabel.htmlFor = 'documents-admin-ai-provider';
+    aiProviderSelect.id = 'documents-admin-ai-provider';
+    aiSettings.appendChild(aiSettingsLabel);
+    aiSettings.appendChild(aiProviderSelect);
+    aiSettings.appendChild(createElement(
+      'p',
+      'documents-admin__ai-settings-hint',
+      'Выбор действует для веб-версии и Telegram. Для DeepSeek ключ DEEPSEEK_API_KEY хранится только в .env.'
+    ));
+    body.appendChild(aiSettings);
 
     function buildAdminSection(key, titleText) {
       var includeCredentials = sectionHasCredentials(key);
@@ -2841,6 +2224,35 @@ function ensureAdminTemplateStyles() {
     s3Modal.appendChild(s3Panel);
     document.body.appendChild(s3Modal);
 
+    var cronManagementModal = createElement('div', 'documents-s3-modal documents-cron-modal');
+    cronManagementModal.setAttribute('aria-hidden', 'true');
+    var cronManagementPanel = createElement('div', 'documents-s3-modal__panel');
+    cronManagementPanel.setAttribute('role', 'dialog');
+    cronManagementPanel.setAttribute('aria-modal', 'true');
+    cronManagementPanel.setAttribute('aria-labelledby', 'documents-cron-title');
+    var cronManagementTitle = createElement('h3', 'documents-s3-modal__title', 'Cron на сервере');
+    cronManagementTitle.id = 'documents-cron-title';
+    var cronManagementSubtitle = createElement('p', 'documents-s3-modal__subtitle', 'Здесь показаны только cron-команды документооборота, которые приложение умеет безопасно определить. Другие серверные cron не изменяются.');
+    var cronManagementStatus = createElement('div', 'documents-s3-modal__status');
+    cronManagementStatus.setAttribute('role', 'status');
+    var cronManagementSummary = createElement('div', 'documents-s3-modal__summary');
+    var cronManagementActions = createElement('div', 'documents-s3-modal__actions');
+    var cronManagementRefreshButton = createElement('button', 'documents-s3-modal__button documents-s3-modal__button--secondary', 'Обновить');
+    cronManagementRefreshButton.type = 'button';
+    var cronManagementRemoveButton = createElement('button', 'documents-s3-modal__button documents-s3-modal__button--secondary', 'Удалить старый OCR-cron');
+    cronManagementRemoveButton.type = 'button';
+    var cronManagementCloseButton = createElement('button', 'documents-s3-modal__button documents-s3-modal__button--secondary', 'Закрыть');
+    cronManagementCloseButton.type = 'button';
+    cronManagementActions.appendChild(cronManagementRefreshButton);
+    cronManagementActions.appendChild(cronManagementRemoveButton);
+    cronManagementActions.appendChild(cronManagementCloseButton);
+    cronManagementPanel.appendChild(cronManagementTitle);
+    cronManagementPanel.appendChild(cronManagementSubtitle);
+    cronManagementPanel.appendChild(cronManagementStatus);
+    cronManagementPanel.appendChild(cronManagementSummary);
+    cronManagementPanel.appendChild(cronManagementActions);
+    cronManagementModal.appendChild(cronManagementPanel);
+    document.body.appendChild(cronManagementModal);
     document.body.appendChild(modal);
 
     adminElements.modal = modal;
@@ -2848,6 +2260,7 @@ function ensureAdminTemplateStyles() {
     adminElements.dialog = dialog;
     adminElements.message = message;
     adminElements.saveButton = saveButton;
+    adminElements.aiBriefProviderSelect = aiProviderSelect;
     adminElements.closeButton = closeButton;
     adminElements.logButton = logButton;
     adminElements.s3Button = s3Button;
@@ -2857,6 +2270,13 @@ function ensureAdminTemplateStyles() {
     adminElements.s3RefreshButton = s3RefreshButton;
     adminElements.s3TestButton = s3TestButton;
     adminElements.s3CloseButton = s3CloseButton;
+    adminElements.cronManagementButton = cronManagementButton;
+    adminElements.cronManagementModal = cronManagementModal;
+    adminElements.cronManagementStatus = cronManagementStatus;
+    adminElements.cronManagementSummary = cronManagementSummary;
+    adminElements.cronManagementRefreshButton = cronManagementRefreshButton;
+    adminElements.cronManagementRemoveButton = cronManagementRemoveButton;
+    adminElements.cronManagementCloseButton = cronManagementCloseButton;
     adminElements.templateButton = templateButton;
     adminElements.logPanel = logPanel;
     adminElements.logStatus = logStatus;
@@ -2889,6 +2309,27 @@ function ensureAdminTemplateStyles() {
       openAdminS3Modal();
     });
 
+    cronManagementButton.addEventListener('click', function() {
+      openCronManagementModal();
+    });
+
+    cronManagementRefreshButton.addEventListener('click', function() {
+      fetchCronManagementStatus(false).catch(function() {});
+    });
+
+    cronManagementRemoveButton.addEventListener('click', function() {
+      removeLegacyOcrCron();
+    });
+
+    cronManagementCloseButton.addEventListener('click', function() {
+      closeCronManagementModal(true);
+    });
+
+    cronManagementModal.addEventListener('click', function(event) {
+      if (event.target === cronManagementModal) {
+        closeCronManagementModal(true);
+      }
+    });
     logButton.addEventListener('click', function() {
       toggleAdminLogPanel();
     });
@@ -4718,6 +4159,142 @@ function ensureAdminTemplateStyles() {
     }
   }
 
+  function setCronManagementStatus(message, isError) {
+    if (!adminElements.cronManagementStatus) {
+      return;
+    }
+    adminElements.cronManagementStatus.textContent = message || '';
+    adminElements.cronManagementStatus.classList.toggle('is-visible', Boolean(message));
+    adminElements.cronManagementStatus.classList.toggle('documents-s3-modal__status--error', Boolean(message && isError));
+  }
+
+  function renderCronManagement() {
+    var cron = cronManagementView.data && typeof cronManagementView.data === 'object'
+      ? cronManagementView.data
+      : {};
+    var installed = cron.installed === true;
+    if (cronManagementView.error) {
+      setCronManagementStatus(cronManagementView.error, true);
+    } else if (cronManagementView.loading) {
+      setCronManagementStatus('Читаем серверный crontab…', false);
+    } else if (installed) {
+      setCronManagementStatus('Найден устаревший OCR-cron. Он больше не нужен и может быть удалён.', true);
+    } else {
+      setCronManagementStatus('Старый OCR-cron отсутствует. Автоматические OCR-вычисления выключены.', false);
+    }
+
+    if (adminElements.cronManagementSummary) {
+      adminElements.cronManagementSummary.innerHTML = '';
+      var grid = createElement('div', 'documents-s3-modal__grid');
+      grid.appendChild(createAdminS3Metric('Механизм', 'Автоматический OCR задач'));
+      grid.appendChild(createAdminS3Metric('Состояние', installed ? 'Установлен' : 'Не установлен'));
+      grid.appendChild(createAdminS3Metric(
+        'Назначение',
+        String(cron.description || 'Устаревшая фоновая обработка OCR.')
+      ));
+      var entries = Array.isArray(cron.entries) ? cron.entries : [];
+      if (entries.length) {
+        grid.appendChild(createAdminS3Metric('Команда', entries.join('\n')));
+      }
+      adminElements.cronManagementSummary.appendChild(grid);
+    }
+
+    var busy = cronManagementView.loading || cronManagementView.removing;
+    if (adminElements.cronManagementRefreshButton) {
+      adminElements.cronManagementRefreshButton.disabled = busy;
+    }
+    if (adminElements.cronManagementRemoveButton) {
+      adminElements.cronManagementRemoveButton.disabled = busy || !installed;
+      adminElements.cronManagementRemoveButton.textContent = cronManagementView.removing
+        ? 'Удаляем…'
+        : 'Удалить старый OCR-cron';
+    }
+  }
+
+  function fetchCronManagementStatus(silent) {
+    if (cronManagementView.loading) {
+      return Promise.resolve(cronManagementView.data);
+    }
+    cronManagementView.loading = true;
+    if (!silent) {
+      cronManagementView.error = '';
+    }
+    renderCronManagement();
+    return fetch(buildApiUrl('admin_cron_management', {
+      organization: state.organization || ''
+    }), { credentials: 'same-origin', cache: 'no-store' })
+      .then(handleResponse)
+      .then(function(payload) {
+        cronManagementView.data = payload && payload.cron ? payload.cron : {};
+        cronManagementView.error = '';
+        return cronManagementView.data;
+      })
+      .catch(function(error) {
+        cronManagementView.error = error && error.message ? error.message : 'Не удалось прочитать серверный crontab.';
+        if (!silent) {
+          throw error;
+        }
+        return cronManagementView.data;
+      })
+      .finally(function() {
+        cronManagementView.loading = false;
+        renderCronManagement();
+      });
+  }
+
+  function removeLegacyOcrCron() {
+    if (cronManagementView.removing || !window.confirm('Удалить старый OCR-cron из серверного crontab? Другие cron-команды останутся без изменений.')) {
+      return;
+    }
+    cronManagementView.removing = true;
+    cronManagementView.error = '';
+    renderCronManagement();
+    fetch(buildApiUrl('admin_cron_management'), {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'admin_cron_management',
+        operation: 'remove_legacy_ocr',
+        organization: state.organization || ''
+      })
+    })
+      .then(handleResponse)
+      .then(function(payload) {
+        cronManagementView.data = payload && payload.cron ? payload.cron : {};
+        showMessage('success', payload && payload.message ? payload.message : 'Старый OCR-cron удалён.');
+      })
+      .catch(function(error) {
+        cronManagementView.error = error && error.message ? error.message : 'Не удалось удалить старый OCR-cron.';
+      })
+      .finally(function() {
+        cronManagementView.removing = false;
+        renderCronManagement();
+      });
+  }
+
+  function openCronManagementModal() {
+    ensureAdminModal();
+    if (adminElements.cronManagementModal) {
+      adminElements.cronManagementModal.classList.add('is-visible');
+      adminElements.cronManagementModal.setAttribute('aria-hidden', 'false');
+    }
+    renderCronManagement();
+    fetchCronManagementStatus(false).catch(function(error) {
+      docsLogger.warn('Не удалось загрузить управление cron:', error);
+    });
+  }
+
+  function closeCronManagementModal(restoreFocus) {
+    if (adminElements.cronManagementModal) {
+      adminElements.cronManagementModal.classList.remove('is-visible');
+      adminElements.cronManagementModal.setAttribute('aria-hidden', 'true');
+    }
+    if (restoreFocus && adminElements.cronManagementButton && typeof adminElements.cronManagementButton.focus === 'function') {
+      adminElements.cronManagementButton.focus();
+    }
+  }
+
   function openAdminTemplateModal() {
     ensureAdminModal();
     var templateState = ensureAdminTemplateState();
@@ -5126,6 +4703,7 @@ function ensureAdminTemplateStyles() {
       ensureAdminS3State().visible = false;
       closeAdminTemplateModal({ skipFocus: true });
       closeAdminS3Modal({ skipFocus: true });
+      closeCronManagementModal(false);
       updateAdminLogPanel();
       updateAdminTemplatePanel();
       updateAdminS3Panel();
@@ -5135,6 +4713,9 @@ function ensureAdminTemplateStyles() {
       renderAdminRows('responsibles', state.admin.settings.responsibles, true);
       renderAdminRows('block2', state.admin.settings.block2, false);
       renderAdminRows('block3', state.admin.settings.block3, false);
+      if (adminElements.aiBriefProviderSelect) {
+        adminElements.aiBriefProviderSelect.value = state.admin.settings.aiBriefProvider === 'deepseek' ? 'deepseek' : 'default';
+      }
       updateAdminMessage(state.admin.loaded ? '' : 'Загружаем настройки...', false);
       loadAdminSettings({ focus: !state.admin.loaded }).catch(function() {
         // сообщение уже показано в updateAdminMessage
@@ -5167,6 +4748,7 @@ function ensureAdminTemplateStyles() {
     updateAdminLogPanel();
     closeAdminTemplateModal({ skipFocus: true });
     closeAdminS3Modal({ skipFocus: true });
+    closeCronManagementModal(false);
     if (lastFocusedElement && typeof lastFocusedElement.focus === 'function') {
       lastFocusedElement.focus();
     }
@@ -5176,7 +4758,9 @@ function ensureAdminTemplateStyles() {
     if (event.key === 'Escape') {
       event.preventDefault();
       event.stopPropagation();
-      if (ensureAdminTemplateState().visible) {
+      if (adminElements.cronManagementModal && adminElements.cronManagementModal.classList.contains('is-visible')) {
+        closeCronManagementModal(true);
+      } else if (ensureAdminTemplateState().visible) {
         closeAdminTemplateModal();
       } else if (ensureAdminS3State().visible) {
         closeAdminS3Modal();
@@ -5195,6 +4779,9 @@ function ensureAdminTemplateStyles() {
         renderAdminRows('responsibles', state.admin.settings.responsibles, shouldFocus);
         renderAdminRows('block2', state.admin.settings.block2, false);
         renderAdminRows('block3', state.admin.settings.block3, false);
+        if (adminElements.aiBriefProviderSelect) {
+          adminElements.aiBriefProviderSelect.value = state.admin.settings.aiBriefProvider === 'deepseek' ? 'deepseek' : 'default';
+        }
         updateAdminMessage(data && data.message ? data.message : 'Настройки загружены.', false);
         return data;
       })
@@ -5232,7 +4819,10 @@ function ensureAdminTemplateStyles() {
       settings: {
         responsibles: responsibles,
         block2: directors,
-        block3: subordinates
+        block3: subordinates,
+        aiBriefProvider: adminElements.aiBriefProviderSelect && adminElements.aiBriefProviderSelect.value === 'deepseek'
+          ? 'deepseek'
+          : 'default'
       }
     };
 

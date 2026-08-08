@@ -3,6 +3,7 @@
   var DOCUMENTS_SCRIPT_SOURCE = document.currentScript && document.currentScript.src
     ? document.currentScript.src
     : '';
+  var DOCUMENTS_FEATURES_MODULE_VERSION = 'automatic-snapshots-20260807'; // Обновляет клиент после удаления массового TEXT audit и перехода на событийную S3-синхронизацию.
   var DATE_FORMATTER = new Intl.DateTimeFormat('ru-RU');
   var DATE_TIME_FORMATTER;
   var docsLogger = {
@@ -756,6 +757,7 @@
     if (DOCUMENTS_SCRIPT_SOURCE) {
       moduleUrl.search = new URL(DOCUMENTS_SCRIPT_SOURCE, document.baseURI).search;
     }
+    moduleUrl.searchParams.set('featuresVersion', DOCUMENTS_FEATURES_MODULE_VERSION);
     return moduleUrl.href;
   }
 

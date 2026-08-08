@@ -37,6 +37,11 @@ function resolve_documents_root(): string
 
 define('DOCUMENTS_ROOT', resolve_documents_root());
 const REGISTRY_FILENAME = 'registry.json';
+const REGISTRY_BACKUP_FILENAME = 'registry.backup.json';
+const REGISTRY_LOCK_FILENAME = '.registry.lock';
+const REGISTRY_S3_BACKUP_STATE_FILENAME = '.registry_s3_backup_state.json';
+const REGISTRY_S3_BACKUP_LOCK_FILENAME = '.registry_s3_backup.lock';
+const REGISTRY_S3_BACKUP_RELATIVE_PATH = 'registry-backups/registry.json';
 const OUTGOING_REGISTRY_FILENAME = 'outgoing_registry.json';
 const ORDERS_REGISTRY_FILENAME = 'orders_registry.json';
 const DIRECTIVES_REGISTRY_FILENAME = 'directives_registry.json';
@@ -182,32 +187,31 @@ const DOCS_TASK_RAG_MAX_RESPONSE_BYTES = 10485760; // 10 МБ защищают P
 const DOCS_TASK_RAG_SEARCH_MAX_RESULTS = 5;
 const DOCS_TASK_RAG_READY_TOKEN_TTL_SECONDS = 1800; // Готовый индекс повторно используется 30 минут; новая индексация выполняется асинхронно.
 const DOCS_AI_TASK_SEARCH_LOCAL_FUZZY_CANDIDATE_LIMIT = 512; // Ограничивает проверку похожих слов, сохраняя поиск по всему OCR-файлу.
+const DOCS_AI_TASK_SEARCH_OCR_TEXT_MAX_LENGTH = 10485760; // Защищает память при подготовке OCR-текста для поиска.
 const DOCS_S3_READ_MAX_BYTES = 1048576; // 1 МБ: админский предпросмотр читает только текстовые файлы.
 const DOCS_EXTERNAL_COMMAND_OUTPUT_MAX_BYTES = 2097152; // 2 МБ защищают PHP от безграничного stdout дочернего процесса.
 const DOCS_PRIVATE_OCR_DEFAULT_WEBHOOK_URL = 'http://10.0.0.2:5678/webhook/ocr';
 const DOCS_PRIVATE_OCR_CREATE_TIMEOUT_SECONDS = 55;
 const DOCS_PRIVATE_OCR_REQUEST_TIMEOUT_SECONDS = 30;
 const DOCS_PRIVATE_OCR_CONNECT_TIMEOUT_SECONDS = 30;
-const DOCS_PRIVATE_OCR_MAX_RESPONSE_BYTES = 10485760; // 10 МБ достаточно для JSON с текстом большого документа.
-const DOCS_PRIVATE_OCR_MAX_TEXT_LENGTH = 5000000; // Ограничение защищает размер пользовательских S3-снимков.
-const DOCS_OCR_SNAPSHOT_READ_MEMORY_LIMIT = '512M'; // Большой лимит применяется только при точечном просмотре OCR из S3-снимка.
-const DOCS_OCR_BACKFILL_STATE_FILENAME = 'ocr_backfill_state.json';
-const DOCS_OCR_BACKFILL_LOCK_FILENAME = '.ocr_backfill_worker.lock';
-const DOCS_OCR_GLOBAL_WORKER_LOCK_FILENAME = '.documents_ocr_global_worker.lock';
-const DOCS_OCR_CRON_CYCLE_LOCK_FILENAME = '.documents_ocr_cron_cycle.lock';
-const DOCS_OCR_CRON_STATE_FILENAME = 'documents_ocr_cron_state.json';
-const DOCS_OCR_CRON_COMMAND = 'documents-ocr-cron';
-const DOCS_OCR_CRON_RUN_WINDOW_SECONDS = 50;
-const DOCS_OCR_CRON_POLL_INTERVAL_MILLISECONDS = 3000;
-const DOCS_OCR_BACKFILL_MAX_ATTEMPTS = 3;
-const DOCS_OCR_BACKFILL_RECENT_FAILURES_LIMIT = 30;
-const DOCS_OCR_BACKFILL_WORKFLOW_VERSION = 7; // Версия 7 обрабатывает новые загрузки и отдельную очередь существующих файлов.
-const DOCS_OCR_SNAPSHOT_DELIVERY_VERSION = 2; // Версия пофайловой доставки OCR в users/{telegramId}.json участников.
-const DOCS_OCR_DELIVERY_REPAIR_GENERATION = 1; // Один раз возвращает в очередь старые ошибки доставки после исправления блокировки JSON.
-const DOCS_OCR_S3_CHECK_TOTAL_TIMEOUT_SECONDS = 45;
-const DOCS_OCR_S3_CHECK_PARTICIPANT_TIMEOUT_SECONDS = 8;
-const DOCS_OCR_S3_CHECK_MAX_TIMEOUT_SECONDS = 300;
-const DOCS_OCR_LIVE_UPLOAD_GENERATION = 1; // Признак файлов, загруженных после включения фонового OCR jobs.
+const DOCS_PRIVATE_OCR_MAX_RESPONSE_BYTES = 10485760;
+const DOCS_PRIVATE_OCR_MAX_TEXT_LENGTH = 10485760;
+const DOCS_AI_BRIEF_OCR_WAIT_SECONDS = 110;
+const DOCS_AI_BRIEF_MAX_SOURCE_CHARS = 60000;
+const DOCS_AI_BRIEF_MAX_SUMMARY_CHARS = 2000;
+const DOCS_LIVE_OCR_WORKER_COMMAND = 'documents-live-ocr-worker';
+const DOCS_LIVE_OCR_QUEUE_FILENAME = '.live_ocr_queue.json';
+const DOCS_LIVE_OCR_QUEUE_LOCK_FILENAME = '.live_ocr_queue.lock';
+const DOCS_LIVE_OCR_WORKER_LOCK_FILENAME = '.live_ocr_worker.lock';
+const DOCS_LIVE_OCR_WORKER_LOG_FILENAME = 'documents-live-ocr-worker.log';
+const DOCS_LIVE_OCR_POLL_INTERVAL_SECONDS = 3;
+const DOCS_LIVE_OCR_RETRY_DELAY_SECONDS = 30;
+const DOCS_LIVE_OCR_MAX_ATTEMPTS = 5;
+const DOCS_LIVE_OCR_MAX_WORKER_SECONDS = 21600;
+const DOCS_LEGACY_OCR_CRON_MARKER = '# BIMMAX_DOCUMENTS_OCR_CRON';
+const DOCS_LEGACY_OCR_CRON_COMMAND = 'documents-ocr-cron';
+const DOCS_TASK_SNAPSHOT_READ_MEMORY_LIMIT = '512M';
+const DOCS_SYSTEM_CRONTAB_TIMEOUT_SECONDS = 10;
 
 function sanitize_instruction(?string $value): string
 {
@@ -3986,12 +3990,24 @@ require_once __DIR__ . '/sanitize.php';
 if (PHP_SAPI === 'cli'
     && isset($argv[1])
     && is_string($argv[1])
-    && trim($argv[1]) === DOCS_OCR_CRON_COMMAND
+    && trim($argv[1]) === DOCS_LEGACY_OCR_CRON_COMMAND
 ) {
-    $cronResult = docs_run_ocr_cron_window();
-    $encodedCronResult = json_encode($cronResult, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    fwrite(STDOUT, ($encodedCronResult !== false ? $encodedCronResult : '{"ok":false}') . PHP_EOL);
-    exit(!empty($cronResult['ok']) ? 0 : 1);
+    fwrite(STDOUT, '{"ok":true,"worked":false,"reason":"automatic_ocr_removed"}' . PHP_EOL);
+    exit(0);
+}
+
+if (PHP_SAPI === 'cli'
+    && isset($argv[1], $argv[2])
+    && is_string($argv[1])
+    && trim($argv[1]) === DOCS_LIVE_OCR_WORKER_COMMAND
+) {
+    $workerFolder = sanitize_folder_name((string) $argv[2]);
+    $workerResult = $workerFolder !== ''
+        ? docs_run_live_ocr_worker($workerFolder)
+        : ['ok' => false, 'reason' => 'folder_missing'];
+    $encodedWorkerResult = json_encode($workerResult, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    fwrite(STDOUT, ($encodedWorkerResult !== false ? $encodedWorkerResult : '{"ok":false}') . PHP_EOL);
+    exit(!empty($workerResult['ok']) ? 0 : 1);
 }
 
 if (session_status() === PHP_SESSION_NONE) {
@@ -4221,6 +4237,13 @@ function respond_error(string $message, int $status = 400, array $extra = []): v
 
 function respond_success(array $payload = []): void
 {
+    if (docs_has_pending_registry_s3_backups()) {
+        respond_success_with_background_fallback(
+            $payload,
+            static function (): void {}
+        );
+    }
+
     log_docs_event('Success response', [
         'status' => 200,
         'action' => docs_current_action(),
@@ -4242,14 +4265,18 @@ function respond_success_with_background_task(array $payload, callable $backgrou
         log_docs_event('Background task skipped: fastcgi_finish_request unavailable', [
             'action' => docs_current_action(),
         ]);
-        respond(array_merge(['success' => true], $payload));
+        docs_flush_success_response_before_background($payload);
+        docs_run_pending_registry_s3_backups();
+        exit;
     }
 
     http_response_code(200);
     docs_send_json_payload(array_merge(['success' => true], $payload));
 
     fastcgi_finish_request();
+    docs_run_pending_registry_s3_backups();
     $backgroundTask();
+    docs_run_pending_registry_s3_backups();
     exit;
 }
 
@@ -4260,7 +4287,9 @@ function respond_success_with_background_fallback(array $payload, callable $back
     }
 
     docs_flush_success_response_before_background($payload);
+    docs_run_pending_registry_s3_backups();
     $backgroundTask();
+    docs_run_pending_registry_s3_backups();
     exit;
 }
 
@@ -4759,19 +4788,34 @@ function docs_prepare_incoming_file_storage_upload(
     return $storedFile;
 }
 
-function docs_build_new_file_ocr_state(bool $isLiveUpload = false): array
+function docs_is_live_ocr_supported_file(array $file): bool
 {
-    $state = [
+    $name = (string) ($file['originalName'] ?? ($file['storedName'] ?? ''));
+    $extension = strtolower((string) pathinfo($name, PATHINFO_EXTENSION));
+
+    return in_array($extension, [
+        'pdf', 'doc', 'docx',
+        'png', 'jpg', 'jpeg', 'tif', 'tiff', 'bmp', 'gif', 'webp',
+    ], true);
+}
+
+function docs_build_new_file_ocr_state(): array
+{
+    return [
         'status' => 'pending',
         'engine' => 'n8n_jobs',
+        'source' => 'live_upload',
         'queuedAt' => date('c'),
     ];
-    if ($isLiveUpload) {
-        $state['uploadGeneration'] = DOCS_OCR_LIVE_UPLOAD_GENERATION;
-        $state['uploadOrigin'] = 'live_upload';
+}
+
+function docs_attach_live_ocr_state(array $file): array
+{
+    if (docs_is_live_ocr_supported_file($file)) {
+        $file['ocr'] = docs_build_new_file_ocr_state();
     }
 
-    return $state;
+    return $file;
 }
 
 function docs_resolve_private_ocr_webhook_url(): string
@@ -4799,7 +4843,9 @@ function docs_detect_private_ocr_mime_type(string $localPath, string $originalNa
     try {
         $mimeType = @finfo_file($finfo, $localPath);
     } finally {
-        finfo_close($finfo);
+        if (PHP_VERSION_ID < 80500) {
+            finfo_close($finfo);
+        }
     }
 
     $detectedMimeType = is_string($mimeType) ? strtolower(trim($mimeType)) : '';
@@ -4821,21 +4867,21 @@ function docs_private_ocr_json_request(
     array $curlOptions = [],
     int $maxResponseBytes = DOCS_PRIVATE_OCR_MAX_RESPONSE_BYTES
 ): array {
+    if (!function_exists('curl_init')) {
+        return ['ok' => false, 'httpStatus' => 0, 'error' => 'PHP cURL недоступен.'];
+    }
+
     $responseBody = '';
     $responseTooLarge = false;
     $curl = curl_init($url);
     if ($curl === false) {
-        return [
-            'ok' => false,
-            'httpStatus' => 0,
-            'error' => 'Не удалось подготовить OCR-запрос.',
-        ];
+        return ['ok' => false, 'httpStatus' => 0, 'error' => 'Не удалось подготовить OCR-запрос.'];
     }
 
     curl_setopt_array($curl, array_replace([
         CURLOPT_RETURNTRANSFER => false,
         CURLOPT_CONNECTTIMEOUT => DOCS_PRIVATE_OCR_CONNECT_TIMEOUT_SECONDS,
-        CURLOPT_TIMEOUT => $timeoutSeconds,
+        CURLOPT_TIMEOUT => max(1, $timeoutSeconds),
         CURLOPT_FOLLOWLOCATION => false,
         CURLOPT_WRITEFUNCTION => static function ($handle, string $chunk) use (
             &$responseBody,
@@ -4852,19 +4898,17 @@ function docs_private_ocr_json_request(
     ], $curlOptions));
 
     try {
-        $executed = curl_exec($curl);
+        curl_exec($curl);
         $httpStatus = (int) curl_getinfo($curl, CURLINFO_HTTP_CODE);
         $curlError = trim((string) curl_error($curl));
     } finally {
-        curl_close($curl);
+        if (PHP_VERSION_ID < 80500) {
+            curl_close($curl);
+        }
     }
 
     if ($responseTooLarge) {
-        return [
-            'ok' => false,
-            'httpStatus' => $httpStatus,
-            'error' => 'Ответ OCR превышает допустимый размер.',
-        ];
+        return ['ok' => false, 'httpStatus' => $httpStatus, 'error' => 'Ответ OCR превышает допустимый размер.'];
     }
 
     $decoded = json_decode($responseBody, true);
@@ -4882,137 +4926,37 @@ function docs_private_ocr_json_request(
     }
 
     if (!is_array($decoded)) {
-        return [
-            'ok' => false,
-            'httpStatus' => $httpStatus,
-            'error' => 'OCR-сервер вернул некорректный JSON.',
-        ];
+        return ['ok' => false, 'httpStatus' => $httpStatus, 'error' => 'OCR-сервер вернул некорректный JSON.'];
     }
 
-    return [
-        'ok' => true,
-        'httpStatus' => $httpStatus,
-        'payload' => $decoded,
-    ];
+    return ['ok' => true, 'httpStatus' => $httpStatus, 'payload' => $decoded];
 }
 
-function docs_private_ocr_idempotency_key(string $localPath, bool $forceNewJob = false): string
+function docs_private_ocr_idempotency_key(string $localPath): string
 {
     $digest = @hash_file('sha256', $localPath);
     if (!is_string($digest) || $digest === '') {
-        $fallback = $localPath . '|' . (string) (@filesize($localPath) ?: 0) . '|' . (string) (@filemtime($localPath) ?: 0);
-        $digest = hash('sha256', $fallback);
+        $digest = hash('sha256', $localPath . '|' . (string) (@filesize($localPath) ?: 0));
     }
 
-    if ($forceNewJob) {
-        try {
-            $retryToken = bin2hex(random_bytes(8));
-        } catch (Throwable $error) {
-            $retryToken = sha1(uniqid('ocr-retry-', true));
-        }
-        return 'documents-ocr-retry-' . $digest . '-' . $retryToken;
-    }
-
-    return 'documents-ocr-' . $digest;
-}
-
-function docs_private_ocr_error_result(
-    string $mimeType,
-    string $error,
-    int $httpStatus = 0,
-    string $jobId = ''
-): array {
-    return array_filter([
-        'status' => 'error',
-        'mimeType' => $mimeType,
-        'httpStatus' => $httpStatus > 0 ? $httpStatus : null,
-        'jobId' => $jobId !== '' ? $jobId : null,
-        'error' => sanitize_text_field($error, 500),
-    ], static function ($value): bool {
-        return $value !== null && $value !== '';
-    });
+    return 'documents-live-ocr-' . $digest;
 }
 
 function docs_normalize_private_ocr_job_payload(array $payload): array
 {
-    if (isset($payload[0]) && is_array($payload[0])) {
-        return $payload[0];
-    }
-
-    return $payload;
+    return isset($payload[0]) && is_array($payload[0]) ? $payload[0] : $payload;
 }
 
-function docs_fetch_private_ocr_job_result(string $jobId): array
+function docs_create_private_ocr_job(string $localPath, string $originalName): array
 {
-    $jobId = sanitize_text_field($jobId, 160);
-    if ($jobId === '') {
-        return [
-            'ok' => false,
-            'httpStatus' => 0,
-            'error' => 'Не указан OCR job_id.',
-        ];
-    }
-
-    $response = docs_private_ocr_json_request(
-        docs_resolve_private_ocr_webhook_url() . '/result?' . http_build_query(['job_id' => $jobId]),
-        DOCS_PRIVATE_OCR_REQUEST_TIMEOUT_SECONDS
-    );
-    if (empty($response['ok'])) {
-        return [
-            'ok' => false,
-            'httpStatus' => (int) ($response['httpStatus'] ?? 0),
-            'error' => (string) ($response['error'] ?? 'Не удалось получить результат OCR.'),
-        ];
-    }
-
-    $payload = isset($response['payload']) && is_array($response['payload'])
-        ? docs_normalize_private_ocr_job_payload($response['payload'])
-        : [];
-    if (!isset($payload['text']) || !is_string($payload['text'])) {
-        return [
-            'ok' => false,
-            'httpStatus' => (int) ($response['httpStatus'] ?? 0),
-            'error' => 'OCR-сервер не вернул текст результата.',
-        ];
-    }
-
-    $text = trim($payload['text']);
-    if ($text === '') {
-        return [
-            'ok' => false,
-            'httpStatus' => (int) ($response['httpStatus'] ?? 200),
-            'error' => 'OCR завершён, но распознанный текст пуст.',
-        ];
-    }
-    $textWasTruncated = mb_strlen($text, 'UTF-8') > DOCS_PRIVATE_OCR_MAX_TEXT_LENGTH;
-    if ($textWasTruncated) {
-        $text = mb_substr($text, 0, DOCS_PRIVATE_OCR_MAX_TEXT_LENGTH, 'UTF-8');
-    }
-
-    return [
-        'ok' => true,
-        'httpStatus' => (int) ($response['httpStatus'] ?? 200),
-        'jobId' => $jobId,
-        'text' => $text,
-        'pagesCount' => isset($payload['pages']) && is_array($payload['pages']) ? count($payload['pages']) : 0,
-        'textTruncated' => $textWasTruncated,
-    ];
-}
-
-function docs_create_private_ocr_job(
-    string $localPath,
-    string $originalName,
-    bool $forceNewJob = false
-): array {
     if (!is_file($localPath) || !is_readable($localPath)) {
-        return docs_private_ocr_error_result('', 'Файл недоступен для OCR.');
+        return ['ok' => false, 'error' => 'Файл недоступен для OCR.'];
+    }
+    if (!class_exists('CURLFile')) {
+        return ['ok' => false, 'error' => 'PHP CURLFile недоступен.'];
     }
 
     $mimeType = docs_detect_private_ocr_mime_type($localPath, $originalName);
-    if (!function_exists('curl_init') || !class_exists('CURLFile')) {
-        return docs_private_ocr_error_result($mimeType, 'PHP cURL недоступен.');
-    }
-
     if ($mimeType === '') {
         $mimeType = 'application/octet-stream';
     }
@@ -5022,42 +4966,31 @@ function docs_create_private_ocr_job(
         DOCS_PRIVATE_OCR_CREATE_TIMEOUT_SECONDS,
         [
             CURLOPT_POST => true,
-            CURLOPT_POSTFIELDS => [
-                'file' => new CURLFile($localPath, $mimeType, $uploadName),
-            ],
-            CURLOPT_HTTPHEADER => [
-                'Idempotency-Key: ' . docs_private_ocr_idempotency_key($localPath, $forceNewJob),
-            ],
+            CURLOPT_POSTFIELDS => ['file' => new CURLFile($localPath, $mimeType, $uploadName)],
+            CURLOPT_HTTPHEADER => ['Idempotency-Key: ' . docs_private_ocr_idempotency_key($localPath)],
         ],
         1048576
     );
     if (empty($response['ok'])) {
-        return docs_private_ocr_error_result(
-            $mimeType,
-            (string) ($response['error'] ?? 'Не удалось создать OCR-задание.'),
-            (int) ($response['httpStatus'] ?? 0)
-        );
+        return [
+            'ok' => false,
+            'httpStatus' => (int) ($response['httpStatus'] ?? 0),
+            'error' => sanitize_text_field((string) ($response['error'] ?? 'Не удалось создать OCR-задание.'), 500),
+        ];
     }
 
-    $payload = isset($response['payload']) && is_array($response['payload'])
-        ? docs_normalize_private_ocr_job_payload($response['payload'])
-        : [];
+    $payload = docs_normalize_private_ocr_job_payload((array) ($response['payload'] ?? []));
     $jobId = sanitize_text_field((string) ($payload['job_id'] ?? ''), 160);
     if ($jobId === '') {
-        return docs_private_ocr_error_result(
-            $mimeType,
-            'OCR-сервер не вернул job_id.',
-            (int) ($response['httpStatus'] ?? 0)
-        );
+        return ['ok' => false, 'httpStatus' => (int) ($response['httpStatus'] ?? 0), 'error' => 'OCR-сервер не вернул job_id.'];
     }
 
     return [
-        'status' => sanitize_text_field((string) ($payload['status'] ?? 'queued'), 40),
-        'mimeType' => $mimeType,
-        'httpStatus' => (int) ($response['httpStatus'] ?? 202),
+        'ok' => true,
         'jobId' => $jobId,
-        'jobReused' => !empty($payload['reused']),
+        'status' => strtolower(sanitize_text_field((string) ($payload['status'] ?? 'queued'), 40)),
         'progress' => max(0, min(100, (int) ($payload['progress'] ?? 0))),
+        'reused' => !empty($payload['reused']),
     ];
 }
 
@@ -5078,39 +5011,795 @@ function docs_fetch_private_ocr_job_status(string $jobId): array
         return [
             'ok' => false,
             'httpStatus' => (int) ($response['httpStatus'] ?? 0),
-            'error' => sanitize_text_field(
-                (string) ($response['error'] ?? 'Не удалось проверить OCR-задание.'),
-                500
-            ),
+            'error' => sanitize_text_field((string) ($response['error'] ?? 'Не удалось проверить OCR-задание.'), 500),
         ];
     }
 
-    $payload = isset($response['payload']) && is_array($response['payload'])
-        ? docs_normalize_private_ocr_job_payload($response['payload'])
-        : [];
+    $payload = docs_normalize_private_ocr_job_payload((array) ($response['payload'] ?? []));
     $status = strtolower(sanitize_text_field((string) ($payload['status'] ?? ''), 40));
     if (!in_array($status, ['queued', 'running', 'succeeded', 'failed', 'cancelled'], true)) {
-        return [
-            'ok' => false,
-            'httpStatus' => (int) ($response['httpStatus'] ?? 0),
-            'error' => 'OCR-сервер вернул неизвестный статус задания.',
-        ];
+        return ['ok' => false, 'error' => 'OCR-сервер вернул неизвестный статус задания.'];
     }
 
     return [
         'ok' => true,
-        'httpStatus' => (int) ($response['httpStatus'] ?? 200),
-        'jobId' => $jobId,
         'status' => $status,
         'progress' => max(0, min(100, (int) ($payload['progress'] ?? 0))),
         'currentPage' => max(0, (int) ($payload['current_page'] ?? 0)),
         'totalPages' => max(0, (int) ($payload['total_pages'] ?? 0)),
-        'createdAt' => sanitize_text_field((string) ($payload['created_at'] ?? ''), 80),
-        'startedAt' => sanitize_text_field((string) ($payload['started_at'] ?? ''), 80),
-        'completedAt' => sanitize_text_field((string) ($payload['completed_at'] ?? ''), 80),
-        'resultUrl' => sanitize_text_field((string) ($payload['result_url'] ?? ''), 500),
         'error' => sanitize_text_field((string) ($payload['error'] ?? ($payload['message'] ?? '')), 500),
     ];
+}
+
+function docs_fetch_private_ocr_job_result(string $jobId): array
+{
+    $jobId = sanitize_text_field($jobId, 160);
+    if ($jobId === '') {
+        return ['ok' => false, 'error' => 'Не указан OCR job_id.'];
+    }
+
+    $response = docs_private_ocr_json_request(
+        docs_resolve_private_ocr_webhook_url() . '/result?' . http_build_query(['job_id' => $jobId]),
+        DOCS_PRIVATE_OCR_REQUEST_TIMEOUT_SECONDS
+    );
+    if (empty($response['ok'])) {
+        return [
+            'ok' => false,
+            'httpStatus' => (int) ($response['httpStatus'] ?? 0),
+            'error' => sanitize_text_field((string) ($response['error'] ?? 'Не удалось получить результат OCR.'), 500),
+        ];
+    }
+
+    $payload = docs_normalize_private_ocr_job_payload((array) ($response['payload'] ?? []));
+    $text = isset($payload['text']) && is_string($payload['text']) ? trim($payload['text']) : '';
+    if ($text === '') {
+        return ['ok' => false, 'error' => 'OCR завершён, но распознанный текст пуст.'];
+    }
+    $textWasTruncated = mb_strlen($text, 'UTF-8') > DOCS_PRIVATE_OCR_MAX_TEXT_LENGTH;
+    if ($textWasTruncated) {
+        $text = mb_substr($text, 0, DOCS_PRIVATE_OCR_MAX_TEXT_LENGTH, 'UTF-8');
+    }
+
+    return [
+        'ok' => true,
+        'jobId' => $jobId,
+        'text' => $text,
+        'pagesCount' => isset($payload['pages']) && is_array($payload['pages']) ? count($payload['pages']) : 0,
+        'textTruncated' => $textWasTruncated,
+    ];
+}
+
+function docs_wait_for_private_ocr_text(string $jobId): array
+{
+    $deadline = microtime(true) + DOCS_AI_BRIEF_OCR_WAIT_SECONDS;
+    $lastProgress = 0;
+
+    while (microtime(true) < $deadline) {
+        $status = docs_fetch_private_ocr_job_status($jobId);
+        if (empty($status['ok'])) {
+            return $status;
+        }
+
+        $lastProgress = max($lastProgress, (int) ($status['progress'] ?? 0));
+        $state = (string) ($status['status'] ?? '');
+        if ($state === 'succeeded') {
+            return docs_fetch_private_ocr_job_result($jobId);
+        }
+        if ($state === 'failed' || $state === 'cancelled') {
+            return [
+                'ok' => false,
+                'error' => sanitize_text_field(
+                    (string) ($status['error'] ?? 'Приватный OCR не смог обработать файл.'),
+                    500
+                ),
+            ];
+        }
+
+        usleep(750000);
+    }
+
+    return [
+        'ok' => false,
+        'error' => 'Приватный OCR не завершился за отведённое время.',
+        'progress' => $lastProgress,
+    ];
+}
+
+function docs_normalize_ai_brief_provider($value): string
+{
+    $provider = strtolower(sanitize_text_field(is_scalar($value) ? (string) $value : '', 30));
+
+    return $provider === 'deepseek' ? 'deepseek' : 'default';
+}
+
+function docs_resolve_ai_brief_config(array $settings): array
+{
+    $provider = docs_normalize_ai_brief_provider($settings['aiBriefProvider'] ?? 'default');
+    if ($provider !== 'deepseek') {
+        return docs_ai_task_search_resolve_ai_config() + [
+            'provider' => 'default',
+            'providerLabel' => 'Основная модель',
+        ];
+    }
+
+    $env = docs_ai_task_search_load_env();
+    $apiKey = trim((string) ($env['DEEPSEEK_API_KEY'] ?? ''));
+    $model = trim((string) ($env['DEEPSEEK_MODEL'] ?? 'deepseek-chat'));
+    $baseUrl = trim((string) ($env['DEEPSEEK_BASE_URL'] ?? 'https://api.deepseek.com/v1'));
+
+    return [
+        'apiKey' => $apiKey,
+        'model' => $model !== '' ? $model : 'deepseek-chat',
+        'baseUrl' => $baseUrl !== '' ? $baseUrl : 'https://api.deepseek.com/v1',
+        'isGroq' => false,
+        'isGoogleOpenAiCompat' => false,
+        'provider' => 'deepseek',
+        'providerLabel' => 'DeepSeek',
+    ];
+}
+
+function docs_generate_ai_brief_from_ocr_text(string $ocrText, array $config): array
+{
+    if (trim((string) ($config['apiKey'] ?? '')) === '') {
+        $providerLabel = sanitize_text_field((string) ($config['providerLabel'] ?? 'ИИ'), 80);
+        return [
+            'ok' => false,
+            'status' => 503,
+            'error' => 'Для провайдера «' . $providerLabel . '» не задан API-ключ в .env.',
+        ];
+    }
+
+    $sourceText = mb_substr(trim($ocrText), 0, DOCS_AI_BRIEF_MAX_SOURCE_CHARS, 'UTF-8');
+    if ($sourceText === '') {
+        return ['ok' => false, 'status' => 422, 'error' => 'OCR не вернул текст для анализа.'];
+    }
+
+    $request = docs_ai_task_search_request_json(
+        $config,
+        'Ты анализируешь деловой документ. Верни только JSON {"summary":"..."}. '
+            . 'Кратко и конкретно опиши: о чем документ, кто кому пишет, что требуется сделать, сроки, суммы и риски, если они есть. '
+            . 'Не выдумывай отсутствующие факты. Ответ на русском языке, не более 1800 символов.',
+        ['ocrText' => $sourceText],
+        'ИИ не вернул корректный краткий вывод.',
+        0.1
+    );
+    if (empty($request['ok'])) {
+        return $request;
+    }
+
+    $summary = sanitize_text_field(
+        (string) (($request['parsed']['summary'] ?? ($request['parsed']['response'] ?? ''))),
+        DOCS_AI_BRIEF_MAX_SUMMARY_CHARS
+    );
+    if ($summary === '') {
+        return ['ok' => false, 'status' => 502, 'error' => 'ИИ вернул пустой краткий вывод.'];
+    }
+
+    return [
+        'ok' => true,
+        'summary' => $summary,
+        'model' => sanitize_text_field((string) ($config['model'] ?? ''), 120),
+        'provider' => docs_normalize_ai_brief_provider($config['provider'] ?? 'default'),
+    ];
+}
+
+function docs_live_ocr_queue_path(string $folder): string
+{
+    return ensure_organization_directory($folder) . '/' . DOCS_LIVE_OCR_QUEUE_FILENAME;
+}
+
+function docs_live_ocr_queue_lock_path(string $folder): string
+{
+    return ensure_organization_directory($folder) . '/' . DOCS_LIVE_OCR_QUEUE_LOCK_FILENAME;
+}
+
+function docs_live_ocr_worker_lock_path(string $folder): string
+{
+    return ensure_organization_directory($folder) . '/' . DOCS_LIVE_OCR_WORKER_LOCK_FILENAME;
+}
+
+function docs_default_live_ocr_queue(string $folder): array
+{
+    return [
+        'version' => 1,
+        'folder' => $folder,
+        'updatedAt' => date('c'),
+        'items' => [],
+        'recent' => [],
+    ];
+}
+
+function docs_load_live_ocr_queue_unlocked(string $folder): array
+{
+    $path = docs_live_ocr_queue_path($folder);
+    if (!is_file($path) || !is_readable($path)) {
+        return docs_default_live_ocr_queue($folder);
+    }
+    $raw = @file_get_contents($path);
+    $decoded = is_string($raw) && trim($raw) !== '' ? json_decode($raw, true) : null;
+    if (!is_array($decoded) || (int) ($decoded['version'] ?? 0) !== 1) {
+        return docs_default_live_ocr_queue($folder);
+    }
+    $decoded['folder'] = $folder;
+    $decoded['items'] = isset($decoded['items']) && is_array($decoded['items']) ? $decoded['items'] : [];
+    $decoded['recent'] = isset($decoded['recent']) && is_array($decoded['recent']) ? $decoded['recent'] : [];
+
+    return $decoded;
+}
+
+function docs_save_live_ocr_queue_unlocked(string $folder, array $state): bool
+{
+    $path = docs_live_ocr_queue_path($folder);
+    $state['version'] = 1;
+    $state['folder'] = $folder;
+    $state['updatedAt'] = date('c');
+    $state['items'] = array_values(isset($state['items']) && is_array($state['items']) ? $state['items'] : []);
+    $state['recent'] = array_slice(
+        array_values(isset($state['recent']) && is_array($state['recent']) ? $state['recent'] : []),
+        -30
+    );
+    $json = json_encode(
+        $state,
+        JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE
+    );
+    if (!is_string($json)) {
+        return false;
+    }
+
+    $tempPath = tempnam(dirname($path), '.live_ocr_queue_');
+    if (!is_string($tempPath) || $tempPath === '') {
+        return false;
+    }
+    try {
+        $written = @file_put_contents($tempPath, $json . PHP_EOL, LOCK_EX);
+        if ($written === false || $written !== strlen($json) + 1) {
+            return false;
+        }
+        @chmod($tempPath, 0664);
+        return @rename($tempPath, $path);
+    } finally {
+        if (is_file($tempPath)) {
+            @unlink($tempPath);
+        }
+    }
+}
+
+function docs_mutate_live_ocr_queue(string $folder, callable $callback): array
+{
+    $folder = sanitize_folder_name($folder);
+    if ($folder === '') {
+        return ['ok' => false, 'error' => 'Не указана организация OCR-очереди.'];
+    }
+
+    $handle = @fopen(docs_live_ocr_queue_lock_path($folder), 'c+');
+    if ($handle === false || !@flock($handle, LOCK_EX)) {
+        if (is_resource($handle)) {
+            fclose($handle);
+        }
+        return ['ok' => false, 'error' => 'Не удалось заблокировать OCR-очередь.'];
+    }
+
+    try {
+        $state = docs_load_live_ocr_queue_unlocked($folder);
+        $result = $callback($state);
+        if (!docs_save_live_ocr_queue_unlocked($folder, $state)) {
+            return ['ok' => false, 'error' => 'Не удалось сохранить OCR-очередь.'];
+        }
+        return is_array($result) ? array_merge(['ok' => true], $result) : ['ok' => true];
+    } finally {
+        @flock($handle, LOCK_UN);
+        fclose($handle);
+    }
+}
+
+function docs_live_ocr_item_key(string $documentId, string $storedName): string
+{
+    return hash('sha256', $documentId . "\0" . $storedName);
+}
+
+function docs_enqueue_live_ocr_uploads(string $folder, string $documentId, array $uploads): array
+{
+    $documentId = sanitize_text_field($documentId, 200);
+    $newItems = [];
+    foreach ($uploads as $upload) {
+        $file = isset($upload['file']) && is_array($upload['file']) ? $upload['file'] : null;
+        if (!is_array($file) || !docs_is_live_ocr_supported_file($file)) {
+            continue;
+        }
+        $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
+        if ($storedName === '' || $documentId === '') {
+            continue;
+        }
+        $key = docs_live_ocr_item_key($documentId, $storedName);
+        $newItems[$key] = [
+            'key' => $key,
+            'documentId' => $documentId,
+            'storedName' => $storedName,
+            'originalName' => sanitize_text_field((string) ($file['originalName'] ?? $storedName), 255),
+            'status' => 'pending',
+            'jobId' => '',
+            'attempts' => 0,
+            'nextAttemptAt' => '',
+            'error' => '',
+            'queuedAt' => date('c'),
+        ];
+    }
+    if (empty($newItems)) {
+        return ['ok' => true, 'queued' => 0];
+    }
+
+    return docs_mutate_live_ocr_queue($folder, static function (array &$state) use ($newItems): array {
+        $items = isset($state['items']) && is_array($state['items']) ? $state['items'] : [];
+        $indexByKey = [];
+        foreach ($items as $index => $item) {
+            if (is_array($item) && isset($item['key'])) {
+                $indexByKey[(string) $item['key']] = $index;
+            }
+        }
+        $queued = 0;
+        foreach ($newItems as $key => $item) {
+            if (isset($indexByKey[$key])) {
+                $existing = is_array($items[$indexByKey[$key]] ?? null) ? $items[$indexByKey[$key]] : [];
+                if (!in_array((string) ($existing['status'] ?? ''), ['completed', 'failed', 'skipped'], true)) {
+                    continue;
+                }
+                $items[$indexByKey[$key]] = $item;
+            } else {
+                $items[] = $item;
+            }
+            $queued++;
+        }
+        $state['items'] = array_values($items);
+        return ['queued' => $queued];
+    });
+}
+
+function docs_get_live_ocr_queue_item(string $folder): array
+{
+    $handle = @fopen(docs_live_ocr_queue_lock_path($folder), 'c+');
+    if ($handle === false || !@flock($handle, LOCK_SH)) {
+        if (is_resource($handle)) {
+            fclose($handle);
+        }
+        return ['item' => null, 'nextAttemptAt' => 0];
+    }
+    try {
+        $state = docs_load_live_ocr_queue_unlocked($folder);
+        $nextAttemptAt = 0;
+        foreach ($state['items'] as $item) {
+            if (!is_array($item) || in_array((string) ($item['status'] ?? ''), ['completed', 'failed', 'skipped'], true)) {
+                continue;
+            }
+            $itemNextAttemptAt = strtotime((string) ($item['nextAttemptAt'] ?? '')) ?: 0;
+            if ($itemNextAttemptAt <= time()) {
+                return ['item' => $item, 'nextAttemptAt' => 0];
+            }
+            if ($nextAttemptAt === 0 || $itemNextAttemptAt < $nextAttemptAt) {
+                $nextAttemptAt = $itemNextAttemptAt;
+            }
+        }
+        return ['item' => null, 'nextAttemptAt' => $nextAttemptAt];
+    } finally {
+        @flock($handle, LOCK_UN);
+        fclose($handle);
+    }
+}
+
+function docs_update_live_ocr_queue_item(string $folder, string $key, array $changes): bool
+{
+    $result = docs_mutate_live_ocr_queue($folder, static function (array &$state) use ($key, $changes): array {
+        foreach ($state['items'] as &$item) {
+            if (!is_array($item) || (string) ($item['key'] ?? '') !== $key) {
+                continue;
+            }
+            $item = array_replace($item, $changes, ['updatedAt' => date('c')]);
+            unset($item);
+            return ['updated' => true];
+        }
+        unset($item);
+        return ['updated' => false];
+    });
+
+    return !empty($result['ok']) && !empty($result['updated']);
+}
+
+function docs_finish_live_ocr_queue_item(string $folder, array $item, string $status, string $error = ''): void
+{
+    $key = (string) ($item['key'] ?? '');
+    docs_mutate_live_ocr_queue($folder, static function (array &$state) use ($key, $item, $status, $error): array {
+        $state['items'] = array_values(array_filter(
+            $state['items'],
+            static fn($candidate): bool => !is_array($candidate) || (string) ($candidate['key'] ?? '') !== $key
+        ));
+        $state['recent'][] = [
+            'documentId' => (string) ($item['documentId'] ?? ''),
+            'storedName' => (string) ($item['storedName'] ?? ''),
+            'status' => $status,
+            'error' => sanitize_text_field($error, 500),
+            'finishedAt' => date('c'),
+        ];
+        return ['removed' => true];
+    });
+}
+
+function docs_find_live_ocr_record_file(string $folder, string $documentId, string $storedName): array
+{
+    foreach (load_registry($folder) as $record) {
+        if (!is_array($record) || (string) ($record['id'] ?? '') !== $documentId) {
+            continue;
+        }
+        foreach (isset($record['files']) && is_array($record['files']) ? $record['files'] : [] as $file) {
+            if (is_array($file) && (string) ($file['storedName'] ?? '') === $storedName) {
+                return ['record' => $record, 'file' => $file];
+            }
+        }
+        return ['record' => $record, 'file' => null];
+    }
+
+    return ['record' => null, 'file' => null];
+}
+
+function docs_resolve_live_ocr_local_path(string $folder, array $file): string
+{
+    $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
+    if ($storedName === '') {
+        return '';
+    }
+    $directory = ensure_organization_directory($folder);
+    $candidates = [$directory . '/' . $storedName];
+    foreach (docs_file_public_relative_candidates($folder, $file, $storedName) as $relativePath) {
+        $relativePath = docs_normalize_cold_storage_relative_path($relativePath);
+        if ($relativePath !== '') {
+            $candidates[] = $directory . '/' . $relativePath;
+        }
+    }
+
+    return docs_resolve_file_path_with_cold_storage($folder, $file, array_values(array_unique($candidates)), microtime(true) + 120);
+}
+
+function docs_update_live_ocr_registry_file(
+    string $folder,
+    string $documentId,
+    string $storedName,
+    array $ocr,
+    ?string $ocrText = null
+): array {
+    [$handle, $records] = docs_lock_registry($folder);
+    if ($handle === null) {
+        return ['ok' => false, 'error' => 'Реестр занят другим процессом.'];
+    }
+
+    $updatedRecord = null;
+    $found = false;
+    try {
+        foreach ($records as &$record) {
+            if (!is_array($record) || (string) ($record['id'] ?? '') !== $documentId) {
+                continue;
+            }
+            if (!isset($record['files']) || !is_array($record['files'])) {
+                continue;
+            }
+            foreach ($record['files'] as &$file) {
+                if (!is_array($file) || (string) ($file['storedName'] ?? '') !== $storedName) {
+                    continue;
+                }
+                $file['ocr'] = $ocr;
+                if ($ocrText !== null && trim($ocrText) !== '') {
+                    unset($file['ocrText']);
+                    $file['ocrTextLength'] = mb_strlen($ocrText, 'UTF-8');
+                }
+                $found = true;
+                break;
+            }
+            unset($file);
+            $updatedRecord = $record;
+            break;
+        }
+        unset($record);
+
+        if (!$found || !is_array($updatedRecord)) {
+            return ['ok' => false, 'missing' => true, 'error' => 'Задача или файл уже удалены.'];
+        }
+        if ($ocrText !== null && trim($ocrText) !== '') {
+            foreach ($updatedRecord['files'] as &$snapshotFile) {
+                if (!is_array($snapshotFile) || (string) ($snapshotFile['storedName'] ?? '') !== $storedName) {
+                    continue;
+                }
+                $snapshotFile['ocrText'] = $ocrText;
+                $snapshotFile['ocrTextLength'] = mb_strlen($ocrText, 'UTF-8');
+                break;
+            }
+            unset($snapshotFile);
+        }
+        if (!docs_save_registry_locked($handle, $records)) {
+            return ['ok' => false, 'error' => 'Не удалось сохранить OCR-результат в registry.json.'];
+        }
+    } finally {
+        docs_unlock_registry($handle);
+    }
+
+    docs_run_pending_registry_s3_backups();
+    return ['ok' => true, 'record' => $updatedRecord];
+}
+
+function docs_sync_live_ocr_participant_snapshots(array $record, string $folder): array
+{
+    $record['documentFolder'] = sanitize_folder_name($folder);
+    $telegramIds = docs_collect_record_telegram_ids($record, $folder);
+    $errors = [];
+    $saved = 0;
+    foreach ($telegramIds as $telegramId) {
+        $result = docs_rebuild_mini_app_user_tasks_snapshot((string) $telegramId, $record);
+        if (empty($result['saved'])) {
+            $errors[] = sanitize_text_field((string) ($result['error'] ?? ($result['reason'] ?? 'S3-ошибка')), 500);
+            continue;
+        }
+        $saved++;
+    }
+
+    return [
+        'ok' => empty($errors),
+        'participants' => count($telegramIds),
+        'saved' => $saved,
+        'error' => !empty($errors) ? implode('; ', array_slice(array_unique($errors), 0, 3)) : '',
+    ];
+}
+
+function docs_process_live_ocr_queue_item(string $folder, array $item, float $workerDeadline): array
+{
+    $documentId = sanitize_text_field((string) ($item['documentId'] ?? ''), 200);
+    $storedName = sanitize_text_field((string) ($item['storedName'] ?? ''), 255);
+    $key = (string) ($item['key'] ?? '');
+    $located = docs_find_live_ocr_record_file($folder, $documentId, $storedName);
+    if (!is_array($located['record'] ?? null) || !is_array($located['file'] ?? null)) {
+        return ['done' => true, 'status' => 'skipped', 'error' => 'Задача или файл удалены.'];
+    }
+    $record = $located['record'];
+    $file = $located['file'];
+
+    $existingText = isset($file['ocrText']) && is_string($file['ocrText']) ? trim($file['ocrText']) : '';
+    if ($existingText !== '') {
+        $delivery = docs_sync_live_ocr_participant_snapshots($record, $folder);
+        return !empty($delivery['ok'])
+            ? ['done' => true, 'status' => 'completed']
+            : ['done' => false, 'retry' => true, 'stage' => 'delivery', 'error' => (string) ($delivery['error'] ?? 'Не удалось обновить Telegram JSON.')];
+    }
+
+    $jobId = sanitize_text_field((string) ($item['jobId'] ?? ''), 160);
+    if ($jobId === '') {
+        $localPath = docs_resolve_live_ocr_local_path($folder, $file);
+        if ($localPath === '') {
+            return ['done' => false, 'retry' => true, 'stage' => 'ocr', 'error' => 'Исходный файл недоступен локально и в S3.'];
+        }
+        $created = docs_create_private_ocr_job($localPath, (string) ($file['originalName'] ?? $storedName));
+        if (empty($created['ok'])) {
+            return ['done' => false, 'retry' => true, 'stage' => 'ocr', 'error' => (string) ($created['error'] ?? 'Не удалось создать OCR-задание.')];
+        }
+        $jobId = (string) $created['jobId'];
+        docs_update_live_ocr_queue_item($folder, $key, [
+            'status' => 'processing',
+            'jobId' => $jobId,
+            'jobStatus' => (string) ($created['status'] ?? 'queued'),
+            'startedAt' => date('c'),
+            'error' => '',
+        ]);
+    }
+
+    $statusErrors = 0;
+    while (microtime(true) < $workerDeadline) {
+        $status = docs_fetch_private_ocr_job_status($jobId);
+        if (empty($status['ok'])) {
+            $statusErrors++;
+            if ($statusErrors >= 3) {
+                return ['done' => false, 'retry' => true, 'stage' => 'ocr', 'error' => (string) ($status['error'] ?? 'OCR-сервер временно недоступен.')];
+            }
+            sleep(DOCS_LIVE_OCR_POLL_INTERVAL_SECONDS);
+            continue;
+        }
+        $statusErrors = 0;
+        docs_update_live_ocr_queue_item($folder, $key, [
+            'status' => 'processing',
+            'jobStatus' => (string) $status['status'],
+            'progress' => (int) ($status['progress'] ?? 0),
+            'currentPage' => (int) ($status['currentPage'] ?? 0),
+            'totalPages' => (int) ($status['totalPages'] ?? 0),
+        ]);
+        if (in_array($status['status'], ['queued', 'running'], true)) {
+            sleep(DOCS_LIVE_OCR_POLL_INTERVAL_SECONDS);
+            continue;
+        }
+        if (in_array($status['status'], ['failed', 'cancelled'], true)) {
+            return [
+                'done' => false,
+                'terminal' => true,
+                'stage' => 'ocr',
+                'error' => (string) ($status['error'] ?? ('OCR завершён со статусом ' . $status['status'] . '.')),
+            ];
+        }
+
+        $result = docs_fetch_private_ocr_job_result($jobId);
+        if (empty($result['ok'])) {
+            return ['done' => false, 'retry' => true, 'stage' => 'ocr', 'error' => (string) ($result['error'] ?? 'Не удалось получить OCR-текст.')];
+        }
+        $ocrText = (string) $result['text'];
+        $registryUpdate = docs_update_live_ocr_registry_file($folder, $documentId, $storedName, [
+            'status' => 'completed',
+            'engine' => 'n8n_jobs',
+            'source' => 'live_upload',
+            'jobId' => $jobId,
+            'jobStatus' => 'succeeded',
+            'progress' => 100,
+            'pagesCount' => (int) ($result['pagesCount'] ?? 0),
+            'textTruncated' => !empty($result['textTruncated']),
+            'completedAt' => date('c'),
+        ], $ocrText);
+        if (empty($registryUpdate['ok'])) {
+            if (!empty($registryUpdate['missing'])) {
+                return ['done' => true, 'status' => 'skipped', 'error' => (string) ($registryUpdate['error'] ?? '')];
+            }
+            return ['done' => false, 'retry' => true, 'stage' => 'registry', 'error' => (string) ($registryUpdate['error'] ?? 'Не удалось сохранить OCR-текст.')];
+        }
+
+        $delivery = docs_sync_live_ocr_participant_snapshots((array) $registryUpdate['record'], $folder);
+        if (empty($delivery['ok'])) {
+            return ['done' => false, 'retry' => true, 'stage' => 'delivery', 'error' => (string) ($delivery['error'] ?? 'Не удалось обновить Telegram JSON.')];
+        }
+        return ['done' => true, 'status' => 'completed'];
+    }
+
+    return ['done' => false, 'retry' => true, 'stage' => 'ocr', 'error' => 'Истекло время рабочего цикла OCR.'];
+}
+
+function docs_run_live_ocr_worker(string $folder): array
+{
+    $folder = sanitize_folder_name($folder);
+    if ($folder === '') {
+        return ['ok' => false, 'reason' => 'folder_missing'];
+    }
+    $workerLock = @fopen(docs_live_ocr_worker_lock_path($folder), 'c+');
+    if ($workerLock === false || !@flock($workerLock, LOCK_EX | LOCK_NB)) {
+        if (is_resource($workerLock)) {
+            fclose($workerLock);
+        }
+        return ['ok' => true, 'worked' => false, 'reason' => 'worker_already_running'];
+    }
+
+    if (function_exists('set_time_limit')) {
+        @set_time_limit(0);
+    }
+    $deadline = microtime(true) + DOCS_LIVE_OCR_MAX_WORKER_SECONDS;
+    $completed = 0;
+    $failed = 0;
+    try {
+        while (microtime(true) < $deadline) {
+            $selected = docs_get_live_ocr_queue_item($folder);
+            $item = $selected['item'] ?? null;
+            if (!is_array($item)) {
+                $nextAttemptAt = (int) ($selected['nextAttemptAt'] ?? 0);
+                if ($nextAttemptAt <= 0) {
+                    break;
+                }
+                sleep(max(1, min(30, $nextAttemptAt - time())));
+                continue;
+            }
+
+            $outcome = docs_process_live_ocr_queue_item($folder, $item, $deadline);
+            if (!empty($outcome['done'])) {
+                docs_finish_live_ocr_queue_item(
+                    $folder,
+                    $item,
+                    (string) ($outcome['status'] ?? 'completed'),
+                    (string) ($outcome['error'] ?? '')
+                );
+                $completed++;
+                continue;
+            }
+
+            $attempts = max(0, (int) ($item['attempts'] ?? 0)) + 1;
+            $stage = (string) ($outcome['stage'] ?? 'ocr');
+            $error = sanitize_text_field((string) ($outcome['error'] ?? 'Неизвестная ошибка OCR.'), 500);
+            $terminal = !empty($outcome['terminal'])
+                || ($stage !== 'delivery' && $attempts >= DOCS_LIVE_OCR_MAX_ATTEMPTS);
+            if ($terminal) {
+                $located = docs_find_live_ocr_record_file($folder, (string) ($item['documentId'] ?? ''), (string) ($item['storedName'] ?? ''));
+                if (is_array($located['file'] ?? null)) {
+                    $registryUpdate = docs_update_live_ocr_registry_file(
+                        $folder,
+                        (string) ($item['documentId'] ?? ''),
+                        (string) ($item['storedName'] ?? ''),
+                        [
+                            'status' => 'error',
+                            'engine' => 'n8n_jobs',
+                            'source' => 'live_upload',
+                            'jobId' => (string) ($item['jobId'] ?? ''),
+                            'error' => $error,
+                            'failedAt' => date('c'),
+                        ]
+                    );
+                    if (!empty($registryUpdate['ok']) && is_array($registryUpdate['record'] ?? null)) {
+                        docs_sync_live_ocr_participant_snapshots($registryUpdate['record'], $folder);
+                    }
+                }
+                docs_finish_live_ocr_queue_item($folder, $item, 'failed', $error);
+                $failed++;
+                continue;
+            }
+
+            $delay = min(300, DOCS_LIVE_OCR_RETRY_DELAY_SECONDS * max(1, $attempts));
+            docs_update_live_ocr_queue_item($folder, (string) ($item['key'] ?? ''), [
+                'status' => 'retry',
+                'attempts' => $attempts,
+                'nextAttemptAt' => date('c', time() + $delay),
+                'error' => $error,
+            ]);
+        }
+    } finally {
+        @flock($workerLock, LOCK_UN);
+        fclose($workerLock);
+    }
+
+    return [
+        'ok' => true,
+        'worked' => ($completed + $failed) > 0,
+        'completed' => $completed,
+        'failed' => $failed,
+        'reason' => microtime(true) >= $deadline ? 'worker_window_finished' : 'queue_empty',
+    ];
+}
+
+function docs_live_ocr_php_binary(): string
+{
+    foreach (array_values(array_unique([
+        rtrim((string) PHP_BINDIR, '/') . '/php',
+        PHP_BINARY,
+        '/usr/bin/php',
+        '/usr/local/bin/php',
+        '/opt/homebrew/bin/php',
+    ])) as $candidate) {
+        $candidate = trim((string) $candidate);
+        if ($candidate !== '' && is_file($candidate) && is_executable($candidate) && preg_match('/^php(?:[0-9.]+)?$/i', basename($candidate))) {
+            return $candidate;
+        }
+    }
+    return '';
+}
+
+function docs_start_live_ocr_worker(string $folder): array
+{
+    $folder = sanitize_folder_name($folder);
+    $phpBinary = docs_live_ocr_php_binary();
+    if ($folder === '' || $phpBinary === '' || !function_exists('proc_open')) {
+        return ['ok' => false, 'error' => 'Фоновый PHP worker недоступен.'];
+    }
+    if (!is_dir(DOCS_SERVER_LOG_DIRECTORY)) {
+        @mkdir(DOCS_SERVER_LOG_DIRECTORY, 0775, true);
+    }
+    $logPath = DOCS_SERVER_LOG_DIRECTORY . '/' . DOCS_LIVE_OCR_WORKER_LOG_FILENAME;
+    $command = 'nohup '
+        . escapeshellarg($phpBinary) . ' '
+        . escapeshellarg(__FILE__) . ' '
+        . escapeshellarg(DOCS_LIVE_OCR_WORKER_COMMAND) . ' '
+        . escapeshellarg($folder) . ' >> '
+        . escapeshellarg($logPath) . ' 2>&1 < /dev/null &';
+    $started = docs_run_process_with_timeout(['/bin/sh', '-c', $command], 5);
+
+    return [
+        'ok' => !empty($started['ok']),
+        'error' => !empty($started['ok']) ? '' : sanitize_text_field((string) ($started['error'] ?? 'Не удалось запустить OCR worker.'), 500),
+    ];
+}
+
+function docs_activate_live_ocr_worker(string $folder): void
+{
+    $started = docs_start_live_ocr_worker($folder);
+    if (!empty($started['ok'])) {
+        return;
+    }
+    docs_write_response_log('Не удалось запустить отдельный OCR worker; используется фоновый PHP-запрос', [
+        'folder' => $folder,
+        'error' => (string) ($started['error'] ?? ''),
+    ]);
+    docs_run_live_ocr_worker($folder);
 }
 
 function docs_sync_uploaded_files_to_cold_storage(string $folder, array $uploads): void
@@ -9661,7 +10350,7 @@ function docs_save_mini_app_user_tasks_snapshot(
     ?array $filter,
     array $directorModeSummary
 ): array {
-    @ini_set('memory_limit', DOCS_OCR_SNAPSHOT_READ_MEMORY_LIMIT);
+    @ini_set('memory_limit', DOCS_TASK_SNAPSHOT_READ_MEMORY_LIMIT);
     $telegramUserId = normalize_identifier_value($telegramUserId);
     if ($telegramUserId === '') {
         return [
@@ -9975,9 +10664,24 @@ function docs_collect_admin_settings_telegram_ids(array $settings): array
     return $result;
 }
 
+function docs_resolve_explicit_telegram_id_from_participant(array $participant): ?string
+{
+    foreach (['telegram', 'telegramId', 'telegram_id', 'chatId', 'chat_id'] as $field) {
+        if (!array_key_exists($field, $participant)) {
+            continue;
+        }
+        $telegramId = normalize_identifier_value($participant[$field]);
+        if ($telegramId !== '' && preg_match('/^-?\d{4,}$/', $telegramId)) {
+            return $telegramId;
+        }
+    }
+
+    return null;
+}
+
 function docs_resolve_participant_telegram_id(array $participant, array $directoryEntries = []): ?string
 {
-    $telegramId = docs_resolve_telegram_chat_id_from_assignee($participant);
+    $telegramId = docs_resolve_explicit_telegram_id_from_participant($participant);
     if ($telegramId !== null) {
         return (string) $telegramId;
     }
@@ -9997,7 +10701,10 @@ function docs_resolve_participant_telegram_id(array $participant, array $directo
         }
     }
 
-    return null;
+    // Старые записи могли хранить Telegram ID только в userId/id. Используем
+    // этот вариант последним, чтобы внутренний числовой ID не подменил
+    // Telegram ID, который доступен в справочнике организации.
+    return docs_resolve_telegram_chat_id_from_assignee($participant);
 }
 
 function docs_collect_record_telegram_participation(
@@ -10042,31 +10749,55 @@ function docs_collect_record_telegram_ids(array $record, string $folder = ''): a
     }, docs_collect_record_telegram_participation($record, $folder)));
 }
 
-function docs_merge_task_file_ocr_text(
-    array $targetTask,
-    array $sourceTask,
-    bool $overwriteExisting
+function docs_resolve_record_roles_for_telegram_user(
+    array $record,
+    string $telegramUserId,
+    string $folder = '',
+    ?array $directoryEntries = null,
+    ?array $fallbackFilter = null
 ): array {
+    $telegramUserId = normalize_identifier_value($telegramUserId);
+    if ($telegramUserId !== '') {
+        foreach (docs_collect_record_telegram_participation($record, $folder, $directoryEntries) as $participant) {
+            if (!is_array($participant)
+                || normalize_identifier_value($participant['telegramId'] ?? '') !== $telegramUserId
+            ) {
+                continue;
+            }
+
+            $roles = [];
+            foreach (isset($participant['roles']) && is_array($participant['roles']) ? $participant['roles'] : [] as $role) {
+                $normalizedRole = docs_normalize_assignment_role((string) $role);
+                if ($normalizedRole !== '') {
+                    $roles[$normalizedRole] = true;
+                }
+            }
+
+            return array_keys($roles);
+        }
+    }
+
+    // Совместимость со старыми задачами, где участник уже записан Telegram ID,
+    // username или ФИО непосредственно в самой задаче.
+    return docs_resolve_record_roles_for_filter($record, $fallbackFilter);
+}
+
+function docs_merge_task_file_ocr_text(array $targetTask, array $sourceTask, bool $overwriteExisting): array
+{
     if (!isset($targetTask['files']) || !is_array($targetTask['files'])) {
         return $targetTask;
     }
 
     $ocrTextByStoredName = [];
     foreach (isset($sourceTask['files']) && is_array($sourceTask['files']) ? $sourceTask['files'] : [] as $sourceFile) {
-        if (!is_array($sourceFile)
-            || !isset($sourceFile['ocrText'])
-            || !is_string($sourceFile['ocrText'])
-            || trim($sourceFile['ocrText']) === ''
-        ) {
+        if (!is_array($sourceFile) || !isset($sourceFile['ocrText']) || !is_string($sourceFile['ocrText'])) {
             continue;
         }
         $storedName = sanitize_text_field((string) ($sourceFile['storedName'] ?? ''), 255);
-        if ($storedName !== '') {
-            $ocrTextByStoredName[$storedName] = trim($sourceFile['ocrText']);
+        $ocrText = trim($sourceFile['ocrText']);
+        if ($storedName !== '' && $ocrText !== '') {
+            $ocrTextByStoredName[$storedName] = $ocrText;
         }
-    }
-    if (empty($ocrTextByStoredName)) {
-        return $targetTask;
     }
 
     foreach ($targetTask['files'] as &$targetFile) {
@@ -10089,6 +10820,88 @@ function docs_merge_task_file_ocr_text(
     unset($targetFile);
 
     return $targetTask;
+}
+
+function docs_hydrate_task_ocr_from_participant_snapshots(array $record, array $telegramIds): array
+{
+    @ini_set('memory_limit', DOCS_TASK_SNAPSHOT_READ_MEMORY_LIMIT);
+    $taskKey = docs_task_snapshot_key($record);
+    if ($taskKey === '' || !isset($record['files']) || !is_array($record['files'])) {
+        return $record;
+    }
+
+    $requiredStoredNames = [];
+    foreach ($record['files'] as $file) {
+        if (!is_array($file)) {
+            continue;
+        }
+        $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
+        $ocrStatus = isset($file['ocr']) && is_array($file['ocr'])
+            ? strtolower((string) ($file['ocr']['status'] ?? ''))
+            : '';
+        if ($storedName !== '' && $ocrStatus === 'completed') {
+            $requiredStoredNames[$storedName] = true;
+        }
+    }
+    if (empty($requiredStoredNames)) {
+        return $record;
+    }
+
+    $ocrTextByStoredName = [];
+    foreach (array_values(array_unique(array_map('strval', $telegramIds))) as $telegramId) {
+        $loaded = docs_load_mini_app_user_tasks_snapshot($telegramId);
+        if (empty($loaded['ok']) || !is_array($loaded['snapshot'] ?? null)) {
+            continue;
+        }
+        foreach ((array) ($loaded['snapshot']['tasks'] ?? []) as $task) {
+            if (!is_array($task) || docs_task_snapshot_key($task) !== $taskKey) {
+                continue;
+            }
+            foreach ((array) ($task['files'] ?? []) as $file) {
+                if (!is_array($file) || !isset($file['ocrText']) || !is_string($file['ocrText'])) {
+                    continue;
+                }
+                $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
+                $ocrText = trim($file['ocrText']);
+                if ($storedName !== '' && isset($requiredStoredNames[$storedName]) && $ocrText !== '') {
+                    $ocrTextByStoredName[$storedName] = $ocrText;
+                }
+            }
+            break;
+        }
+        if (count($ocrTextByStoredName) === count($requiredStoredNames)) {
+            break;
+        }
+    }
+
+    foreach ($record['files'] as &$file) {
+        if (!is_array($file)) {
+            continue;
+        }
+        $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
+        if ($storedName !== '' && isset($ocrTextByStoredName[$storedName])) {
+            $file['ocrText'] = $ocrTextByStoredName[$storedName];
+            $file['ocrTextLength'] = mb_strlen($ocrTextByStoredName[$storedName], 'UTF-8');
+            continue;
+        }
+        if ($storedName === '' || !isset($requiredStoredNames[$storedName])) {
+            continue;
+        }
+        $jobId = isset($file['ocr']) && is_array($file['ocr'])
+            ? sanitize_text_field((string) ($file['ocr']['jobId'] ?? ''), 160)
+            : '';
+        if ($jobId === '') {
+            continue;
+        }
+        $jobResult = docs_fetch_private_ocr_job_result($jobId);
+        if (!empty($jobResult['ok']) && isset($jobResult['text']) && is_string($jobResult['text'])) {
+            $file['ocrText'] = $jobResult['text'];
+            $file['ocrTextLength'] = mb_strlen($jobResult['text'], 'UTF-8');
+        }
+    }
+    unset($file);
+
+    return $record;
 }
 
 function docs_index_telegram_participation(array $participation): array
@@ -10120,7 +10933,6 @@ function docs_index_telegram_participation(array $participation): array
 
 function docs_rebuild_mini_app_user_tasks_snapshot(string $telegramUserId, ?array $ocrTaskOverride = null): array
 {
-    @ini_set('memory_limit', DOCS_OCR_SNAPSHOT_READ_MEMORY_LIMIT);
     $telegramUserId = normalize_identifier_value($telegramUserId);
     if ($telegramUserId === '') {
         return [
@@ -10212,6 +11024,9 @@ function docs_rebuild_mini_app_user_tasks_snapshot(string $telegramUserId, ?arra
                 if (!is_array($preparedRecord)) {
                     continue;
                 }
+                $preparedRecord['organization'] = $organization;
+                $preparedRecord['documentFolder'] = $folder;
+                $preparedTaskKey = docs_task_snapshot_key($preparedRecord);
                 $roles = [];
                 foreach (docs_collect_record_telegram_participation(
                     $preparedRecord,
@@ -10235,9 +11050,7 @@ function docs_rebuild_mini_app_user_tasks_snapshot(string $telegramUserId, ?arra
                     continue;
                 }
                 $preparedRecord['currentUserRoles'] = $roles;
-                $preparedRecord['organization'] = $organization;
-                $preparedRecord['documentFolder'] = $folder;
-                $taskKey = docs_task_snapshot_key($preparedRecord);
+                $taskKey = $preparedTaskKey;
                 if ($taskKey === '' || isset($seenTasks[$taskKey])) {
                     continue;
                 }
@@ -10249,13 +11062,8 @@ function docs_rebuild_mini_app_user_tasks_snapshot(string $telegramUserId, ?arra
                         $existingTasksByKey[$taskKey]
                     );
                 }
-
                 if (is_array($ocrTaskOverride) && docs_task_snapshot_key($ocrTaskOverride) === $taskKey) {
-                    $preparedRecord = docs_merge_task_file_ocr_text(
-                        $preparedRecord,
-                        $ocrTaskOverride,
-                        true
-                    );
+                    $preparedRecord = docs_merge_task_file_ocr_text($preparedRecord, $ocrTaskOverride, true);
                 }
 
                 $tasks[] = $preparedRecord;
@@ -10272,107 +11080,44 @@ function docs_rebuild_mini_app_user_tasks_snapshot(string $telegramUserId, ?arra
 
         if (is_array($ocrTaskOverride)) {
             $overrideTaskKey = docs_task_snapshot_key($ocrTaskOverride);
-            $overrideAlreadyPresent = false;
-            foreach ($tasks as $task) {
-                if (is_array($task) && docs_task_snapshot_key($task) === $overrideTaskKey) {
-                    $overrideAlreadyPresent = true;
-                    break;
-                }
-            }
-            if (!$overrideAlreadyPresent && $overrideTaskKey !== '') {
-                // OCR-доставка вызывает rebuild только для уже определённых участников задачи,
-                // поэтому задача не должна исчезать из JSON из-за более узкого UI-фильтра.
-                $overrideFolder = sanitize_folder_name((string) (
-                    $ocrTaskOverride['documentFolder']
-                    ?? $ocrTaskOverride['organization']
-                    ?? ''
-                ));
-                $overrideRoles = [];
-                foreach (docs_collect_record_telegram_participation(
-                    $ocrTaskOverride,
-                    $overrideFolder
-                ) as $participant) {
-                    if (!is_array($participant)
-                        || (string) ($participant['telegramId'] ?? '') !== $telegramUserId
-                    ) {
-                        continue;
-                    }
-                    $overrideRoles = isset($participant['roles']) && is_array($participant['roles'])
-                        ? array_values($participant['roles'])
-                        : [];
-                    break;
-                }
-                $fallbackTask = $ocrTaskOverride;
-                if (isset($existingTasksByKey[$overrideTaskKey])) {
-                    $fallbackTask = docs_merge_existing_task_snapshot_data(
-                        $fallbackTask,
-                        $existingTasksByKey[$overrideTaskKey]
-                    );
-                }
-                $fallbackTask = docs_merge_task_file_ocr_text(
-                    $fallbackTask,
-                    $ocrTaskOverride,
-                    true
-                );
-                if (!empty($overrideRoles)) {
-                    $fallbackTask['currentUserRoles'] = $overrideRoles;
-                }
-                if ($overrideFolder !== '') {
-                    $fallbackTask['documentFolder'] = $overrideFolder;
-                }
-                $tasks[] = $fallbackTask;
-            }
             $requiredOcrStoredNames = [];
-            foreach (isset($ocrTaskOverride['files']) && is_array($ocrTaskOverride['files'])
-                ? $ocrTaskOverride['files']
-                : [] as $overrideFile
-            ) {
-                if (!is_array($overrideFile)
-                    || !isset($overrideFile['ocrText'])
-                    || !is_string($overrideFile['ocrText'])
-                    || trim($overrideFile['ocrText']) === ''
-                ) {
+            foreach ((array) ($ocrTaskOverride['files'] ?? []) as $overrideFile) {
+                if (!is_array($overrideFile) || !isset($overrideFile['ocrText']) || !is_string($overrideFile['ocrText'])) {
                     continue;
                 }
-                $overrideStoredName = sanitize_text_field((string) ($overrideFile['storedName'] ?? ''), 255);
-                if ($overrideStoredName !== '') {
-                    $requiredOcrStoredNames[$overrideStoredName] = true;
+                $storedName = sanitize_text_field((string) ($overrideFile['storedName'] ?? ''), 255);
+                if ($storedName !== '' && trim($overrideFile['ocrText']) !== '') {
+                    $requiredOcrStoredNames[$storedName] = true;
                 }
             }
-
             if (!empty($requiredOcrStoredNames)) {
-                $storedOcrNames = [];
+                $deliveredOcrStoredNames = [];
                 foreach ($tasks as $task) {
                     if (!is_array($task) || docs_task_snapshot_key($task) !== $overrideTaskKey) {
                         continue;
                     }
-                    foreach (isset($task['files']) && is_array($task['files']) ? $task['files'] : [] as $taskFile) {
-                        if (!is_array($taskFile)
-                            || !isset($taskFile['ocrText'])
-                            || !is_string($taskFile['ocrText'])
-                            || trim($taskFile['ocrText']) === ''
-                        ) {
+                    foreach ((array) ($task['files'] ?? []) as $taskFile) {
+                        if (!is_array($taskFile) || !isset($taskFile['ocrText']) || !is_string($taskFile['ocrText'])) {
                             continue;
                         }
-                        $taskStoredName = sanitize_text_field((string) ($taskFile['storedName'] ?? ''), 255);
-                        if ($taskStoredName !== '') {
-                            $storedOcrNames[$taskStoredName] = true;
+                        $storedName = sanitize_text_field((string) ($taskFile['storedName'] ?? ''), 255);
+                        if ($storedName !== '' && trim($taskFile['ocrText']) !== '') {
+                            $deliveredOcrStoredNames[$storedName] = true;
                         }
                     }
                     break;
                 }
-
-                $missingOcrNames = array_values(array_diff(
+                $missingOcrStoredNames = array_diff(
                     array_keys($requiredOcrStoredNames),
-                    array_keys($storedOcrNames)
-                ));
-                if (!empty($missingOcrNames)) {
+                    array_keys($deliveredOcrStoredNames)
+                );
+                if (!empty($missingOcrStoredNames)) {
                     return [
                         'saved' => false,
                         'status' => 'ocr_task_missing',
                         'reason' => 'ocr_task_or_text_missing',
-                        'error' => 'Задача или OCR-текст файла не попали в JSON участника: '
-                            . implode(', ', array_slice($missingOcrNames, 0, 3)),
+                        'error' => 'OCR-текст не попал в JSON участника: '
+                            . implode(', ', array_slice($missingOcrStoredNames, 0, 3)),
                     ];
                 }
             }
@@ -10435,2086 +11180,155 @@ function docs_rebuild_mini_app_user_tasks_snapshot(string $telegramUserId, ?arra
     }
 }
 
-function docs_sync_task_ocr_to_participant_snapshots(array $record, string $folder): void
-{
-    $folder = sanitize_folder_name($folder);
-    if ($folder !== '') {
-        $record['documentFolder'] = $folder;
-    }
-
-    $ocrStoredNames = [];
-    foreach (isset($record['files']) && is_array($record['files']) ? $record['files'] : [] as $file) {
-        if (!is_array($file)
-            || !isset($file['ocrText'])
-            || !is_string($file['ocrText'])
-            || trim($file['ocrText']) === ''
-        ) {
-            continue;
-        }
-        $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
-        if ($storedName !== '') {
-            $ocrStoredNames[$storedName] = true;
-        }
-    }
-    if (empty($ocrStoredNames)) {
-        return;
-    }
-
-    $telegramIds = docs_collect_record_telegram_ids($record, $folder);
-    if (empty($telegramIds)) {
-        docs_update_record_ocr_snapshot_status(
-            $folder,
-            (string) ($record['id'] ?? ''),
-            'synced',
-            0,
-            '',
-            array_keys($ocrStoredNames)
-        );
-        return;
-    }
-
-    $syncedCount = 0;
-    $errors = [];
-    foreach ($telegramIds as $telegramId) {
-        $result = docs_rebuild_mini_app_user_tasks_snapshot($telegramId, $record);
-        if (empty($result['saved'])) {
-            $errors[] = sanitize_text_field((string) ($result['error'] ?? ($result['reason'] ?? 'S3-ошибка')), 300);
-            docs_write_response_log('Не удалось обновить Telegram JSON-снимок после OCR', [
-                'folder' => $folder,
-                'documentId' => $record['id'] ?? null,
-                'telegramId' => $telegramId,
-                'status' => $result['status'] ?? 'unknown',
-                'error' => $result['error'] ?? ($result['reason'] ?? ''),
-            ]);
-            continue;
-        }
-        $syncedCount++;
-    }
-
-    docs_update_record_ocr_snapshot_status(
-        $folder,
-        (string) ($record['id'] ?? ''),
-        empty($errors) ? 'synced' : ($syncedCount > 0 ? 'partial' : 'error'),
-        $syncedCount,
-        !empty($errors) ? implode('; ', array_slice(array_unique($errors), 0, 3)) : '',
-        array_keys($ocrStoredNames)
-    );
-}
-
-function docs_hydrate_task_ocr_from_participant_snapshots(array $record, array $telegramIds): array
-{
-    @ini_set('memory_limit', DOCS_OCR_SNAPSHOT_READ_MEMORY_LIMIT);
-    $taskKey = docs_task_snapshot_key($record);
-    if ($taskKey === '' || !isset($record['files']) || !is_array($record['files'])) {
-        return $record;
-    }
-
-    $requiredStoredNames = [];
-    $requiredStoredNameByFileKey = [];
-    $requiredFilesByStoredName = [];
-    foreach ($record['files'] as $file) {
-        if (!is_array($file)) {
-            continue;
-        }
-        $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
-        $ocrStatus = isset($file['ocr']) && is_array($file['ocr'])
-            ? strtolower((string) ($file['ocr']['status'] ?? ''))
-            : '';
-        if ($storedName !== '' && ($ocrStatus === 'completed' || (int) ($file['ocrTextLength'] ?? 0) > 0)) {
-            $requiredStoredNames[$storedName] = true;
-            $requiredFilesByStoredName[$storedName] = $file;
-            foreach (docs_task_rag_file_keys($file) as $fileKey) {
-                $requiredStoredNameByFileKey[$fileKey] = $storedName;
-            }
-        }
-    }
-    if (empty($requiredStoredNames)) {
-        return $record;
-    }
-
-    $normalizedTelegramIds = [];
-    foreach ($telegramIds as $telegramId) {
-        $normalizedTelegramId = normalize_identifier_value($telegramId);
-        if ($normalizedTelegramId !== '') {
-            $normalizedTelegramIds[$normalizedTelegramId] = true;
-        }
-    }
-
-    $ocrTextByStoredName = [];
-    foreach (array_keys($normalizedTelegramIds) as $telegramId) {
-        $loaded = docs_load_mini_app_user_tasks_snapshot($telegramId);
-        if (empty($loaded['ok']) || !isset($loaded['snapshot']) || !is_array($loaded['snapshot'])) {
-            continue;
-        }
-        foreach (isset($loaded['snapshot']['tasks']) && is_array($loaded['snapshot']['tasks'])
-            ? $loaded['snapshot']['tasks']
-            : [] as $task
-        ) {
-            if (!is_array($task) || docs_task_snapshot_key($task) !== $taskKey) {
-                continue;
-            }
-            foreach (isset($task['files']) && is_array($task['files']) ? $task['files'] : [] as $file) {
-                if (!is_array($file) || !isset($file['ocrText']) || !is_string($file['ocrText'])) {
-                    continue;
-                }
-                $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
-                $ocrText = trim($file['ocrText']);
-                $targetStoredName = $storedName !== '' && isset($requiredStoredNames[$storedName])
-                    ? $storedName
-                    : '';
-                if ($targetStoredName === '') {
-                    foreach (docs_task_rag_file_keys($file) as $fileKey) {
-                        if (isset($requiredStoredNameByFileKey[$fileKey])) {
-                            $targetStoredName = $requiredStoredNameByFileKey[$fileKey];
-                            break;
-                        }
-                    }
-                }
-                if ($targetStoredName !== '' && $ocrText !== '') {
-                    $ocrTextByStoredName[$targetStoredName] = $ocrText;
-                }
-            }
-            break;
-        }
-        if (count($ocrTextByStoredName) === count($requiredStoredNames)) {
-            break;
-        }
-    }
-
-    foreach (array_diff(array_keys($requiredStoredNames), array_keys($ocrTextByStoredName)) as $storedName) {
-        $file = $requiredFilesByStoredName[$storedName] ?? null;
-        if (!is_array($file) || !isset($file['ocr']) || !is_array($file['ocr'])) {
-            continue;
-        }
-        $jobId = sanitize_text_field((string) ($file['ocr']['jobId'] ?? ''), 160);
-        if ($jobId === '') {
-            continue;
-        }
-        $jobResult = docs_fetch_private_ocr_job_result($jobId);
-        $ocrText = !empty($jobResult['ok']) && isset($jobResult['text']) && is_string($jobResult['text'])
-            ? trim($jobResult['text'])
-            : '';
-        if ($ocrText !== '') {
-            $ocrTextByStoredName[$storedName] = $ocrText;
-        }
-    }
-
-    if (empty($ocrTextByStoredName)) {
-        return $record;
-    }
-    foreach ($record['files'] as &$file) {
-        if (!is_array($file)) {
-            continue;
-        }
-        $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
-        if ($storedName !== '' && isset($ocrTextByStoredName[$storedName])) {
-            $file['ocrText'] = $ocrTextByStoredName[$storedName];
-            $file['ocrTextLength'] = mb_strlen($ocrTextByStoredName[$storedName], 'UTF-8');
-        }
-    }
-    unset($file);
-
-    return $record;
-}
-
-function docs_reprocess_task_ocr_files_for_snapshot_recovery(
-    array $record,
-    string $folder,
-    array $storedNames
-): array {
-    $documentId = sanitize_text_field((string) ($record['id'] ?? ''), 200);
-    $folder = sanitize_folder_name($folder);
-    if ($documentId === '' || $folder === '' || empty($storedNames)) {
-        return $record;
-    }
-
-    $storedNameLookup = [];
-    foreach ($storedNames as $storedName) {
-        $normalizedStoredName = sanitize_text_field((string) $storedName, 255);
-        if ($normalizedStoredName !== '') {
-            $storedNameLookup[$normalizedStoredName] = true;
-        }
-    }
-    if (empty($storedNameLookup)) {
-        return $record;
-    }
-
-    $organizationDirectory = ensure_organization_directory($folder);
-    $uploads = [];
-    $deadline = microtime(true) + 180;
-    foreach (isset($record['files']) && is_array($record['files']) ? $record['files'] : [] as $file) {
-        if (!is_array($file)) {
-            continue;
-        }
-        $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
-        if ($storedName === '' || !isset($storedNameLookup[$storedName])) {
-            continue;
-        }
-        $pathCandidates = [];
-        foreach (docs_file_public_relative_candidates($folder, $file, $storedName) as $relativePath) {
-            $normalizedRelativePath = docs_normalize_cold_storage_relative_path($relativePath);
-            if ($normalizedRelativePath !== '') {
-                $pathCandidates[] = $organizationDirectory . '/' . $normalizedRelativePath;
-            }
-        }
-        $resolvedPath = docs_resolve_file_path_with_cold_storage($folder, $file, $pathCandidates, $deadline);
-        if ($resolvedPath === '') {
-            docs_write_response_log('Не удалось восстановить OCR-текст после смены участников: исходный файл недоступен', [
-                'folder' => $folder,
-                'documentId' => $documentId,
-                'storedName' => $storedName,
-            ]);
-            continue;
-        }
-        $uploads[] = [
-            'file' => $file,
-            'relativePath' => $storedName,
-            'localPath' => $resolvedPath,
-            'context' => [
-                'source' => 'participant_snapshot_recovery',
-                'record' => $documentId,
-            ],
-        ];
-    }
-
-    if (!empty($uploads)) {
-        docs_process_uploaded_files_ocr($folder, $documentId, $uploads);
-    }
-    $storedNameKeys = array_keys($storedNameLookup);
-    $updated = docs_find_ocr_backfill_record_file($folder, $documentId, (string) ($storedNameKeys[0] ?? ''));
-
-    return isset($updated['record']) && is_array($updated['record'])
-        ? $updated['record']
-        : $record;
-}
-
 function docs_sync_task_snapshots_after_participation_change(
     array $record,
     string $folder,
     array $previousParticipation,
     array $currentParticipation
 ): void {
-    $folder = sanitize_folder_name($folder);
-    if ($folder !== '') {
-        $record['documentFolder'] = $folder;
-    }
-
+    $record['documentFolder'] = sanitize_folder_name($folder);
     $previousIndex = docs_index_telegram_participation($previousParticipation);
     $currentIndex = docs_index_telegram_participation($currentParticipation);
-    if ($previousIndex === $currentIndex) {
-        return;
-    }
-
-    $sourceTelegramIds = array_values(array_unique(array_merge(
-        array_keys($previousIndex),
-        array_keys($currentIndex)
-    )));
-    $snapshotRecord = docs_hydrate_task_ocr_from_participant_snapshots($record, $sourceTelegramIds);
-    $currentSyncedCount = 0;
-    $currentErrors = [];
-    $expectedOcrStoredNames = [];
-    $hydratedOcrStoredNames = [];
-    foreach (isset($snapshotRecord['files']) && is_array($snapshotRecord['files']) ? $snapshotRecord['files'] : [] as $file) {
-        if (!is_array($file)) {
-            continue;
-        }
-        $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
-        if ($storedName === '') {
-            continue;
-        }
-        $ocrStatus = isset($file['ocr']) && is_array($file['ocr'])
-            ? strtolower((string) ($file['ocr']['status'] ?? ''))
-            : '';
-        if ($ocrStatus === 'completed' || (int) ($file['ocrTextLength'] ?? 0) > 0) {
-            $expectedOcrStoredNames[$storedName] = true;
-        }
-        if (isset($file['ocrText']) && is_string($file['ocrText']) && trim($file['ocrText']) !== '') {
-            $hydratedOcrStoredNames[$storedName] = true;
-        }
-    }
-    $missingOcrStoredNames = array_values(array_diff(
-        array_keys($expectedOcrStoredNames),
-        array_keys($hydratedOcrStoredNames)
-    ));
-    if (!empty($missingOcrStoredNames)) {
-        $reprocessedRecord = docs_reprocess_task_ocr_files_for_snapshot_recovery(
-            $record,
-            $folder,
-            $missingOcrStoredNames
-        );
-        $snapshotRecord = docs_hydrate_task_ocr_from_participant_snapshots(
-            $reprocessedRecord,
-            $sourceTelegramIds
-        );
-        $hydratedOcrStoredNames = [];
-        foreach (isset($snapshotRecord['files']) && is_array($snapshotRecord['files'])
-            ? $snapshotRecord['files']
-            : [] as $file
-        ) {
-            if (!is_array($file)
-                || !isset($file['ocrText'])
-                || !is_string($file['ocrText'])
-                || trim($file['ocrText']) === ''
-            ) {
-                continue;
-            }
-            $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
-            if ($storedName !== '') {
-                $hydratedOcrStoredNames[$storedName] = true;
-            }
-        }
-        $missingOcrStoredNames = array_values(array_diff(
-            array_keys($expectedOcrStoredNames),
-            array_keys($hydratedOcrStoredNames)
-        ));
-    }
-    if (!empty($missingOcrStoredNames)) {
-        $currentErrors[] = 'OCR-текст не найден в прежних S3-снимках: '
-            . implode(', ', array_slice($missingOcrStoredNames, 0, 3));
-    }
-
-    foreach (array_keys($currentIndex) as $telegramId) {
-        $result = docs_rebuild_mini_app_user_tasks_snapshot($telegramId, $snapshotRecord);
-        if (!empty($result['saved'])) {
-            $currentSyncedCount++;
-            continue;
-        }
-        $currentErrors[] = sanitize_text_field(
-            (string) ($result['error'] ?? ($result['reason'] ?? 'S3-ошибка')),
-            300
-        );
-        docs_write_response_log('Не удалось обновить JSON нового состава участников задачи', [
-            'folder' => $folder,
-            'documentId' => $record['id'] ?? null,
-            'telegramId' => $telegramId,
-            'status' => $result['status'] ?? 'unknown',
-            'error' => $result['error'] ?? ($result['reason'] ?? ''),
-        ]);
-    }
-
-    $removedTelegramIds = array_values(array_diff(array_keys($previousIndex), array_keys($currentIndex)));
-    foreach ($removedTelegramIds as $telegramId) {
-        $result = docs_rebuild_mini_app_user_tasks_snapshot($telegramId);
-        if (!empty($result['saved'])) {
-            continue;
-        }
-        docs_write_response_log('Не удалось удалить задачу из JSON исключённого участника', [
-            'folder' => $folder,
-            'documentId' => $record['id'] ?? null,
-            'telegramId' => $telegramId,
-            'status' => $result['status'] ?? 'unknown',
-            'error' => $result['error'] ?? ($result['reason'] ?? ''),
-        ]);
-    }
-
-    if (!empty($expectedOcrStoredNames) && !empty($currentIndex)) {
-        docs_update_record_ocr_snapshot_status(
-            $folder,
-            (string) ($record['id'] ?? ''),
-            empty($currentErrors) ? 'synced' : ($currentSyncedCount > 0 ? 'partial' : 'error'),
-            $currentSyncedCount,
-            !empty($currentErrors) ? implode('; ', array_slice(array_unique($currentErrors), 0, 3)) : '',
-            array_keys($expectedOcrStoredNames)
-        );
-    }
-}
-
-function docs_find_task_file_ocr_text_in_participant_snapshots(
-    array $record,
-    string $folder,
-    string $storedName
-): array {
-    @ini_set('memory_limit', DOCS_OCR_SNAPSHOT_READ_MEMORY_LIMIT);
-    $record['documentFolder'] = sanitize_folder_name($folder);
-    $taskKey = docs_task_snapshot_key($record);
-    $telegramIds = docs_collect_record_telegram_ids($record, $folder);
-    foreach ($telegramIds as $telegramId) {
-        $loaded = docs_load_mini_app_user_tasks_snapshot($telegramId);
-        if (empty($loaded['ok']) || !isset($loaded['snapshot']) || !is_array($loaded['snapshot'])) {
-            continue;
-        }
-        $tasks = isset($loaded['snapshot']['tasks']) && is_array($loaded['snapshot']['tasks'])
-            ? $loaded['snapshot']['tasks']
-            : [];
-        foreach ($tasks as $task) {
-            if (!is_array($task) || docs_task_snapshot_key($task) !== $taskKey) {
-                continue;
-            }
-            $files = isset($task['files']) && is_array($task['files']) ? $task['files'] : [];
-            foreach ($files as $file) {
-                if (!is_array($file) || (string) ($file['storedName'] ?? '') !== $storedName) {
-                    continue;
-                }
-                if (!isset($file['ocrText']) || !is_string($file['ocrText'])) {
-                    continue;
-                }
-                $text = trim($file['ocrText']);
-                if ($text === '') {
-                    continue;
-                }
-
-                return [
-                    'ok' => true,
-                    'source' => 's3_snapshot',
-                    'sourceLocation' => 'S3: ' . (string) ($loaded['remotePath'] ?? ($loaded['key'] ?? (
-                        docs_build_mini_app_user_tasks_snapshot_relative_path(
-                            docs_sanitize_mini_app_user_tasks_snapshot_id($telegramId)
-                        )
-                    ))),
-                    'text' => $text,
-                    'pagesCount' => isset($file['ocr']['pagesCount']) ? (int) $file['ocr']['pagesCount'] : 0,
-                    'telegramId' => $telegramId,
-                ];
-            }
-        }
-    }
-
-    return [
-        'ok' => false,
-        'source' => 's3_snapshot',
-        'error' => 'OCR-текст не найден в пользовательских JSON-снимках S3.',
-    ];
-}
-
-function docs_check_task_file_ocr_in_participant_snapshots(
-    array $record,
-    string $folder,
-    string $storedName
-): array {
-    @ini_set('memory_limit', DOCS_OCR_SNAPSHOT_READ_MEMORY_LIMIT);
-    $record['documentFolder'] = sanitize_folder_name($folder);
-    $taskKey = docs_task_snapshot_key($record);
-    $telegramIds = docs_collect_record_telegram_ids($record, $folder);
-    $totalCheckTimeout = min(
-        DOCS_OCR_S3_CHECK_MAX_TIMEOUT_SECONDS,
-        max(
-            DOCS_OCR_S3_CHECK_TOTAL_TIMEOUT_SECONDS,
-            count($telegramIds) * DOCS_OCR_S3_CHECK_PARTICIPANT_TIMEOUT_SECONDS
-        )
+    $snapshotRecord = docs_hydrate_task_ocr_from_participant_snapshots(
+        $record,
+        array_values(array_unique(array_merge(array_keys($previousIndex), array_keys($currentIndex))))
     );
-    @set_time_limit($totalCheckTimeout + DOCS_OCR_S3_CHECK_PARTICIPANT_TIMEOUT_SECONDS);
-    $participants = [];
-    $presentCount = 0;
-    $deadline = microtime(true) + $totalCheckTimeout;
+    $telegramIds = array_values(array_unique(array_merge(array_keys($previousIndex), array_keys($currentIndex))));
 
     foreach ($telegramIds as $telegramId) {
-        $safeTelegramId = docs_sanitize_mini_app_user_tasks_snapshot_id($telegramId);
-        $relativePath = docs_build_mini_app_user_tasks_snapshot_relative_path($safeTelegramId);
-        if (microtime(true) >= $deadline) {
-            $participants[] = [
-                'telegramId' => $telegramId,
-                'relativePath' => $relativePath,
-                'sourceLocation' => 'S3: ' . $relativePath,
-                'present' => false,
-                'textLength' => 0,
-                'status' => 'check_timeout',
-                'message' => 'Общий лимит времени проверки S3 исчерпан.',
-            ];
-            continue;
-        }
-
-        try {
-            $loaded = docs_load_mini_app_user_tasks_snapshot(
-                $telegramId,
-                min(
-                    DOCS_OCR_S3_CHECK_PARTICIPANT_TIMEOUT_SECONDS,
-                    max(1, (int) floor($deadline - microtime(true)))
-                )
-            );
-        } catch (Throwable $error) {
-            $loaded = [
-                'ok' => false,
-                'error' => 'snapshot_check_failed',
-                'message' => sanitize_text_field($error->getMessage(), 300),
-            ];
-            docs_write_response_log('Ошибка проверки пользовательского OCR JSON в S3', [
+        $result = isset($currentIndex[$telegramId])
+            ? docs_rebuild_mini_app_user_tasks_snapshot((string) $telegramId, $snapshotRecord)
+            : docs_rebuild_mini_app_user_tasks_snapshot((string) $telegramId);
+        if (empty($result['saved'])) {
+            docs_write_response_log('Не удалось синхронизировать задачи пользователя в Telegram JSON', [
                 'folder' => $folder,
                 'documentId' => $record['id'] ?? null,
-                'storedName' => $storedName,
                 'telegramId' => $telegramId,
-                'error' => $error->getMessage(),
+                'status' => $result['status'] ?? 'unknown',
+                'error' => $result['error'] ?? ($result['reason'] ?? ''),
             ]);
         }
-        $participant = [
-            'telegramId' => $telegramId,
-            'relativePath' => $relativePath,
-            'sourceLocation' => 'S3: ' . (string) ($loaded['remotePath'] ?? ($loaded['key'] ?? $relativePath)),
-            'present' => false,
-            'textLength' => 0,
-            'status' => 'snapshot_unavailable',
-            'message' => sanitize_text_field(
-                (string) ($loaded['message'] ?? 'JSON-снимок пользователя в S3 недоступен.'),
-                300
-            ),
-        ];
-
-        if (!empty($loaded['ok']) && isset($loaded['snapshot']) && is_array($loaded['snapshot'])) {
-            $participant['status'] = 'task_missing';
-            $participant['message'] = 'Задача отсутствует в JSON-снимке участника.';
-            foreach (isset($loaded['snapshot']['tasks']) && is_array($loaded['snapshot']['tasks'])
-                ? $loaded['snapshot']['tasks']
-                : [] as $task
-            ) {
-                if (!is_array($task) || docs_task_snapshot_key($task) !== $taskKey) {
-                    continue;
-                }
-                $participant['status'] = 'file_missing';
-                $participant['message'] = 'Файл отсутствует в задаче JSON-снимка.';
-                foreach (isset($task['files']) && is_array($task['files']) ? $task['files'] : [] as $file) {
-                    if (!is_array($file) || (string) ($file['storedName'] ?? '') !== $storedName) {
-                        continue;
-                    }
-                    $text = isset($file['ocrText']) && is_string($file['ocrText'])
-                        ? trim($file['ocrText'])
-                        : '';
-                    $participant['textLength'] = mb_strlen($text, 'UTF-8');
-                    if ($text !== '') {
-                        $participant['present'] = true;
-                        $participant['status'] = 'present';
-                        $participant['message'] = 'OCR-текст найден.';
-                        $presentCount++;
-                    } else {
-                        $participant['status'] = 'text_missing';
-                        $participant['message'] = 'У файла отсутствует OCR-текст.';
-                    }
-                    break;
-                }
-                break;
-            }
-        }
-
-        $participants[] = $participant;
-    }
-
-    $total = count($telegramIds);
-
-    return [
-        'allPresent' => $total > 0 && $presentCount === $total,
-        'participantsTotal' => $total,
-        'presentCount' => $presentCount,
-        'missingCount' => max(0, $total - $presentCount),
-        'participants' => $participants,
-    ];
-}
-
-function docs_update_record_ocr_snapshot_status(
-    string $folder,
-    string $documentId,
-    string $status,
-    int $syncedUsersCount,
-    string $error = '',
-    array $storedNames = []
-): void {
-    if ($documentId === '') {
-        return;
-    }
-
-    $storedNameLookup = [];
-    foreach ($storedNames as $storedName) {
-        $normalizedStoredName = sanitize_text_field((string) $storedName, 255);
-        if ($normalizedStoredName !== '') {
-            $storedNameLookup[$normalizedStoredName] = true;
-        }
-    }
-    if (empty($storedNameLookup)) {
-        return;
-    }
-
-    [$handle, $records] = docs_lock_registry($folder);
-    if ($handle === null) {
-        return;
-    }
-
-    $changed = false;
-    try {
-        foreach ($records as &$record) {
-            if (!is_array($record) || (string) ($record['id'] ?? '') !== $documentId) {
-                continue;
-            }
-            if (!isset($record['files']) || !is_array($record['files'])) {
-                break;
-            }
-            foreach ($record['files'] as &$file) {
-                if (!is_array($file) || !isset($file['ocr']) || !is_array($file['ocr'])) {
-                    continue;
-                }
-                $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
-                if ($storedName === '' || !isset($storedNameLookup[$storedName])) {
-                    continue;
-                }
-                if ((string) ($file['ocr']['status'] ?? '') !== 'completed') {
-                    continue;
-                }
-                $file['ocr']['snapshotStatus'] = $status;
-                $file['ocr']['snapshotUpdatedAt'] = date('c');
-                $file['ocr']['snapshotUsersCount'] = max(0, $syncedUsersCount);
-                if ($status === 'synced') {
-                    $file['ocr']['snapshotDeliveryVersion'] = DOCS_OCR_SNAPSHOT_DELIVERY_VERSION;
-                } else {
-                    unset($file['ocr']['snapshotDeliveryVersion']);
-                }
-                if ($error !== '') {
-                    $file['ocr']['snapshotError'] = sanitize_text_field($error, 500);
-                } else {
-                    unset($file['ocr']['snapshotError']);
-                }
-                $changed = true;
-            }
-            unset($file);
-            if ($changed) {
-                $record['updatedAt'] = date('c');
-            }
-            break;
-        }
-        unset($record);
-
-        if ($changed) {
-            docs_save_registry_locked($handle, $records);
-        }
-    } finally {
-        docs_unlock_registry($handle);
     }
 }
+function docs_read_system_crontab(): array
+{
+    $result = docs_run_process_with_timeout(['crontab', '-l'], DOCS_SYSTEM_CRONTAB_TIMEOUT_SECONDS);
+    $content = (string) ($result['output'] ?? '');
+    $error = trim((string) ($result['error'] ?? ''));
+    $combinedError = trim($error . "\n" . $content);
+    $missingCrontab = empty($result['ok'])
+        && ($combinedError === '' || stripos($combinedError, 'no crontab') !== false);
 
-function docs_store_file_ocr_job(
-    string $folder,
-    string $documentId,
-    string $storedName,
-    array $job
-): void {
-    $jobId = sanitize_text_field((string) ($job['jobId'] ?? ''), 160);
-    if ($documentId === '' || $storedName === '' || $jobId === '') {
-        return;
-    }
-
-    [$handle, $records] = docs_lock_registry($folder);
-    if ($handle === null) {
-        return;
-    }
-
-    $changed = false;
-    try {
-        foreach ($records as &$record) {
-            if (!is_array($record) || (string) ($record['id'] ?? '') !== $documentId) {
-                continue;
-            }
-            if (!isset($record['files']) || !is_array($record['files'])) {
-                break;
-            }
-            foreach ($record['files'] as &$file) {
-                if (!is_array($file) || (string) ($file['storedName'] ?? '') !== $storedName) {
-                    continue;
-                }
-                $ocr = isset($file['ocr']) && is_array($file['ocr']) ? $file['ocr'] : docs_build_new_file_ocr_state();
-                $jobStatus = sanitize_text_field((string) ($job['status'] ?? 'queued'), 40);
-                if (in_array($jobStatus, ['queued', 'running'], true)) {
-                    $ocr['status'] = 'processing';
-                    if (empty($ocr['startedAt'])) {
-                        $ocr['startedAt'] = date('c');
-                    }
-                } elseif (in_array($jobStatus, ['failed', 'cancelled'], true)) {
-                    $ocr['status'] = 'failed';
-                    $ocr['processedAt'] = date('c');
-                }
-                $ocr['jobId'] = $jobId;
-                $ocr['jobReused'] = !empty($job['reused']);
-                $ocr['jobStatus'] = $jobStatus;
-                $ocr['jobProgress'] = max(0, min(100, (int) ($job['progress'] ?? 0)));
-                $ocr['jobCurrentPage'] = max(0, (int) ($job['currentPage'] ?? 0));
-                $ocr['jobTotalPages'] = max(0, (int) ($job['totalPages'] ?? 0));
-                $ocr['jobCreatedAt'] = sanitize_text_field((string) ($job['createdAt'] ?? ($ocr['jobCreatedAt'] ?? date('c'))), 80);
-                $ocr['jobStartedAt'] = sanitize_text_field((string) ($job['startedAt'] ?? ($ocr['jobStartedAt'] ?? '')), 80);
-                $ocr['jobCompletedAt'] = sanitize_text_field((string) ($job['completedAt'] ?? ''), 80);
-                $ocr['jobResultUrl'] = sanitize_text_field((string) ($job['resultUrl'] ?? ''), 500);
-                $jobError = sanitize_text_field((string) ($job['error'] ?? ''), 500);
-                if ($jobError !== '') {
-                    $ocr['jobError'] = $jobError;
-                } else {
-                    unset($ocr['jobError']);
-                }
-                $file['ocr'] = $ocr;
-                $changed = true;
-                break;
-            }
-            unset($file);
-            if ($changed) {
-                $record['updatedAt'] = date('c');
-            }
-            break;
-        }
-        unset($record);
-
-        if ($changed) {
-            docs_save_registry_locked($handle, $records);
-        }
-    } finally {
-        docs_unlock_registry($handle);
-    }
-
-}
-
-function docs_apply_private_ocr_result_to_file(
-    string $folder,
-    string $documentId,
-    string $storedName,
-    array $result
-): array {
-    $ocrText = isset($result['text']) && is_string($result['text'])
-        ? trim($result['text'])
-        : '';
-    if ($ocrText === '') {
-        return [
-            'ok' => false,
-            'error' => 'OCR завершён, но распознанный текст пуст.',
-        ];
-    }
-
-    [$handle, $records] = docs_lock_registry($folder);
-    if ($handle === null) {
-        return [
-            'ok' => false,
-            'error' => 'Не удалось заблокировать реестр для записи OCR.',
-        ];
-    }
-
-    $updatedRecord = null;
-    try {
-        foreach ($records as &$record) {
-            if (!is_array($record) || (string) ($record['id'] ?? '') !== $documentId) {
-                continue;
-            }
-            if (!isset($record['files']) || !is_array($record['files'])) {
-                break;
-            }
-            foreach ($record['files'] as &$file) {
-                if (!is_array($file) || (string) ($file['storedName'] ?? '') !== $storedName) {
-                    continue;
-                }
-                $previousOcr = isset($file['ocr']) && is_array($file['ocr']) ? $file['ocr'] : [];
-                $file['ocr'] = array_filter([
-                    'status' => 'completed',
-                    'engine' => 'n8n_jobs',
-                    'uploadGeneration' => max(0, (int) ($previousOcr['uploadGeneration'] ?? 0)),
-                    'uploadOrigin' => sanitize_text_field((string) ($previousOcr['uploadOrigin'] ?? ''), 40),
-                    'queuedAt' => (string) ($previousOcr['queuedAt'] ?? date('c')),
-                    'startedAt' => (string) ($previousOcr['startedAt'] ?? date('c')),
-                    'processedAt' => date('c'),
-                    'mimeType' => sanitize_text_field((string) ($result['mimeType'] ?? ($previousOcr['mimeType'] ?? '')), 120),
-                    'httpStatus' => isset($result['httpStatus']) ? (int) $result['httpStatus'] : 200,
-                    'pagesCount' => max(0, (int) ($result['pagesCount'] ?? 0)),
-                    'jobId' => sanitize_text_field((string) ($result['jobId'] ?? ($previousOcr['jobId'] ?? '')), 160),
-                    'jobReused' => isset($result['jobReused'])
-                        ? (bool) $result['jobReused']
-                        : (!empty($previousOcr['jobReused']) ? true : null),
-                    'jobStatus' => 'succeeded',
-                    'jobProgress' => 100,
-                    'jobCurrentPage' => max(0, (int) ($result['pagesCount'] ?? 0)),
-                    'jobTotalPages' => max(0, (int) ($result['pagesCount'] ?? 0)),
-                    'jobCreatedAt' => sanitize_text_field((string) ($previousOcr['jobCreatedAt'] ?? ''), 80),
-                    'jobStartedAt' => sanitize_text_field((string) ($previousOcr['jobStartedAt'] ?? ''), 80),
-                    'jobCompletedAt' => date('c'),
-                    'jobResultUrl' => sanitize_text_field((string) ($previousOcr['jobResultUrl'] ?? ''), 500),
-                    'textTruncated' => !empty($result['textTruncated']) ? true : null,
-                ], static function ($value): bool {
-                    return $value !== null && $value !== '';
-                });
-                unset($file['ocrText']);
-                $file['ocrTextLength'] = mb_strlen($ocrText, 'UTF-8');
-                $record['updatedAt'] = date('c');
-                $updatedRecord = $record;
-                foreach ($updatedRecord['files'] as &$snapshotFile) {
-                    if (is_array($snapshotFile)
-                        && (string) ($snapshotFile['storedName'] ?? '') === $storedName
-                    ) {
-                        $snapshotFile['ocrText'] = $ocrText;
-                        $snapshotFile['ocrTextLength'] = mb_strlen($ocrText, 'UTF-8');
-                        break;
-                    }
-                }
-                unset($snapshotFile);
-                break 2;
-            }
-            unset($file);
-        }
-        unset($record);
-
-        if (!is_array($updatedRecord) || !docs_save_registry_locked($handle, $records)) {
-            return [
-                'ok' => false,
-                'error' => 'Не удалось сохранить результат OCR в реестре.',
-            ];
-        }
-    } finally {
-        docs_unlock_registry($handle);
-    }
-
-    docs_sync_task_ocr_to_participant_snapshots($updatedRecord, $folder);
-    $participantsTotal = count(docs_collect_record_telegram_ids($updatedRecord, $folder));
-    if ($participantsTotal === 0) {
+    if (!empty($result['ok']) || $missingCrontab) {
         return [
             'ok' => true,
-            'snapshotStatus' => 'synced',
-            'participantsTotal' => 0,
-            'presentCount' => 0,
+            'content' => $missingCrontab ? '' : $content,
             'error' => '',
         ];
     }
 
-    try {
-        $deliveryCheck = docs_check_task_file_ocr_in_participant_snapshots(
-            $updatedRecord,
-            $folder,
-            $storedName
-        );
-    } catch (Throwable $error) {
-        $deliveryCheck = [
-            'allPresent' => false,
-            'participantsTotal' => $participantsTotal,
-            'presentCount' => 0,
-            'participants' => [],
-            'error' => sanitize_text_field($error->getMessage(), 300),
-        ];
-    }
-
-    $presentCount = max(0, (int) ($deliveryCheck['presentCount'] ?? 0));
-    $allPresent = !empty($deliveryCheck['allPresent'])
-        && $presentCount === $participantsTotal;
-    $snapshotStatus = $allPresent ? 'synced' : ($presentCount > 0 ? 'partial' : 'error');
-    $snapshotError = '';
-    if (!$allPresent) {
-        $missingDetails = [];
-        foreach (isset($deliveryCheck['participants']) && is_array($deliveryCheck['participants'])
-            ? $deliveryCheck['participants']
-            : [] as $participant
-        ) {
-            if (!is_array($participant) || !empty($participant['present'])) {
-                continue;
-            }
-            $telegramId = sanitize_text_field((string) ($participant['telegramId'] ?? ''), 120);
-            $message = sanitize_text_field((string) ($participant['message'] ?? ''), 200);
-            $missingDetails[] = ($telegramId !== '' ? $telegramId . ': ' : '')
-                . ($message !== '' ? $message : 'OCR-текст не найден.');
-            if (count($missingDetails) >= 3) {
-                break;
-            }
-        }
-        $snapshotError = 'После записи OCR подтверждён в '
-            . $presentCount
-            . ' из '
-            . $participantsTotal
-            . ' users/{telegramId}.json.';
-        if (!empty($missingDetails)) {
-            $snapshotError .= ' ' . implode('; ', $missingDetails);
-        } elseif (!empty($deliveryCheck['error'])) {
-            $snapshotError .= ' ' . sanitize_text_field((string) $deliveryCheck['error'], 300);
-        }
-    }
-    docs_update_record_ocr_snapshot_status(
-        $folder,
-        $documentId,
-        $snapshotStatus,
-        $presentCount,
-        $snapshotError,
-        [$storedName]
-    );
-
     return [
-        'ok' => $allPresent,
-        'snapshotStatus' => $snapshotStatus,
-        'participantsTotal' => $participantsTotal,
-        'presentCount' => $presentCount,
-        'error' => $snapshotError,
+        'ok' => false,
+        'content' => '',
+        'error' => $combinedError !== '' ? sanitize_text_field($combinedError, 500) : 'Команда crontab недоступна.',
     ];
 }
 
-function docs_process_uploaded_files_ocr(
-    string $folder,
-    string $documentId,
-    array $uploads,
-    bool $forceNewJob = false
-): void {
-    if (empty($uploads)) {
-        return;
-    }
-
-    docs_enqueue_uploaded_files_ocr($folder, $documentId, $uploads, $forceNewJob);
-    docs_run_ocr_backfill_worker_step($folder);
-}
-
-function docs_ocr_backfill_state_path(string $folder): string
+function docs_write_system_crontab(array $lines): array
 {
-    return ensure_organization_directory($folder) . '/' . DOCS_OCR_BACKFILL_STATE_FILENAME;
-}
-
-function docs_ocr_backfill_lock_path(string $folder): string
-{
-    return ensure_organization_directory($folder) . '/' . DOCS_OCR_BACKFILL_LOCK_FILENAME;
-}
-
-function docs_ocr_runtime_file_path(string $filename): string
-{
-    if (!is_dir(DOCS_SERVER_LOG_DIRECTORY)) {
-        @mkdir(DOCS_SERVER_LOG_DIRECTORY, 0775, true);
-    }
-
-    return DOCS_SERVER_LOG_DIRECTORY . '/' . $filename;
-}
-
-function docs_ocr_global_worker_lock_path(): string
-{
-    return docs_ocr_runtime_file_path(DOCS_OCR_GLOBAL_WORKER_LOCK_FILENAME);
-}
-
-function docs_ocr_cron_cycle_lock_path(): string
-{
-    return docs_ocr_runtime_file_path(DOCS_OCR_CRON_CYCLE_LOCK_FILENAME);
-}
-
-function docs_ocr_cron_state_path(): string
-{
-    return docs_ocr_runtime_file_path(DOCS_OCR_CRON_STATE_FILENAME);
-}
-
-function docs_load_ocr_cron_runtime_state(): array
-{
-    $path = docs_ocr_cron_state_path();
-    if (!is_file($path) || !is_readable($path)) {
-        return [];
-    }
-    $raw = @file_get_contents($path);
-    $decoded = is_string($raw) && trim($raw) !== '' ? json_decode($raw, true) : null;
-
-    return is_array($decoded) ? $decoded : [];
-}
-
-function docs_save_ocr_cron_runtime_state(array $state): bool
-{
-    $path = docs_ocr_cron_state_path();
-    $encoded = json_encode($state, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    if ($encoded === false) {
-        return false;
-    }
-    $tempPath = tempnam(dirname($path), '.documents_ocr_cron_');
+    $tempPath = tempnam(sys_get_temp_dir(), '.documents_crontab_');
     if (!is_string($tempPath) || $tempPath === '') {
-        return false;
-    }
-    try {
-        if (@file_put_contents($tempPath, $encoded . PHP_EOL, LOCK_EX) === false) {
-            return false;
-        }
-        return @rename($tempPath, $path);
-    } finally {
-        if (is_file($tempPath)) {
-            @unlink($tempPath);
-        }
-    }
-}
-
-function docs_find_global_ocr_processing_owner(): array
-{
-    foreach (load_organizations() as $organization) {
-        $folder = sanitize_folder_name((string) $organization);
-        if ($folder === '' || !is_dir(DOCUMENTS_ROOT . '/' . $folder)) {
-            continue;
-        }
-        $state = docs_load_ocr_backfill_state($folder);
-        if ((string) ($state['status'] ?? 'idle') !== 'running') {
-            continue;
-        }
-        foreach (isset($state['items']) && is_array($state['items']) ? $state['items'] : [] as $item) {
-            if (is_array($item) && (string) ($item['status'] ?? '') === 'processing') {
-                return [
-                    'folder' => $folder,
-                    'item' => $item,
-                ];
-            }
-        }
-    }
-
-    return [];
-}
-
-function docs_run_ocr_cron_cycle(): array
-{
-    $startedAt = microtime(true);
-    $cycleLock = @fopen(docs_ocr_cron_cycle_lock_path(), 'c+');
-    if ($cycleLock === false || !@flock($cycleLock, LOCK_EX | LOCK_NB)) {
-        if (is_resource($cycleLock)) {
-            fclose($cycleLock);
-        }
-        return [
-            'ok' => true,
-            'worked' => false,
-            'reason' => 'cron_cycle_busy',
-        ];
+        return ['ok' => false, 'error' => 'Не удалось создать временный файл crontab.'];
     }
 
     try {
-        $runtime = docs_load_ocr_cron_runtime_state();
-        $lastFolder = sanitize_folder_name((string) ($runtime['lastFolder'] ?? ''));
-        foreach (load_organizations() as $organization) {
-            $repairFolder = sanitize_folder_name((string) $organization);
-            if ($repairFolder !== '' && is_dir(DOCUMENTS_ROOT . '/' . $repairFolder)) {
-                docs_reactivate_legacy_ocr_delivery_failures($repairFolder);
-            }
+        $content = !empty($lines) ? implode(PHP_EOL, $lines) . PHP_EOL : '';
+        if (@file_put_contents($tempPath, $content, LOCK_EX) === false) {
+            return ['ok' => false, 'error' => 'Не удалось подготовить новый crontab.'];
         }
-        $eligibleFolders = [];
-        $processingOwner = docs_find_global_ocr_processing_owner();
-        if (!empty($processingOwner['folder'])) {
-            $eligibleFolders[] = (string) $processingOwner['folder'];
-        } else {
-            foreach (load_organizations() as $organization) {
-                $folder = sanitize_folder_name((string) $organization);
-                if ($folder === '' || !is_dir(DOCUMENTS_ROOT . '/' . $folder)) {
-                    continue;
-                }
-                $state = docs_load_ocr_backfill_state($folder);
-                $queueStatus = (string) ($state['status'] ?? 'idle');
-                if (!in_array($queueStatus, ['running', 'paused'], true)) {
-                    continue;
-                }
-                $items = isset($state['items']) && is_array($state['items']) ? array_values($state['items']) : [];
-                if (docs_select_ocr_queue_item_index(
-                    $items,
-                    $queueStatus === 'paused',
-                    (string) ($state['lastScheduledOrigin'] ?? '')
-                ) !== null) {
-                    $eligibleFolders[] = $folder;
-                }
-            }
-        }
-
-        $selectedFolder = '';
-        if (!empty($eligibleFolders)) {
-            $selectedFolder = (string) $eligibleFolders[0];
-            if (empty($processingOwner) && $lastFolder !== '') {
-                $lastIndex = array_search($lastFolder, $eligibleFolders, true);
-                if ($lastIndex !== false) {
-                    $selectedFolder = (string) $eligibleFolders[((int) $lastIndex + 1) % count($eligibleFolders)];
-                }
-            }
-        }
-
-        try {
-            if ($selectedFolder !== '') {
-                $step = docs_run_ocr_backfill_worker_step($selectedFolder);
-            } else {
-                $step = ['worked' => false, 'reason' => 'no_active_queues'];
-            }
-        } catch (Throwable $error) {
-            $step = [
-                'worked' => false,
-                'reason' => 'worker_error',
-                'error' => sanitize_text_field($error->getMessage(), 500),
+        $result = docs_run_process_with_timeout(['crontab', $tempPath], DOCS_SYSTEM_CRONTAB_TIMEOUT_SECONDS);
+        if (empty($result['ok'])) {
+            $error = trim((string) ($result['error'] ?? ($result['output'] ?? '')));
+            return [
+                'ok' => false,
+                'error' => $error !== '' ? sanitize_text_field($error, 500) : 'Не удалось обновить crontab.',
             ];
         }
-        $heartbeat = [
-            'lastRunAt' => date('c'),
-            'lastFolder' => $selectedFolder !== '' ? $selectedFolder : $lastFolder,
-            'worked' => !empty($step['worked']),
-            'reason' => sanitize_text_field((string) ($step['reason'] ?? ''), 80),
-            'lastError' => sanitize_text_field((string) ($step['error'] ?? ''), 500),
-            'durationMs' => (int) round((microtime(true) - $startedAt) * 1000),
-            'pid' => function_exists('getmypid') ? (int) getmypid() : 0,
-        ];
-        docs_save_ocr_cron_runtime_state(array_merge(
-            docs_load_ocr_cron_runtime_state(),
-            $runtime,
-            $heartbeat
-        ));
 
-        return [
-            'ok' => true,
-            'worked' => $heartbeat['worked'],
-            'reason' => $heartbeat['reason'],
-            'folder' => $selectedFolder,
-            'durationMs' => $heartbeat['durationMs'],
-        ];
+        return ['ok' => true, 'error' => ''];
     } finally {
-        @flock($cycleLock, LOCK_UN);
-        fclose($cycleLock);
+        @unlink($tempPath);
     }
 }
 
-function docs_run_ocr_cron_window(): array
+function docs_legacy_ocr_cron_status(): array
 {
-    $deadline = microtime(true) + DOCS_OCR_CRON_RUN_WINDOW_SECONDS;
-    $cycles = 0;
-    $worked = false;
-    $lastResult = [
+    $read = docs_read_system_crontab();
+    $matches = [];
+    if (!empty($read['ok'])) {
+        foreach (preg_split('/\r\n|\r|\n/', (string) ($read['content'] ?? '')) ?: [] as $line) {
+            $line = trim((string) $line);
+            if ($line !== '' && (
+                strpos($line, DOCS_LEGACY_OCR_CRON_MARKER) !== false
+                || strpos($line, DOCS_LEGACY_OCR_CRON_COMMAND) !== false
+            )) {
+                $matches[] = $line;
+            }
+        }
+    }
+
+    return [
+        'readable' => !empty($read['ok']),
+        'installed' => !empty($matches),
+        'entries' => $matches,
+        'error' => (string) ($read['error'] ?? ''),
+        'description' => 'Устаревший cron автоматического OCR. После обновления кода он ничего не вычисляет и может быть удалён.',
+    ];
+}
+
+function docs_remove_legacy_ocr_cron(): array
+{
+    $read = docs_read_system_crontab();
+    if (empty($read['ok'])) {
+        return [
+            'ok' => false,
+            'error' => (string) ($read['error'] ?? 'Не удалось прочитать crontab.'),
+            'cron' => docs_legacy_ocr_cron_status(),
+        ];
+    }
+
+    $keptLines = [];
+    $removed = 0;
+    $crontabLines = preg_split('/\r\n|\r|\n/', (string) ($read['content'] ?? '')) ?: [];
+    if (!empty($crontabLines) && end($crontabLines) === '') {
+        array_pop($crontabLines);
+    }
+    foreach ($crontabLines as $line) {
+        if (strpos((string) $line, DOCS_LEGACY_OCR_CRON_MARKER) !== false
+            || strpos((string) $line, DOCS_LEGACY_OCR_CRON_COMMAND) !== false
+        ) {
+            $removed++;
+            continue;
+        }
+        $keptLines[] = rtrim((string) $line);
+    }
+
+    if ($removed > 0) {
+        $write = docs_write_system_crontab($keptLines);
+        if (empty($write['ok'])) {
+            return [
+                'ok' => false,
+                'error' => (string) ($write['error'] ?? 'Не удалось удалить старый OCR-cron.'),
+                'cron' => docs_legacy_ocr_cron_status(),
+            ];
+        }
+    }
+
+    return [
         'ok' => true,
-        'worked' => false,
-        'reason' => 'no_active_queues',
-        'folder' => '',
+        'removed' => $removed,
+        'cron' => docs_legacy_ocr_cron_status(),
     ];
-
-    do {
-        $lastResult = docs_run_ocr_cron_cycle();
-        $cycles++;
-        $worked = $worked || !empty($lastResult['worked']);
-        $reason = (string) ($lastResult['reason'] ?? '');
-        if (in_array($reason, ['no_active_queues', 'cron_cycle_busy'], true)) {
-            break;
-        }
-        $remainingMicroseconds = (int) floor((
-            $deadline - microtime(true)
-        ) * 1000000);
-        $pollIntervalMicroseconds = DOCS_OCR_CRON_POLL_INTERVAL_MILLISECONDS * 1000;
-        if ($remainingMicroseconds <= $pollIntervalMicroseconds) {
-            break;
-        }
-        usleep($pollIntervalMicroseconds);
-    } while (microtime(true) < $deadline);
-
-    return [
-        'ok' => !empty($lastResult['ok']),
-        'worked' => $worked,
-        'reason' => (string) ($lastResult['reason'] ?? ''),
-        'folder' => (string) ($lastResult['folder'] ?? ''),
-        'cycles' => $cycles,
-    ];
-}
-
-function docs_default_ocr_backfill_state(): array
-{
-    return [
-        'version' => DOCS_OCR_BACKFILL_WORKFLOW_VERSION,
-        'status' => 'idle',
-        'total' => 0,
-        'completed' => 0,
-        'failed' => 0,
-        'skipped' => 0,
-        'attempted' => 0,
-        'items' => [],
-        'recentFailures' => [],
-        'lastScheduledOrigin' => '',
-    ];
-}
-
-function docs_ocr_queue_item_key(string $documentId, string $storedName): string
-{
-    return hash('sha256', $documentId . "\0" . $storedName);
-}
-
-function docs_build_ocr_queue_item(
-    array $record,
-    array $file,
-    string $origin,
-    int $participantsTotal,
-    int $presentCount,
-    bool $forceNewJob = false
-): array {
-    $documentId = sanitize_text_field((string) ($record['id'] ?? ''), 200);
-    $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
-    $ocr = isset($file['ocr']) && is_array($file['ocr']) ? $file['ocr'] : [];
-
-    return [
-        'key' => docs_ocr_queue_item_key($documentId, $storedName),
-        'documentId' => $documentId,
-        'taskLabel' => sanitize_text_field((string) (
-            $record['registryNumber']
-            ?? $record['documentNumber']
-            ?? $record['entryNumber']
-            ?? $documentId
-        ), 160),
-        'storedName' => $storedName,
-        'originalName' => sanitize_text_field((string) ($file['originalName'] ?? $storedName), 255),
-        'size' => max(0, (int) ($file['size'] ?? 0)),
-        'origin' => $origin === 'old_backfill' ? 'old_backfill' : 'live_upload',
-        'fullReprocess' => $forceNewJob && $origin === 'old_backfill',
-        'status' => 'pending',
-        'attempts' => 0,
-        'participantsTotal' => max(0, $participantsTotal),
-        'presentCount' => max(0, $presentCount),
-        'missingCount' => max(0, $participantsTotal - $presentCount),
-        'jobId' => $forceNewJob ? '' : sanitize_text_field((string) ($ocr['jobId'] ?? ''), 160),
-        'jobStatus' => $forceNewJob ? '' : sanitize_text_field((string) ($ocr['jobStatus'] ?? ''), 40),
-        'progress' => $forceNewJob ? 0 : max(0, min(100, (int) ($ocr['jobProgress'] ?? 0))),
-        'currentPage' => $forceNewJob ? 0 : max(0, (int) ($ocr['jobCurrentPage'] ?? 0)),
-        'totalPages' => $forceNewJob ? 0 : max(0, (int) ($ocr['jobTotalPages'] ?? 0)),
-        'legacyJobChecked' => $forceNewJob,
-        'forceNewJob' => $forceNewJob,
-        'deliveryPending' => !$forceNewJob
-            && (string) ($ocr['status'] ?? '') === 'completed'
-            && in_array(strtolower((string) ($ocr['snapshotStatus'] ?? '')), ['partial', 'error'], true),
-        'deliveryAttempts' => 0,
-        'deliveryRepairGeneration' => DOCS_OCR_DELIVERY_REPAIR_GENERATION,
-        'error' => '',
-        'queuedAt' => date('c'),
-    ];
-}
-
-function docs_enqueue_uploaded_files_ocr(
-    string $folder,
-    string $documentId,
-    array $uploads,
-    bool $forceNewJob = false
-): void {
-    $storedNames = [];
-    foreach ($uploads as $upload) {
-        if (!is_array($upload) || !isset($upload['file']) || !is_array($upload['file'])) {
-            continue;
-        }
-        $storedName = sanitize_text_field((string) ($upload['file']['storedName'] ?? ''), 255);
-        if ($storedName !== '') {
-            $storedNames[$storedName] = true;
-        }
-    }
-    if ($documentId === '' || empty($storedNames)) {
-        return;
-    }
-
-    $matchRecord = null;
-    foreach (load_registry($folder) as $record) {
-        if (is_array($record) && (string) ($record['id'] ?? '') === $documentId) {
-            $matchRecord = $record;
-            break;
-        }
-    }
-    if (!is_array($matchRecord)) {
-        return;
-    }
-
-    $lockHandle = @fopen(docs_ocr_backfill_lock_path($folder), 'c+');
-    if ($lockHandle === false || !@flock($lockHandle, LOCK_EX)) {
-        if (is_resource($lockHandle)) {
-            fclose($lockHandle);
-        }
-        return;
-    }
-
-    try {
-        $state = docs_load_ocr_backfill_state($folder);
-        $items = isset($state['items']) && is_array($state['items']) ? $state['items'] : [];
-        $indexByKey = [];
-        foreach ($items as $index => $item) {
-            if (is_array($item) && isset($item['key'])) {
-                $indexByKey[(string) $item['key']] = $index;
-            }
-        }
-        $participantsTotal = count(docs_collect_record_telegram_ids($matchRecord, $folder));
-        foreach (isset($matchRecord['files']) && is_array($matchRecord['files']) ? $matchRecord['files'] : [] as $file) {
-            if (!is_array($file)) {
-                continue;
-            }
-            $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
-            if ($storedName === '' || !isset($storedNames[$storedName])) {
-                continue;
-            }
-            $ocr = isset($file['ocr']) && is_array($file['ocr']) ? $file['ocr'] : [];
-            $snapshotStatus = strtolower((string) ($ocr['snapshotStatus'] ?? ''));
-            $presentCount = (string) ($ocr['status'] ?? '') === 'completed'
-                && in_array($snapshotStatus, ['partial', 'error'], true)
-                ? max(0, (int) ($ocr['snapshotUsersCount'] ?? 0))
-                : 0;
-            $item = docs_build_ocr_queue_item(
-                $matchRecord,
-                $file,
-                'live_upload',
-                $participantsTotal,
-                $presentCount,
-                $forceNewJob
-            );
-            $key = (string) $item['key'];
-            if (isset($indexByKey[$key])) {
-                $existingIndex = $indexByKey[$key];
-                $existing = is_array($items[$existingIndex] ?? null) ? $items[$existingIndex] : [];
-                if ((string) ($existing['status'] ?? '') === 'processing'
-                    && !$forceNewJob
-                    && sanitize_text_field((string) ($existing['jobId'] ?? ''), 160) !== ''
-                ) {
-                    continue;
-                }
-                $items[$existingIndex] = array_merge($existing, $item);
-            } else {
-                $items[] = $item;
-                $indexByKey[$key] = array_key_last($items);
-            }
-        }
-        $state['items'] = array_values($items);
-        $state['folder'] = $folder;
-        if ((string) ($state['status'] ?? '') !== 'paused') {
-            $state['status'] = 'running';
-        }
-        if (empty($state['startedAt'])) {
-            $state['startedAt'] = date('c');
-        }
-        $state['completedAt'] = '';
-        docs_save_ocr_backfill_state($folder, $state);
-    } finally {
-        @flock($lockHandle, LOCK_UN);
-        fclose($lockHandle);
-    }
-}
-
-function docs_load_ocr_backfill_state(string $folder): array
-{
-    $path = docs_ocr_backfill_state_path($folder);
-    if (!is_file($path) || !is_readable($path)) {
-        return docs_default_ocr_backfill_state();
-    }
-
-    $raw = @file_get_contents($path);
-    $decoded = is_string($raw) && trim($raw) !== '' ? json_decode($raw, true) : null;
-
-    if (is_array($decoded) && in_array((int) ($decoded['version'] ?? 0), [5, 6, 7], true)) {
-        $items = [];
-        foreach (isset($decoded['items']) && is_array($decoded['items']) ? $decoded['items'] : [] as $item) {
-            if (!is_array($item)) {
-                continue;
-            }
-            $item['origin'] = (string) ($item['origin'] ?? '') === 'old_backfill'
-                ? 'old_backfill'
-                : 'live_upload';
-            $item['fullReprocess'] = !empty($item['fullReprocess'])
-                || ($item['origin'] === 'old_backfill' && !empty($item['forceNewJob']));
-            $items[] = $item;
-        }
-        $decoded['version'] = DOCS_OCR_BACKFILL_WORKFLOW_VERSION;
-        $decoded['items'] = $items;
-        $decoded['lastScheduledOrigin'] = (string) ($decoded['lastScheduledOrigin'] ?? '');
-        if (empty($items)) {
-            $decoded['status'] = 'idle';
-            $decoded['completedAt'] = '';
-        }
-        $hasActiveItems = false;
-        foreach ($items as $item) {
-            if (in_array((string) ($item['status'] ?? ''), ['pending', 'processing'], true)) {
-                $hasActiveItems = true;
-                break;
-            }
-        }
-        if (!empty($items) && !$hasActiveItems) {
-            $decoded['status'] = 'completed';
-        }
-
-        return $decoded;
-    }
-
-    $state = docs_default_ocr_backfill_state();
-    $state['error'] = is_array($decoded) ? 'workflow_reset' : 'state_decode_failed';
-    return $state;
-}
-
-function docs_save_ocr_backfill_state(string $folder, array $state): bool
-{
-    $path = docs_ocr_backfill_state_path($folder);
-    $state['version'] = DOCS_OCR_BACKFILL_WORKFLOW_VERSION;
-    $state['updatedAt'] = date('c');
-    $encoded = json_encode($state, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    if ($encoded === false) {
-        return false;
-    }
-
-    $tempPath = tempnam(dirname($path), '.ocr_backfill_');
-    if (!is_string($tempPath) || $tempPath === '') {
-        return false;
-    }
-    try {
-        if (@file_put_contents($tempPath, $encoded . PHP_EOL, LOCK_EX) === false) {
-            return false;
-        }
-        return @rename($tempPath, $path);
-    } finally {
-        if (is_file($tempPath)) {
-            @unlink($tempPath);
-        }
-    }
-}
-
-function docs_reactivate_legacy_ocr_delivery_failures(string $folder): bool
-{
-    $state = docs_load_ocr_backfill_state($folder);
-    $hasLegacyDeliveryFailure = false;
-    foreach (isset($state['items']) && is_array($state['items']) ? $state['items'] : [] as $item) {
-        if (is_array($item)
-            && (string) ($item['status'] ?? '') === 'failed'
-            && !empty($item['deliveryPending'])
-            && (int) ($item['deliveryRepairGeneration'] ?? 0) < DOCS_OCR_DELIVERY_REPAIR_GENERATION
-        ) {
-            $hasLegacyDeliveryFailure = true;
-            break;
-        }
-    }
-    if (!$hasLegacyDeliveryFailure) {
-        return false;
-    }
-
-    $lockHandle = @fopen(docs_ocr_backfill_lock_path($folder), 'c+');
-    if ($lockHandle === false || !@flock($lockHandle, LOCK_EX | LOCK_NB)) {
-        if (is_resource($lockHandle)) {
-            fclose($lockHandle);
-        }
-        return false;
-    }
-
-    try {
-        $state = docs_load_ocr_backfill_state($folder);
-        $items = isset($state['items']) && is_array($state['items']) ? array_values($state['items']) : [];
-        $changed = false;
-        foreach ($items as &$item) {
-            if (!is_array($item)
-                || (string) ($item['status'] ?? '') !== 'failed'
-                || empty($item['deliveryPending'])
-                || (int) ($item['deliveryRepairGeneration'] ?? 0) >= DOCS_OCR_DELIVERY_REPAIR_GENERATION
-            ) {
-                continue;
-            }
-            $item['status'] = 'processing';
-            $item['deliveryAttempts'] = 0;
-            $item['deliveryRepairGeneration'] = DOCS_OCR_DELIVERY_REPAIR_GENERATION;
-            $item['error'] = '';
-            unset($item['finishedAt']);
-            $changed = true;
-        }
-        unset($item);
-        if (!$changed) {
-            return false;
-        }
-        $state['items'] = $items;
-        if ((string) ($state['status'] ?? '') !== 'paused') {
-            $state['status'] = 'running';
-        }
-        $state['completedAt'] = '';
-
-        return docs_save_ocr_backfill_state($folder, $state);
-    } finally {
-        @flock($lockHandle, LOCK_UN);
-        fclose($lockHandle);
-    }
-}
-
-function docs_find_ocr_backfill_record_file(string $folder, string $documentId, string $storedName): array
-{
-    foreach (load_registry($folder) as $record) {
-        if (!is_array($record) || (string) ($record['id'] ?? '') !== $documentId) {
-            continue;
-        }
-        foreach (isset($record['files']) && is_array($record['files']) ? $record['files'] : [] as $file) {
-            if (is_array($file) && (string) ($file['storedName'] ?? '') === $storedName) {
-                return [
-                    'record' => $record,
-                    'file' => $file,
-                ];
-            }
-        }
-    }
-
-    return [];
-}
-
-function docs_select_ocr_queue_item_index(array $items, bool $oldQueuePaused, string $lastOrigin): ?int
-{
-    foreach ($items as $index => $item) {
-        if (is_array($item) && (string) ($item['status'] ?? '') === 'processing') {
-            return $index;
-        }
-    }
-
-    $pendingByOrigin = [
-        'live_upload' => [],
-        'old_backfill' => [],
-    ];
-    foreach ($items as $index => $item) {
-        if (!is_array($item) || (string) ($item['status'] ?? '') !== 'pending') {
-            continue;
-        }
-        $origin = (string) ($item['origin'] ?? '') === 'old_backfill'
-            ? 'old_backfill'
-            : 'live_upload';
-        if ($oldQueuePaused && $origin === 'old_backfill') {
-            continue;
-        }
-        $pendingByOrigin[$origin][] = $index;
-    }
-
-    if (!empty($pendingByOrigin['live_upload']) && !empty($pendingByOrigin['old_backfill'])) {
-        $nextOrigin = $lastOrigin === 'live_upload' ? 'old_backfill' : 'live_upload';
-        return $pendingByOrigin[$nextOrigin][0];
-    }
-    if (!empty($pendingByOrigin['live_upload'])) {
-        return $pendingByOrigin['live_upload'][0];
-    }
-    if (!empty($pendingByOrigin['old_backfill'])) {
-        return $pendingByOrigin['old_backfill'][0];
-    }
-
-    return null;
-}
-
-function docs_update_file_ocr_terminal_status(
-    string $folder,
-    string $documentId,
-    string $storedName,
-    string $status,
-    string $error
-): void {
-    [$handle, $records] = docs_lock_registry($folder);
-    if ($handle === null) {
-        return;
-    }
-    try {
-        foreach ($records as &$record) {
-            if (!is_array($record) || (string) ($record['id'] ?? '') !== $documentId) {
-                continue;
-            }
-            if (!isset($record['files']) || !is_array($record['files'])) {
-                break;
-            }
-            foreach ($record['files'] as &$file) {
-                if (!is_array($file) || (string) ($file['storedName'] ?? '') !== $storedName) {
-                    continue;
-                }
-                $ocr = isset($file['ocr']) && is_array($file['ocr']) ? $file['ocr'] : docs_build_new_file_ocr_state();
-                $ocr['status'] = $status === 'skipped' ? 'unsupported' : 'failed';
-                $ocr['processedAt'] = date('c');
-                $ocr['error'] = sanitize_text_field($error, 500);
-                $file['ocr'] = $ocr;
-                $record['updatedAt'] = date('c');
-                docs_save_registry_locked($handle, $records);
-                return;
-            }
-            unset($file);
-        }
-        unset($record);
-    } finally {
-        docs_unlock_registry($handle);
-    }
-}
-
-function docs_finish_ocr_queue_item(
-    string $folder,
-    array &$state,
-    array &$items,
-    int $itemIndex,
-    string $status,
-    string $error = ''
-): void {
-    $item = isset($items[$itemIndex]) && is_array($items[$itemIndex])
-        ? $items[$itemIndex]
-        : [];
-    $item['status'] = $status;
-    $item['jobStatus'] = $status === 'completed'
-        ? 'succeeded'
-        : (string) ($item['jobStatus'] ?? '');
-    if ($status === 'completed') {
-        $item['progress'] = 100;
-        $item['presentCount'] = max(0, (int) ($item['participantsTotal'] ?? 0));
-        $item['missingCount'] = 0;
-    }
-    $item['error'] = sanitize_text_field($error, 500);
-    $item['finishedAt'] = date('c');
-    $items[$itemIndex] = $item;
-    $state['items'] = $items;
-    if ($status === 'skipped' || ($status === 'failed' && empty($item['deliveryPending']))) {
-        docs_update_file_ocr_terminal_status(
-            $folder,
-            sanitize_text_field((string) ($item['documentId'] ?? ''), 200),
-            sanitize_text_field((string) ($item['storedName'] ?? ''), 255),
-            $status,
-            (string) $item['error']
-        );
-    }
-    unset($state['currentJob']);
-    $hasRemainingItems = false;
-    foreach ($items as $queueItem) {
-        if (is_array($queueItem)
-            && in_array((string) ($queueItem['status'] ?? ''), ['pending', 'processing'], true)
-        ) {
-            $hasRemainingItems = true;
-            break;
-        }
-    }
-    if (!$hasRemainingItems) {
-        $state['status'] = 'completed';
-        $state['completedAt'] = date('c');
-    }
-}
-
-function docs_run_ocr_backfill_worker_step(string $folder): array
-{
-    $globalLockHandle = @fopen(docs_ocr_global_worker_lock_path(), 'c+');
-    if ($globalLockHandle === false || !@flock($globalLockHandle, LOCK_EX | LOCK_NB)) {
-        if (is_resource($globalLockHandle)) {
-            fclose($globalLockHandle);
-        }
-        return [
-            'worked' => false,
-            'reason' => 'global_worker_busy',
-        ];
-    }
-
-    $lockHandle = null;
-    try {
-        $lockHandle = @fopen(docs_ocr_backfill_lock_path($folder), 'c+');
-        if ($lockHandle === false || !@flock($lockHandle, LOCK_EX | LOCK_NB)) {
-            return [
-                'worked' => false,
-                'reason' => 'worker_busy',
-            ];
-        }
-
-        $state = docs_load_ocr_backfill_state($folder);
-        $queueStatus = (string) ($state['status'] ?? 'idle');
-        if (!in_array($queueStatus, ['running', 'paused'], true)) {
-            return [
-                'worked' => false,
-                'reason' => 'queue_not_running',
-            ];
-        }
-
-        $processingOwner = docs_find_global_ocr_processing_owner();
-        if (!empty($processingOwner['folder']) && (string) $processingOwner['folder'] !== $folder) {
-            return [
-                'worked' => false,
-                'reason' => 'global_job_active',
-                'activeFolder' => (string) $processingOwner['folder'],
-            ];
-        }
-
-        $items = isset($state['items']) && is_array($state['items']) ? array_values($state['items']) : [];
-        $itemIndex = docs_select_ocr_queue_item_index(
-            $items,
-            $queueStatus === 'paused',
-            (string) ($state['lastScheduledOrigin'] ?? '')
-        );
-        if ($itemIndex === null) {
-            $hasPausedOldItems = false;
-            foreach ($items as $queueItem) {
-                if (is_array($queueItem)
-                    && (string) ($queueItem['status'] ?? '') === 'pending'
-                    && (string) ($queueItem['origin'] ?? '') === 'old_backfill'
-                ) {
-                    $hasPausedOldItems = true;
-                    break;
-                }
-            }
-            $state['items'] = $items;
-            if (!$hasPausedOldItems) {
-                $state['status'] = 'completed';
-                $state['completedAt'] = date('c');
-            }
-            docs_save_ocr_backfill_state($folder, $state);
-            return [
-                'worked' => !$hasPausedOldItems,
-                'reason' => $hasPausedOldItems ? 'queue_paused' : 'completed',
-            ];
-        }
-
-        $item = $items[$itemIndex];
-        $state['lastScheduledOrigin'] = (string) ($item['origin'] ?? 'live_upload');
-        $documentId = sanitize_text_field((string) ($item['documentId'] ?? ''), 200);
-        $storedName = sanitize_text_field((string) ($item['storedName'] ?? ''), 255);
-        $match = docs_find_ocr_backfill_record_file($folder, $documentId, $storedName);
-        $record = isset($match['record']) && is_array($match['record']) ? $match['record'] : [];
-        $file = isset($match['file']) && is_array($match['file']) ? $match['file'] : [];
-
-        if (empty($record) || empty($file)) {
-            docs_finish_ocr_queue_item($folder, $state, $items, $itemIndex, 'skipped', 'Файл или задача больше не существуют.');
-            docs_save_ocr_backfill_state($folder, $state);
-            return [
-                'worked' => true,
-                'reason' => 'file_missing',
-            ];
-        }
-        $jobId = sanitize_text_field((string) ($item['jobId'] ?? ''), 160);
-        if (empty($item['deliveryPending'])
-            && (string) ($item['status'] ?? '') === 'processing'
-            && $jobId !== ''
-        ) {
-            $job = docs_fetch_private_ocr_job_status($jobId);
-            if (empty($job['ok'])) {
-                $item['error'] = sanitize_text_field((string) ($job['error'] ?? 'Не удалось проверить OCR job.'), 500);
-                $httpStatus = (int) ($job['httpStatus'] ?? 0);
-                if (in_array($httpStatus, [404, 410], true)) {
-                    $item['status'] = 'pending';
-                    $item['legacyJobChecked'] = true;
-                    $item['forceNewJob'] = true;
-                    $item['jobId'] = '';
-                    $item['jobStatus'] = '';
-                    $item['progress'] = 0;
-                    $item['currentPage'] = 0;
-                    $item['totalPages'] = 0;
-                }
-                $items[$itemIndex] = $item;
-                $state['items'] = $items;
-                docs_save_ocr_backfill_state($folder, $state);
-                return [
-                    'worked' => in_array($httpStatus, [404, 410], true),
-                    'reason' => in_array($httpStatus, [404, 410], true)
-                        ? 'stale_job_reset'
-                        : 'job_status_unavailable',
-                ];
-            }
-
-            $item['jobStatus'] = (string) ($job['status'] ?? '');
-            $item['progress'] = max(0, min(100, (int) ($job['progress'] ?? 0)));
-            $item['currentPage'] = max(0, (int) ($job['currentPage'] ?? 0));
-            $item['totalPages'] = max(0, (int) ($job['totalPages'] ?? 0));
-            $item['error'] = sanitize_text_field((string) ($job['error'] ?? ''), 500);
-            $items[$itemIndex] = $item;
-            $state['items'] = $items;
-            docs_store_file_ocr_job($folder, $documentId, $storedName, $job);
-
-            if (in_array((string) $item['jobStatus'], ['queued', 'running'], true)) {
-                docs_save_ocr_backfill_state($folder, $state);
-                return [
-                    'worked' => false,
-                    'reason' => 'job_running',
-                ];
-            }
-
-            if ((string) $item['jobStatus'] === 'succeeded') {
-                $jobResult = docs_fetch_private_ocr_job_result($jobId);
-                if (!empty($jobResult['ok'])) {
-                    $jobResult['mimeType'] = (string) ($file['ocr']['mimeType'] ?? '');
-                    $applied = docs_apply_private_ocr_result_to_file(
-                        $folder,
-                        $documentId,
-                        $storedName,
-                        $jobResult
-                    );
-                    if (!empty($applied['ok'])) {
-                        docs_finish_ocr_queue_item($folder, $state, $items, $itemIndex, 'completed');
-                        docs_save_ocr_backfill_state($folder, $state);
-                        return [
-                            'worked' => true,
-                            'reason' => 'file_completed',
-                        ];
-                    }
-                    $item['deliveryAttempts'] = max(0, (int) ($item['deliveryAttempts'] ?? 0)) + 1;
-                    $item['error'] = sanitize_text_field((string) ($applied['error'] ?? 'Не удалось доставить OCR-текст.'), 500);
-                    if ($item['deliveryAttempts'] >= DOCS_OCR_BACKFILL_MAX_ATTEMPTS) {
-                        $items[$itemIndex] = $item;
-                        docs_finish_ocr_queue_item($folder, $state, $items, $itemIndex, 'failed', (string) $item['error']);
-                    } else {
-                        $item['status'] = 'processing';
-                        $item['deliveryPending'] = true;
-                        $item['legacyJobChecked'] = true;
-                        $items[$itemIndex] = $item;
-                        $state['items'] = $items;
-                    }
-                    docs_save_ocr_backfill_state($folder, $state);
-                    return [
-                        'worked' => true,
-                        'reason' => 'snapshot_delivery_failed',
-                    ];
-                }
-                $item['error'] = sanitize_text_field((string) ($jobResult['error'] ?? 'OCR не вернул результат.'), 500);
-            }
-
-            if ((int) ($item['attempts'] ?? 0) >= DOCS_OCR_BACKFILL_MAX_ATTEMPTS) {
-                $items[$itemIndex] = $item;
-                docs_finish_ocr_queue_item($folder, $state, $items, $itemIndex, 'failed', (string) ($item['error'] ?? 'OCR завершился с ошибкой.'));
-                docs_ocr_backfill_append_failure($state, $items[$itemIndex], (string) ($items[$itemIndex]['error'] ?? ''));
-            } else {
-                $item['status'] = 'pending';
-                $item['legacyJobChecked'] = true;
-                $item['forceNewJob'] = true;
-                $item['jobId'] = '';
-                $item['jobStatus'] = '';
-                $item['progress'] = 0;
-                $item['currentPage'] = 0;
-                $item['totalPages'] = 0;
-                $items[$itemIndex] = $item;
-                $state['items'] = $items;
-                docs_ocr_backfill_append_failure($state, $item, (string) ($item['error'] ?? 'OCR завершился с ошибкой.'));
-            }
-            docs_save_ocr_backfill_state($folder, $state);
-            return [
-                'worked' => true,
-                'reason' => 'job_failed',
-            ];
-        }
-
-        if (!empty($item['deliveryPending']) && $jobId !== '') {
-            $jobResult = docs_fetch_private_ocr_job_result($jobId);
-            $resultHttpStatus = (int) ($jobResult['httpStatus'] ?? 0);
-            if (empty($jobResult['ok']) && $resultHttpStatus === 202) {
-                $item['status'] = 'processing';
-                $items[$itemIndex] = $item;
-                $state['items'] = $items;
-                docs_save_ocr_backfill_state($folder, $state);
-                return [
-                    'worked' => false,
-                    'reason' => 'job_running',
-                ];
-            }
-            if (empty($jobResult['ok']) && in_array($resultHttpStatus, [200, 404, 410], true)) {
-                $item['status'] = 'pending';
-                $item['deliveryPending'] = false;
-                $item['legacyJobChecked'] = true;
-                $item['forceNewJob'] = true;
-                $item['jobId'] = '';
-                $item['jobStatus'] = '';
-                $item['progress'] = 0;
-                $item['currentPage'] = 0;
-                $item['totalPages'] = 0;
-                $item['error'] = sanitize_text_field(
-                    (string) ($jobResult['error'] ?? 'Сохранённый OCR-результат больше недоступен.'),
-                    500
-                );
-                $items[$itemIndex] = $item;
-                $state['items'] = $items;
-                docs_save_ocr_backfill_state($folder, $state);
-                return [
-                    'worked' => true,
-                    'reason' => 'stale_result_reset',
-                ];
-            }
-            $item['deliveryAttempts'] = max(0, (int) ($item['deliveryAttempts'] ?? 0)) + 1;
-            if (!empty($jobResult['ok'])) {
-                $applied = docs_apply_private_ocr_result_to_file($folder, $documentId, $storedName, $jobResult);
-                if (!empty($applied['ok'])) {
-                    docs_finish_ocr_queue_item($folder, $state, $items, $itemIndex, 'completed');
-                    docs_save_ocr_backfill_state($folder, $state);
-                    return [
-                        'worked' => true,
-                        'reason' => 'snapshot_delivery_completed',
-                    ];
-                }
-                $item['error'] = sanitize_text_field((string) ($applied['error'] ?? ''), 500);
-            } else {
-                $item['error'] = sanitize_text_field((string) ($jobResult['error'] ?? ''), 500);
-            }
-            if ((int) $item['deliveryAttempts'] >= DOCS_OCR_BACKFILL_MAX_ATTEMPTS) {
-                $items[$itemIndex] = $item;
-                docs_finish_ocr_queue_item($folder, $state, $items, $itemIndex, 'failed', (string) $item['error']);
-            } else {
-                $items[$itemIndex] = $item;
-                $state['items'] = $items;
-            }
-            docs_save_ocr_backfill_state($folder, $state);
-            return [
-                'worked' => true,
-                'reason' => 'snapshot_delivery_retry',
-            ];
-        }
-
-        if ((int) ($item['presentCount'] ?? 0) > 0) {
-            $existingSnapshotOcr = docs_find_task_file_ocr_text_in_participant_snapshots(
-                $record,
-                $folder,
-                $storedName
-            );
-            if (!empty($existingSnapshotOcr['ok'])
-                && isset($existingSnapshotOcr['text'])
-                && is_string($existingSnapshotOcr['text'])
-                && trim($existingSnapshotOcr['text']) !== ''
-            ) {
-                $existingSnapshotOcr['mimeType'] = (string) ($file['ocr']['mimeType'] ?? '');
-                $applied = docs_apply_private_ocr_result_to_file(
-                    $folder,
-                    $documentId,
-                    $storedName,
-                    $existingSnapshotOcr
-                );
-                if (!empty($applied['ok'])) {
-                    docs_finish_ocr_queue_item($folder, $state, $items, $itemIndex, 'completed');
-                    docs_save_ocr_backfill_state($folder, $state);
-                    return [
-                        'worked' => true,
-                        'reason' => 'existing_text_delivered',
-                    ];
-                }
-                $item['deliveryAttempts'] = max(0, (int) ($item['deliveryAttempts'] ?? 0)) + 1;
-                $item['deliveryPending'] = true;
-                $item['status'] = 'processing';
-                $item['jobId'] = '';
-                $item['jobStatus'] = 'succeeded';
-                $item['progress'] = 100;
-                $item['error'] = sanitize_text_field(
-                    (string) ($applied['error'] ?? 'Не удалось доставить найденный OCR-текст всем участникам.'),
-                    500
-                );
-                $items[$itemIndex] = $item;
-                if ((int) $item['deliveryAttempts'] >= DOCS_OCR_BACKFILL_MAX_ATTEMPTS) {
-                    docs_finish_ocr_queue_item(
-                        $folder,
-                        $state,
-                        $items,
-                        $itemIndex,
-                        'failed',
-                        (string) $item['error']
-                    );
-                } else {
-                    $state['items'] = $items;
-                }
-                docs_save_ocr_backfill_state($folder, $state);
-                return [
-                    'worked' => true,
-                    'reason' => 'snapshot_delivery_failed',
-                ];
-            }
-            $item['presentCount'] = 0;
-            $item['missingCount'] = max(0, (int) ($item['participantsTotal'] ?? 0));
-            $items[$itemIndex] = $item;
-            $state['items'] = $items;
-        }
-
-        if ($jobId !== '' && empty($item['legacyJobChecked'])) {
-            $item['legacyJobChecked'] = true;
-            $legacyJob = docs_fetch_private_ocr_job_status($jobId);
-            $legacyHttpStatus = (int) ($legacyJob['httpStatus'] ?? 0);
-            if (empty($legacyJob['ok']) && !in_array($legacyHttpStatus, [404, 410], true)) {
-                $item['legacyJobChecked'] = false;
-                $item['error'] = sanitize_text_field(
-                    (string) ($legacyJob['error'] ?? 'Не удалось проверить сохранённую OCR job.'),
-                    500
-                );
-                $items[$itemIndex] = $item;
-                $state['items'] = $items;
-                docs_save_ocr_backfill_state($folder, $state);
-                return [
-                    'worked' => false,
-                    'reason' => 'job_status_unavailable',
-                ];
-            }
-            if (!empty($legacyJob['ok'])
-                && in_array((string) ($legacyJob['status'] ?? ''), ['queued', 'running'], true)
-            ) {
-                $item['status'] = 'processing';
-                $item['jobStatus'] = (string) ($legacyJob['status'] ?? 'queued');
-                $item['progress'] = max(0, min(100, (int) ($legacyJob['progress'] ?? 0)));
-                $item['currentPage'] = max(0, (int) ($legacyJob['currentPage'] ?? 0));
-                $item['totalPages'] = max(0, (int) ($legacyJob['totalPages'] ?? 0));
-                $item['error'] = '';
-                $items[$itemIndex] = $item;
-                $state['items'] = $items;
-                docs_store_file_ocr_job($folder, $documentId, $storedName, $legacyJob);
-                docs_save_ocr_backfill_state($folder, $state);
-                return [
-                    'worked' => true,
-                    'reason' => 'legacy_job_restored',
-                ];
-            }
-            if (!empty($legacyJob['ok']) && (string) ($legacyJob['status'] ?? '') === 'succeeded') {
-                $legacyResult = docs_fetch_private_ocr_job_result($jobId);
-                if (!empty($legacyResult['ok'])) {
-                    $applied = docs_apply_private_ocr_result_to_file($folder, $documentId, $storedName, $legacyResult);
-                    if (!empty($applied['ok'])) {
-                        docs_finish_ocr_queue_item($folder, $state, $items, $itemIndex, 'completed');
-                        docs_save_ocr_backfill_state($folder, $state);
-                        return [
-                            'worked' => true,
-                            'reason' => 'legacy_result_delivered',
-                        ];
-                    }
-                } elseif (!in_array((int) ($legacyResult['httpStatus'] ?? 0), [404, 410, 200], true)) {
-                    $item['legacyJobChecked'] = false;
-                    $item['error'] = sanitize_text_field(
-                        (string) ($legacyResult['error'] ?? 'Не удалось получить сохранённый OCR-результат.'),
-                        500
-                    );
-                    $items[$itemIndex] = $item;
-                    $state['items'] = $items;
-                    docs_save_ocr_backfill_state($folder, $state);
-                    return [
-                        'worked' => false,
-                        'reason' => 'job_result_unavailable',
-                    ];
-                }
-            }
-            $item['jobId'] = '';
-            $item['jobStatus'] = '';
-            $item['progress'] = 0;
-            $item['currentPage'] = 0;
-            $item['totalPages'] = 0;
-            $item['forceNewJob'] = true;
-            $items[$itemIndex] = $item;
-            $state['items'] = $items;
-        }
-
-        $organizationDirectory = ensure_organization_directory($folder);
-        $pathCandidates = [];
-        foreach (docs_file_public_relative_candidates($folder, $file, $storedName) as $relativePath) {
-            $normalizedRelativePath = docs_normalize_cold_storage_relative_path($relativePath);
-            if ($normalizedRelativePath !== '') {
-                $pathCandidates[] = $organizationDirectory . '/' . $normalizedRelativePath;
-            }
-        }
-        $resolvedPath = docs_resolve_file_path_with_cold_storage(
-            $folder,
-            $file,
-            $pathCandidates,
-            microtime(true) + 90
-        );
-        if ($resolvedPath === '') {
-            $item['attempts'] = max(0, (int) ($item['attempts'] ?? 0)) + 1;
-            $item['error'] = 'Файл недоступен локально и в S3.';
-            $items[$itemIndex] = $item;
-            if ((int) $item['attempts'] >= DOCS_OCR_BACKFILL_MAX_ATTEMPTS) {
-                docs_finish_ocr_queue_item($folder, $state, $items, $itemIndex, 'failed', (string) $item['error']);
-            } else {
-                $state['items'] = $items;
-            }
-            docs_save_ocr_backfill_state($folder, $state);
-            return [
-                'worked' => true,
-                'reason' => 'source_unavailable',
-            ];
-        }
-
-        $item['attempts'] = max(0, (int) ($item['attempts'] ?? 0)) + 1;
-        $createdJob = docs_create_private_ocr_job(
-            $resolvedPath,
-            (string) ($item['originalName'] ?? $storedName),
-            !empty($item['forceNewJob'])
-        );
-        $createdJobId = sanitize_text_field((string) ($createdJob['jobId'] ?? ''), 160);
-        if ($createdJobId === '') {
-            $item['error'] = sanitize_text_field((string) ($createdJob['error'] ?? 'Не удалось создать OCR job.'), 500);
-            $items[$itemIndex] = $item;
-            $createHttpStatus = (int) ($createdJob['httpStatus'] ?? 0);
-            $terminalCreateFailure = in_array($createHttpStatus, [413, 415, 422], true);
-            if ($terminalCreateFailure || (int) $item['attempts'] >= DOCS_OCR_BACKFILL_MAX_ATTEMPTS) {
-                docs_finish_ocr_queue_item($folder, $state, $items, $itemIndex, 'failed', (string) $item['error']);
-                docs_ocr_backfill_append_failure($state, $items[$itemIndex], (string) $item['error']);
-            } else {
-                $state['items'] = $items;
-                docs_ocr_backfill_append_failure($state, $item, (string) $item['error']);
-            }
-            docs_save_ocr_backfill_state($folder, $state);
-            return [
-                'worked' => true,
-                'reason' => 'job_create_failed',
-            ];
-        }
-
-        $item['status'] = 'processing';
-        $item['jobId'] = $createdJobId;
-        $item['jobStatus'] = sanitize_text_field((string) ($createdJob['status'] ?? 'queued'), 40);
-        $item['progress'] = max(0, min(100, (int) ($createdJob['progress'] ?? 0)));
-        $item['currentPage'] = 0;
-        $item['totalPages'] = 0;
-        $item['startedAt'] = date('c');
-        $item['error'] = '';
-        $item['forceNewJob'] = false;
-        $item['deliveryPending'] = false;
-        $item['deliveryAttempts'] = 0;
-        $items[$itemIndex] = $item;
-        $state['items'] = $items;
-        $state['attempted'] = max(0, (int) ($state['attempted'] ?? 0)) + 1;
-        docs_store_file_ocr_job($folder, $documentId, $storedName, [
-            'jobId' => $createdJobId,
-            'reused' => !empty($createdJob['jobReused']),
-            'status' => $item['jobStatus'],
-            'progress' => $item['progress'],
-        ]);
-        docs_save_ocr_backfill_state($folder, $state);
-
-        return [
-            'worked' => true,
-            'reason' => 'job_submitted',
-        ];
-    } finally {
-        if (is_resource($lockHandle)) {
-            @flock($lockHandle, LOCK_UN);
-            fclose($lockHandle);
-        }
-        @flock($globalLockHandle, LOCK_UN);
-        fclose($globalLockHandle);
-    }
 }
 
 function docs_prepare_ai_task_search_client_task(array $task): array
@@ -12730,12 +11544,19 @@ function docs_build_live_ai_task_search_snapshot(string $telegramUserId, array $
     $seen = [];
     foreach ($organizations as $organization) {
         $folder = sanitize_folder_name($organization);
+        $directoryEntries = docs_load_telegram_participant_directory_entries($folder);
         $prepared = docs_prepare_records_for_response(load_registry($folder), $organization, $folder);
         foreach (is_array($prepared) ? $prepared : [] as $record) {
             if (!is_array($record)) {
                 continue;
             }
-            $roles = docs_resolve_record_roles_for_filter($record, $filter);
+            $roles = docs_resolve_record_roles_for_telegram_user(
+                $record,
+                $telegramUserId,
+                $folder,
+                $directoryEntries,
+                $filter
+            );
             if (empty($roles)) {
                 continue;
             }
@@ -12964,8 +11785,8 @@ function docs_prepare_task_rag_snapshot(string $telegramUserId, array $tasks): a
             $ocrText = isset($file['ocrText']) && is_string($file['ocrText'])
                 ? trim($file['ocrText'])
                 : '';
-            if (mb_strlen($ocrText, 'UTF-8') > DOCS_PRIVATE_OCR_MAX_TEXT_LENGTH) {
-                $ocrText = mb_substr($ocrText, 0, DOCS_PRIVATE_OCR_MAX_TEXT_LENGTH, 'UTF-8');
+            if (mb_strlen($ocrText, 'UTF-8') > DOCS_AI_TASK_SEARCH_OCR_TEXT_MAX_LENGTH) {
+                $ocrText = mb_substr($ocrText, 0, DOCS_AI_TASK_SEARCH_OCR_TEXT_MAX_LENGTH, 'UTF-8');
             }
             $files[] = [
                 'id' => docs_ai_task_search_short_text($file['id'] ?? '', 120),
@@ -13685,6 +12506,7 @@ function docs_build_ai_task_search_explained_answer(array $results, string $quer
 function docs_ai_task_search_env_paths(): array
 {
     return [
+        dirname(__DIR__) . '/.env',
         __DIR__ . '/app/env.txt',
         __DIR__ . '/.env',
         __DIR__ . '/app/.env',
@@ -13734,6 +12556,9 @@ function docs_ai_task_search_load_env(): array
         'OPENAI_MODEL',
         'AI_BASE_URL',
         'OPENAI_BASE_URL',
+        'DEEPSEEK_API_KEY',
+        'DEEPSEEK_MODEL',
+        'DEEPSEEK_BASE_URL',
         'AI_TASK_SEARCH_MAX_TASKS',
         'AI_TASK_SEARCH_MAX_CHARS',
         'AI_TASK_SEARCH_RERANK_MAX_CANDIDATES',
@@ -14350,7 +13175,7 @@ function docs_ai_task_search_add_local_match_candidate(
     if (!is_scalar($value) || count($candidates) >= 220) {
         return;
     }
-    $text = sanitize_text_field((string) $value, DOCS_PRIVATE_OCR_MAX_TEXT_LENGTH);
+    $text = sanitize_text_field((string) $value, DOCS_AI_TASK_SEARCH_OCR_TEXT_MAX_LENGTH);
     if ($text === '') {
         return;
     }
@@ -14472,7 +13297,7 @@ function docs_ai_task_search_local_match_candidates(array $task): array
 
 function docs_ai_task_search_local_match_preview(string $text, array $tokens, int $limit = 180): string
 {
-    $cleanText = sanitize_text_field($text, DOCS_PRIVATE_OCR_MAX_TEXT_LENGTH);
+    $cleanText = sanitize_text_field($text, DOCS_AI_TASK_SEARCH_OCR_TEXT_MAX_LENGTH);
     if ($cleanText === '') {
         return '';
     }
@@ -16032,7 +14857,7 @@ function load_registry(string $folder): array
 
     if (!is_file($file)) {
         log_docs_event('Registry file missing', $context);
-        return [];
+        return docs_load_registry_backup($folder, 'primary_missing');
     }
 
     $size = @filesize($file);
@@ -16043,21 +14868,21 @@ function load_registry(string $folder): array
     $raw = file_get_contents($file);
     if ($raw === false) {
         log_docs_event('Registry file read failed', $context);
-        return [];
+        return docs_load_registry_backup($folder, 'primary_read_failed');
     }
 
     $context['rawLength'] = strlen($raw);
 
     if (trim($raw) === '') {
         log_docs_event('Registry file empty', $context);
-        return [];
+        return docs_load_registry_backup($folder, 'primary_empty');
     }
 
     $data = json_decode($raw, true);
     if (!is_array($data)) {
         $context['jsonError'] = json_last_error_msg();
         log_docs_event('Registry decode error', $context);
-        return [];
+        return docs_load_registry_backup($folder, 'primary_decode_failed');
     }
 
     $context['recordsCount'] = count($data);
@@ -16100,8 +14925,16 @@ function load_registry(string $folder): array
                 }
             }
             $summary['assigneesCount'] = count($assignees);
-        } elseif (isset($record['responsible']) && $record['responsible'] !== '') {
+        } elseif (isset($record['responsible']) && is_scalar($record['responsible']) && $record['responsible'] !== '') {
             $summary['assigneeName'] = (string) $record['responsible'];
+        } elseif (isset($record['responsible']) && is_array($record['responsible'])) {
+            $responsibleName = sanitize_text_field((string) (
+                $record['responsible']['name']
+                ?? ($record['responsible']['responsible'] ?? '')
+            ), 200);
+            if ($responsibleName !== '') {
+                $summary['assigneeName'] = $responsibleName;
+            }
         }
 
         if (!empty($summary)) {
@@ -16121,49 +14954,303 @@ function load_registry(string $folder): array
     return $data;
 }
 
-function save_registry(string $folder, array $records): void
+function docs_registry_backup_path(string $folder): string
+{
+    return DOCUMENTS_ROOT . '/' . $folder . '/' . REGISTRY_BACKUP_FILENAME;
+}
+
+function docs_load_registry_backup(string $folder, string $reason): array
+{
+    $backupPath = docs_registry_backup_path($folder);
+    if (!is_file($backupPath) || !is_readable($backupPath)) {
+        return [];
+    }
+
+    $raw = @file_get_contents($backupPath);
+    $records = is_string($raw) && trim($raw) !== '' ? json_decode($raw, true) : null;
+    if (!is_array($records)) {
+        log_docs_event('Registry backup unavailable', [
+            'folder' => $folder,
+            'path' => $backupPath,
+            'reason' => $reason,
+            'jsonError' => json_last_error_msg(),
+        ]);
+        return [];
+    }
+
+    log_docs_event('Registry backup loaded', [
+        'folder' => $folder,
+        'path' => $backupPath,
+        'reason' => $reason,
+        'recordsCount' => count($records),
+    ]);
+
+    return array_values($records);
+}
+
+function docs_write_registry_backup(string $folder, string $raw): bool
+{
+    $decoded = trim($raw) !== '' ? json_decode($raw, true) : null;
+    if (!is_array($decoded) || empty($decoded)) {
+        return false;
+    }
+
+    $backupPath = docs_registry_backup_path($folder);
+    $tempPath = tempnam(dirname($backupPath), '.registry_backup_');
+    if (!is_string($tempPath) || $tempPath === '') {
+        return false;
+    }
+
+    try {
+        $written = @file_put_contents($tempPath, $raw, LOCK_EX);
+        if ($written === false || $written !== strlen($raw)) {
+            return false;
+        }
+        @chmod($tempPath, 0664);
+        return @rename($tempPath, $backupPath);
+    } finally {
+        if (is_file($tempPath)) {
+            @unlink($tempPath);
+        }
+    }
+}
+
+function docs_registry_s3_backup_state_path(string $folder): string
+{
+    return DOCUMENTS_ROOT . '/' . $folder . '/' . REGISTRY_S3_BACKUP_STATE_FILENAME;
+}
+
+function docs_registry_s3_backup_lock_path(string $folder): string
+{
+    return DOCUMENTS_ROOT . '/' . $folder . '/' . REGISTRY_S3_BACKUP_LOCK_FILENAME;
+}
+
+function docs_default_registry_s3_backup_state(): array
+{
+    return [
+        'status' => 'idle',
+        'recordsCount' => 0,
+        'fileSize' => 0,
+        'startedAt' => '',
+        'syncedAt' => '',
+        'attempts' => 0,
+        'remoteKey' => '',
+        'error' => '',
+    ];
+}
+
+function docs_load_registry_s3_backup_state(string $folder): array
+{
+    $path = docs_registry_s3_backup_state_path($folder);
+    $raw = is_file($path) && is_readable($path) ? @file_get_contents($path) : false;
+    $decoded = is_string($raw) && trim($raw) !== '' ? json_decode($raw, true) : null;
+
+    return is_array($decoded)
+        ? array_replace(docs_default_registry_s3_backup_state(), $decoded)
+        : docs_default_registry_s3_backup_state();
+}
+
+function docs_save_registry_s3_backup_state(string $folder, array $state): bool
+{
+    $path = docs_registry_s3_backup_state_path($folder);
+    $state['updatedAt'] = date('c');
+    $encoded = json_encode(
+        $state,
+        JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE
+    );
+    if (!is_string($encoded)) {
+        return false;
+    }
+
+    $tempPath = tempnam(dirname($path), '.registry_s3_state_');
+    if (!is_string($tempPath) || $tempPath === '') {
+        return false;
+    }
+    try {
+        $written = @file_put_contents($tempPath, $encoded . PHP_EOL, LOCK_EX);
+        if ($written === false || $written !== strlen($encoded) + 1) {
+            return false;
+        }
+        @chmod($tempPath, 0664);
+        return @rename($tempPath, $path);
+    } finally {
+        if (is_file($tempPath)) {
+            @unlink($tempPath);
+        }
+    }
+}
+
+function &docs_pending_registry_s3_backups(): array
+{
+    static $backups = [];
+
+    return $backups;
+}
+
+function docs_has_pending_registry_s3_backups(): bool
+{
+    $backups = &docs_pending_registry_s3_backups();
+
+    return !empty($backups);
+}
+
+function docs_schedule_registry_s3_backup(
+    string $folder,
+    string $registryPath,
+    int $recordsCount,
+    int $fileSize
+): void {
+    $backups = &docs_pending_registry_s3_backups();
+    $backups[$folder] = [
+        'folder' => $folder,
+        'registryPath' => $registryPath,
+        'recordsCount' => max(0, $recordsCount),
+        'fileSize' => max(0, $fileSize),
+    ];
+}
+
+function docs_run_pending_registry_s3_backups(): void
+{
+    $backups = &docs_pending_registry_s3_backups();
+    $pending = array_values($backups);
+    $backups = [];
+
+    foreach ($pending as $backup) {
+        if (!is_array($backup)) {
+            continue;
+        }
+        $folder = sanitize_folder_name((string) ($backup['folder'] ?? ''));
+        $registryPath = (string) ($backup['registryPath'] ?? '');
+        if ($folder === '' || $registryPath === '') {
+            continue;
+        }
+        if (!docs_backup_registry_to_s3(
+            $folder,
+            $registryPath,
+            (int) ($backup['recordsCount'] ?? 0),
+            (int) ($backup['fileSize'] ?? 0)
+        )) {
+            log_docs_event('Registry S3 backup failed', [
+                'folder' => $folder,
+                'path' => $registryPath,
+                'recordsCount' => (int) ($backup['recordsCount'] ?? 0),
+            ]);
+        }
+    }
+}
+
+function docs_backup_registry_to_s3(string $folder, string $registryPath, int $recordsCount, int $fileSize): bool
+{
+    $lockHandle = @fopen(docs_registry_s3_backup_lock_path($folder), 'c+');
+    if ($lockHandle === false || !@flock($lockHandle, LOCK_EX)) {
+        if (is_resource($lockHandle)) {
+            fclose($lockHandle);
+        }
+        return false;
+    }
+
+    try {
+        $state = docs_load_registry_s3_backup_state($folder);
+        $state['recordsCount'] = max(0, $recordsCount);
+        $state['fileSize'] = max(0, $fileSize);
+        $state['startedAt'] = date('c');
+        $state['attempts'] = max(0, (int) ($state['attempts'] ?? 0)) + 1;
+
+        if ($recordsCount < 1 || !is_file($registryPath) || !is_readable($registryPath)) {
+            $state['status'] = 'error';
+            $state['error'] = 'S3-копия отменена: локальный registry.json пуст или недоступен.';
+            docs_save_registry_s3_backup_state($folder, $state);
+            return false;
+        }
+
+        $upload = docs_upload_file_to_cold_storage(
+            $registryPath,
+            $folder,
+            REGISTRY_S3_BACKUP_RELATIVE_PATH
+        );
+        if (empty($upload['ok'])) {
+            $state['status'] = 'error';
+            $state['error'] = sanitize_text_field(
+                (string) ($upload['error'] ?? 'Не удалось создать S3-копию registry.json.'),
+                500
+            );
+            docs_save_registry_s3_backup_state($folder, $state);
+            return false;
+        }
+
+        $state['status'] = 'synced';
+        $state['syncedAt'] = date('c');
+        $state['remoteKey'] = sanitize_text_field((string) ($upload['key'] ?? ''), 500);
+        $state['error'] = '';
+        docs_save_registry_s3_backup_state($folder, $state);
+        return true;
+    } finally {
+        @flock($lockHandle, LOCK_UN);
+        fclose($lockHandle);
+    }
+}
+
+function save_registry(string $folder, array $records): bool
 {
     $dir = ensure_organization_directory($folder);
     $file = $dir . '/' . REGISTRY_FILENAME;
-    docs_remove_ocr_text_from_registry_records($records);
-    $json = json_encode(array_values($records), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    file_put_contents($file, $json, LOCK_EX);
-}
-
-function docs_remove_ocr_text_from_registry_records(array &$records): bool
-{
-    $changed = false;
-    foreach ($records as &$record) {
-        if (!is_array($record) || !isset($record['files']) || !is_array($record['files'])) {
-            continue;
-        }
-        foreach ($record['files'] as &$file) {
-            if (!is_array($file)) {
-                continue;
-            }
-            if (isset($file['ocrText'])) {
-                if (!isset($file['ocrTextLength'])) {
-                    $file['ocrTextLength'] = strlen((string) $file['ocrText']);
-                }
-                unset($file['ocrText']);
-                $changed = true;
-            }
-        }
-        unset($file);
+    $json = json_encode(
+        array_values($records),
+        JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE
+    );
+    if (!is_string($json)) {
+        log_docs_event('Registry encode failed', [
+            'folder' => $folder,
+            'path' => $file,
+            'jsonError' => json_last_error_msg(),
+        ]);
+        return false;
     }
-    unset($record);
 
-    return $changed;
+    $tempPath = tempnam($dir, '.registry_');
+    if (!is_string($tempPath) || $tempPath === '') {
+        log_docs_event('Registry temp file create failed', ['folder' => $folder, 'path' => $file]);
+        return false;
+    }
+
+    try {
+        $written = @file_put_contents($tempPath, $json, LOCK_EX);
+        if ($written === false || $written !== strlen($json)) {
+            log_docs_event('Registry temp file write failed', ['folder' => $folder, 'path' => $file]);
+            return false;
+        }
+        @chmod($tempPath, 0664);
+
+        $currentRaw = is_file($file) ? @file_get_contents($file) : false;
+        if (is_string($currentRaw)) {
+            docs_write_registry_backup($folder, $currentRaw);
+        }
+
+        if (!@rename($tempPath, $file)) {
+            log_docs_event('Registry atomic replace failed', ['folder' => $folder, 'path' => $file]);
+            return false;
+        }
+
+        docs_schedule_registry_s3_backup($folder, $file, count($records), strlen($json));
+
+        return true;
+    } finally {
+        if (is_file($tempPath)) {
+            @unlink($tempPath);
+        }
+    }
 }
 
 function docs_lock_registry(string $folder): array
 {
     $dir = ensure_organization_directory($folder);
     $file = $dir . '/' . REGISTRY_FILENAME;
-    $handle = @fopen($file, 'c+');
+    $lockFile = $dir . '/' . REGISTRY_LOCK_FILENAME;
+    $handle = @fopen($lockFile, 'c+');
     if ($handle === false) {
         log_docs_event('Registry file open failed', [
             'file' => $file,
+            'lockFile' => $lockFile,
             'folder' => $folder,
         ]);
         return [null, []];
@@ -16178,16 +15265,15 @@ function docs_lock_registry(string $folder): array
         return [null, []];
     }
 
-    rewind($handle);
-    $raw = stream_get_contents($handle);
+    $raw = is_file($file) ? @file_get_contents($file) : false;
     if ($raw === false) {
         log_docs_event('Registry file read failed (locked)', [
             'file' => $file,
             'folder' => $folder,
         ]);
-        $records = [];
+        $records = docs_load_registry_backup($folder, 'locked_primary_read_failed');
     } elseif (trim($raw) === '') {
-        $records = [];
+        $records = docs_load_registry_backup($folder, 'locked_primary_empty');
     } else {
         $decoded = json_decode($raw, true);
         if (!is_array($decoded)) {
@@ -16196,7 +15282,7 @@ function docs_lock_registry(string $folder): array
                 'folder' => $folder,
                 'jsonError' => json_last_error_msg(),
             ]);
-            $records = [];
+            $records = docs_load_registry_backup($folder, 'locked_primary_decode_failed');
         } else {
             $records = $decoded;
         }
@@ -16218,27 +15304,17 @@ function docs_save_registry_locked($handle, array $records): bool
         return false;
     }
 
-    docs_remove_ocr_text_from_registry_records($records);
-    $json = json_encode(array_values($records), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    if ($json === false) {
+    $metadata = stream_get_meta_data($handle);
+    $lockPath = isset($metadata['uri']) && is_string($metadata['uri']) ? $metadata['uri'] : '';
+    $folder = $lockPath !== '' ? basename(dirname($lockPath)) : '';
+    if ($folder === '') {
         return false;
     }
 
-    rewind($handle);
-    if (!ftruncate($handle, 0)) {
-        return false;
-    }
-
-    $written = fwrite($handle, $json);
-    if ($written === false) {
-        return false;
-    }
-
-    if (!fflush($handle)) {
-        return false;
-    }
-
-    return true;
+    // Блокировка находится в отдельном файле: рабочий registry.json никогда
+    // не очищается. save_registry() готовит временный JSON и атомарно меняет
+    // основной файл только после успешной полной записи.
+    return save_registry($folder, $records);
 }
 
 function docs_unlock_registry($handle): void
@@ -16343,6 +15419,7 @@ function sanitize_admin_entry(array $entry): array
 
 function sanitize_admin_settings(array $payload): array
 {
+    $aiBriefProvider = docs_normalize_ai_brief_provider($payload['aiBriefProvider'] ?? 'default');
     $responsibles = [];
     if (isset($payload['responsibles']) && is_array($payload['responsibles'])) {
         foreach ($payload['responsibles'] as $entry) {
@@ -16425,6 +15502,7 @@ function sanitize_admin_settings(array $payload): array
         'responsibles' => $responsibles,
         'block2' => $block2,
         'block3' => $block3,
+        'aiBriefProvider' => $aiBriefProvider,
         'assignmentTemplatesByTelegram' => docs_sanitize_assignment_templates_by_telegram($payload['assignmentTemplatesByTelegram'] ?? []),
     ];
 }
@@ -17975,6 +17053,7 @@ function load_admin_settings(string $folder): array
         'disciplinaryColumnOrders' => [],
         'tablePreferences' => [],
         'assignmentTemplatesByTelegram' => [],
+        'aiBriefProvider' => 'default',
     ];
 
     $file = get_settings_path($folder);
@@ -18022,6 +17101,7 @@ function load_admin_settings(string $folder): array
         'directivesColumnOrders' => [],
         'disciplinaryColumnOrders' => [],
         'tablePreferences' => [],
+        'aiBriefProvider' => 'default',
     ];
 }
 
@@ -20542,6 +19622,11 @@ function save_admin_settings(string $folder, array $settings): void
         $settings['assignmentTemplatesByTelegram'] = docs_sanitize_assignment_templates_by_telegram($settings['assignmentTemplatesByTelegram']);
     } elseif (isset($existing['assignmentTemplatesByTelegram']) && is_array($existing['assignmentTemplatesByTelegram'])) {
         $settings['assignmentTemplatesByTelegram'] = docs_sanitize_assignment_templates_by_telegram($existing['assignmentTemplatesByTelegram']);
+    }
+    if (array_key_exists('aiBriefProvider', $settings)) {
+        $settings['aiBriefProvider'] = docs_normalize_ai_brief_provider($settings['aiBriefProvider']);
+    } else {
+        $settings['aiBriefProvider'] = docs_normalize_ai_brief_provider($existing['aiBriefProvider'] ?? 'default');
     }
     $json = json_encode($settings, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     file_put_contents($file, $json, LOCK_EX);
@@ -27162,6 +26247,10 @@ switch ($action) {
         $directors = isset($settings['block2']) && is_array($settings['block2'])
             ? $settings['block2']
             : [];
+        $subordinates = isset($settings['block3']) && is_array($settings['block3'])
+            ? $settings['block3']
+            : [];
+        $directoryEntries = array_merge($responsibles, $directors, $subordinates);
         $prepared = docs_prepare_records_for_response($records, $organization, $folder);
         $responsiblesWithCounts = docs_enrich_responsibles_with_counts(
             $responsibles,
@@ -27169,13 +26258,16 @@ switch ($action) {
         );
 
         $sessionAuth = docs_get_session_auth();
+        $isSessionAdmin = is_array($sessionAuth)
+            && strtolower((string) ($sessionAuth['role'] ?? '')) === 'admin';
         $canManageOrganizationInstructions = docs_user_can_manage_instructions(
             $organization,
             $requestContext,
             is_array($sessionAuth) ? $sessionAuth : null,
             $directors
         );
-        $isDirectorForOrganization = $canManageOrganizationInstructions
+        $isDirectorForOrganization = $isSessionAdmin
+            || $canManageOrganizationInstructions
             || (!empty($directors) && docs_user_is_block2_member($directors, $requestContext));
 
         $target = null;
@@ -27210,11 +26302,17 @@ switch ($action) {
                 ]);
             }
 
-            $visible = filter_documents_for_assignee([$target], $filter, $responsiblesWithCounts);
-            if (empty($visible)) {
+            $currentUserRoles = docs_resolve_record_roles_for_telegram_user(
+                $target,
+                normalize_identifier_value($requestContext['primaryId'] ?? ''),
+                $folder,
+                $directoryEntries,
+                $filter
+            );
+            if (empty($currentUserRoles)) {
                 respond_error('Задача недоступна.', 403);
             }
-            $target = $visible[0];
+            $target['currentUserRoles'] = $currentUserRoles;
         }
 
         $snapshotUpdatedAt = '';
@@ -27513,6 +26611,13 @@ switch ($action) {
         }
 
         $filter['ids'] = $filterIds;
+        $telegramUserId = normalize_identifier_value($requestContext['primaryId'] ?? '');
+        if ($telegramUserId === '') {
+            $telegramUserId = normalize_identifier_value($requestContext['raw']['telegram_user_id'] ?? '');
+        }
+        if ($telegramUserId === '' && !empty($filterIds)) {
+            $telegramUserId = (string) $filterIds[0];
+        }
         $shouldTraceMiniAppUser = docs_should_trace_mini_app_user($filter);
         if ($shouldTraceMiniAppUser) {
             docs_write_mini_app_debug_log('Mini app filter resolved', [
@@ -27554,6 +26659,7 @@ switch ($action) {
         $directorModeActive = false;
         $directorOrganizations = [];
         $directorModeReasons = [];
+        $directorAllTasksActive = false;
         $savedThemeMode = '';
 
         foreach ($organizations as $organization) {
@@ -27570,8 +26676,9 @@ switch ($action) {
             $directors = isset($settings['block2']) && is_array($settings['block2'])
                 ? $settings['block2']
                 : [];
-            if ($savedThemeMode === '' && !empty($filterIds)) {
-                $savedThemeMode = docs_find_theme_mode_for_telegram_user($settings, (string) $filterIds[0]);
+            $directoryEntries = array_merge($responsibles, $directors, $subordinatesRaw);
+            if ($savedThemeMode === '' && $telegramUserId !== '') {
+                $savedThemeMode = docs_find_theme_mode_for_telegram_user($settings, $telegramUserId);
             }
             $prepared = docs_prepare_records_for_response($records, $organization, $folder);
             $responsiblesWithCounts = docs_enrich_responsibles_with_counts(
@@ -27585,6 +26692,11 @@ switch ($action) {
                 $directors
             );
             $directorReasonsForOrganization = [];
+            $isSessionAdmin = is_array($sessionAuth)
+                && strtolower((string) ($sessionAuth['role'] ?? '')) === 'admin';
+            if ($isSessionAdmin) {
+                $directorReasonsForOrganization[] = 'session_admin';
+            }
             if ($canManageOrganizationInstructions) {
                 $directorReasonsForOrganization[] = 'can_manage_instructions';
             }
@@ -27618,7 +26730,16 @@ switch ($action) {
                         continue;
                     }
 
-                    $currentUserRoles = docs_resolve_record_roles_for_filter($record, $effectiveFilter);
+                    $currentUserRoles = docs_resolve_record_roles_for_telegram_user(
+                        $record,
+                        $telegramUserId,
+                        $folder,
+                        $directoryEntries,
+                        $effectiveFilter
+                    );
+                    if (empty($currentUserRoles) && $isDirectorForOrganization) {
+                        $currentUserRoles = ['director'];
+                    }
                     if (empty($currentUserRoles)) {
                         continue;
                     }
@@ -27634,7 +26755,14 @@ switch ($action) {
             if ($hasDirectorTaskRoleForOrganization) {
                 $directorModeActive = true;
                 $directorOrganizations[] = $organization;
-                $directorModeReasons['task_director'] = true;
+                if ($isDirectorForOrganization) {
+                    $directorAllTasksActive = true;
+                    foreach ($directorReasonsForOrganization as $directorReason) {
+                        $directorModeReasons[$directorReason] = true;
+                    }
+                } else {
+                    $directorModeReasons['task_director'] = true;
+                }
             }
 
             if ($isIosClient) {
@@ -27648,7 +26776,7 @@ switch ($action) {
                     'directorsCount' => is_array($directors) ? count($directors) : 0,
                     'directorMode' => $hasDirectorTaskRoleForOrganization,
                     'globalDirectorAccess' => $isDirectorForOrganization,
-                    'filterBypassed' => false,
+                    'filterBypassed' => $isDirectorForOrganization,
                 ];
             }
 
@@ -27775,7 +26903,7 @@ switch ($action) {
         })));
         $directorModeSummary = [
             'active' => $directorModeActive,
-            'allTasks' => false,
+            'allTasks' => $directorAllTasksActive,
         ];
         if (!empty($directorOrganizations)) {
             $directorModeSummary['organizations'] = $directorOrganizations;
@@ -27818,13 +26946,6 @@ switch ($action) {
                 'stats' => $stats,
                 'organizationsSummary' => $organizationSummaries,
             ];
-        }
-
-        $telegramUserId = '';
-        if (isset($filter['ids']) && is_array($filter['ids']) && !empty($filter['ids'])) {
-            $telegramUserId = (string) $filter['ids'][0];
-        } elseif (!empty($requestContext['primaryId'])) {
-            $telegramUserId = (string) $requestContext['primaryId'];
         }
 
         if ($debugTelegramIdCandidate === '' && $telegramUserId !== '') {
@@ -30042,8 +29163,6 @@ switch ($action) {
             $folder,
             $participantDirectoryEntries
         );
-        $participantMembershipChanged = docs_index_telegram_participation($previousTaskParticipation)
-            !== docs_index_telegram_participation($updatedTaskParticipation);
         $records[$recordIndex]['updatedAt'] = date('c');
 
         if ($registryHandle !== null) {
@@ -30133,14 +29252,33 @@ switch ($action) {
                     $organizationCandidate,
                     $submittedSubordinateForNotification
                 );
+                docs_sync_task_snapshots_after_participation_change(
+                    $updatedRecord,
+                    $folder,
+                    $previousTaskParticipation,
+                    $updatedTaskParticipation
+                );
                 respond_success($responsePayload);
             }
-            respond_success_with_background_task($responsePayload, static function () use ($submittedSubordinateForNotification, $updatedRecord, $folder, $organizationCandidate): void {
+            respond_success_with_background_task($responsePayload, static function () use (
+                $submittedSubordinateForNotification,
+                $updatedRecord,
+                $folder,
+                $organizationCandidate,
+                $previousTaskParticipation,
+                $updatedTaskParticipation
+            ): void {
                 docs_notify_responsible_about_subordinate_submission(
                     $updatedRecord,
                     $folder,
                     $organizationCandidate,
                     $submittedSubordinateForNotification
+                );
+                docs_sync_task_snapshots_after_participation_change(
+                    $updatedRecord,
+                    $folder,
+                    $previousTaskParticipation,
+                    $updatedTaskParticipation
                 );
             });
         }
@@ -30149,10 +29287,29 @@ switch ($action) {
             $reviewedSubordinateForNotification = $reviewedSubordinate;
             if (!function_exists('fastcgi_finish_request')) {
                 docs_notify_subordinate_about_review($updatedRecord, $organizationCandidate, $reviewedSubordinateForNotification);
+                docs_sync_task_snapshots_after_participation_change(
+                    $updatedRecord,
+                    $folder,
+                    $previousTaskParticipation,
+                    $updatedTaskParticipation
+                );
                 respond_success($responsePayload);
             }
-            respond_success_with_background_task($responsePayload, static function () use ($reviewedSubordinateForNotification, $updatedRecord, $organizationCandidate): void {
+            respond_success_with_background_task($responsePayload, static function () use (
+                $reviewedSubordinateForNotification,
+                $updatedRecord,
+                $organizationCandidate,
+                $folder,
+                $previousTaskParticipation,
+                $updatedTaskParticipation
+            ): void {
                 docs_notify_subordinate_about_review($updatedRecord, $organizationCandidate, $reviewedSubordinateForNotification);
+                docs_sync_task_snapshots_after_participation_change(
+                    $updatedRecord,
+                    $folder,
+                    $previousTaskParticipation,
+                    $updatedTaskParticipation
+                );
             });
         }
 
@@ -30164,14 +29321,13 @@ switch ($action) {
             'subordinates_add',
             'subordinates_remove',
         ], true);
-        if ($isAssignmentUpdate && (!empty($assignedAssignees) || $participantMembershipChanged)) {
+        if ($isAssignmentUpdate) {
             respond_success_with_background_fallback(
                 $responsePayload,
                 static function () use (
                     $assignedAssignees,
                     $updatedRecord,
                     $organizationCandidate,
-                    $participantMembershipChanged,
                     $folder,
                     $previousTaskParticipation,
                     $updatedTaskParticipation
@@ -30179,14 +29335,31 @@ switch ($action) {
                     if (!empty($assignedAssignees)) {
                         docs_send_task_assignment_notifications($assignedAssignees, $updatedRecord, $organizationCandidate);
                     }
-                    if ($participantMembershipChanged) {
-                        docs_sync_task_snapshots_after_participation_change(
-                            $updatedRecord,
-                            $folder,
-                            $previousTaskParticipation,
-                            $updatedTaskParticipation
-                        );
-                    }
+                    docs_sync_task_snapshots_after_participation_change(
+                        $updatedRecord,
+                        $folder,
+                        $previousTaskParticipation,
+                        $updatedTaskParticipation
+                    );
+                }
+            );
+        }
+
+        if (!empty($previousTaskParticipation) || !empty($updatedTaskParticipation)) {
+            respond_success_with_background_fallback(
+                $responsePayload,
+                static function () use (
+                    $updatedRecord,
+                    $folder,
+                    $previousTaskParticipation,
+                    $updatedTaskParticipation
+                ): void {
+                    docs_sync_task_snapshots_after_participation_change(
+                        $updatedRecord,
+                        $folder,
+                        $previousTaskParticipation,
+                        $updatedTaskParticipation
+                    );
                 }
             );
         }
@@ -30298,6 +29471,145 @@ switch ($action) {
         ]);
         break;
 
+    case 'admin_cron_management':
+        if ($method !== 'GET' && $method !== 'POST') {
+            respond_error('Некорректный метод запроса.', 405);
+        }
+        $payload = $method === 'POST' ? load_json_payload() : $_GET;
+        if (!is_array($payload) || empty($payload)) {
+            $payload = $_POST;
+        }
+        $requestedOrganization = docs_normalize_organization_candidate((string) ($payload['organization'] ?? ''));
+        $accessContext = docs_resolve_access_context(
+            $requestedOrganization !== '' ? $requestedOrganization : null,
+            true
+        );
+        docs_require_admin_session($accessContext);
+        $operation = $method === 'POST'
+            ? strtolower(sanitize_text_field((string) ($payload['operation'] ?? 'status'), 40))
+            : 'status';
+
+        if ($operation === 'remove_legacy_ocr') {
+            $result = docs_remove_legacy_ocr_cron();
+            if (empty($result['ok'])) {
+                respond_error((string) ($result['error'] ?? 'Не удалось удалить старый OCR-cron.'), 500, [
+                    'cron' => $result['cron'] ?? docs_legacy_ocr_cron_status(),
+                ]);
+            }
+            respond_success([
+                'message' => (int) ($result['removed'] ?? 0) > 0
+                    ? 'Старый OCR-cron удалён из crontab.'
+                    : 'Старый OCR-cron уже отсутствует.',
+                'cron' => $result['cron'] ?? docs_legacy_ocr_cron_status(),
+            ]);
+        }
+
+        if ($operation !== 'status') {
+            respond_error('Неизвестная операция управления cron.', 400);
+        }
+        respond_success([
+            'cron' => docs_legacy_ocr_cron_status(),
+        ]);
+        break;
+
+    case 'ai_brief_generate':
+        if ($method !== 'POST') {
+            respond_error('Некорректный метод запроса.', 405);
+        }
+
+        $sessionAuth = docs_get_session_auth();
+        $sessionRole = is_array($sessionAuth) ? strtolower((string) ($sessionAuth['role'] ?? '')) : '';
+        $telegramContext = docs_resolve_telegram_init_data_context();
+        if (!empty($telegramContext['present']) && empty($telegramContext['valid'])) {
+            respond_error('Не удалось подтвердить данные Telegram. Откройте мини-приложение заново.', 401, [
+                'requiresTelegramReauth' => true,
+                'telegramInitDataError' => (string) ($telegramContext['error'] ?? 'invalid'),
+            ]);
+        }
+        if (!in_array($sessionRole, ['admin', 'user'], true) && empty($telegramContext['valid'])) {
+            respond_error('Для запуска «Кратко ИИ» требуется авторизация.', 401);
+        }
+
+        $requestedOrganization = docs_normalize_organization_candidate((string) ($_POST['organization'] ?? ''));
+        if ($requestedOrganization === '') {
+            respond_error('Не указана организация.', 400);
+        }
+        $accessContext = docs_resolve_access_context($requestedOrganization);
+        $organization = (string) ($accessContext['active'] ?? '');
+        if ($organization === '') {
+            respond_error('Организация недоступна.', 403);
+        }
+        $settings = load_admin_settings(sanitize_folder_name($organization));
+        $aiConfig = docs_resolve_ai_brief_config($settings);
+        if (trim((string) ($aiConfig['apiKey'] ?? '')) === '') {
+            respond_error(
+                'Для провайдера «' . (string) ($aiConfig['providerLabel'] ?? 'ИИ') . '» не задан API-ключ в .env.',
+                503
+            );
+        }
+
+        if (!isset($_FILES['file']) || !is_array($_FILES['file'])) {
+            respond_error('Файл для «Кратко ИИ» не передан.', 400);
+        }
+        $uploadedFile = $_FILES['file'];
+        $uploadError = (int) ($uploadedFile['error'] ?? UPLOAD_ERR_NO_FILE);
+        if ($uploadError !== UPLOAD_ERR_OK) {
+            respond_error('Не удалось загрузить файл для анализа.', 400, ['uploadError' => $uploadError]);
+        }
+        $temporaryPath = (string) ($uploadedFile['tmp_name'] ?? '');
+        $originalName = sanitize_text_field((string) ($uploadedFile['name'] ?? 'document'), 255);
+        $size = (int) ($uploadedFile['size'] ?? 0);
+        if ($temporaryPath === '' || !is_uploaded_file($temporaryPath)) {
+            respond_error('Загруженный файл недоступен.', 400);
+        }
+        if ($size <= 0 || $size > DOCS_ATTACHMENT_MAX_FILE_SIZE) {
+            respond_error('Размер файла должен быть от 1 байта до ' . docs_format_file_size(DOCS_ATTACHMENT_MAX_FILE_SIZE) . '.', 413);
+        }
+        if (!docs_is_live_ocr_supported_file(['originalName' => $originalName])) {
+            respond_error('Этот формат не поддерживается приватным OCR.', 415);
+        }
+
+        @set_time_limit(DOCS_AI_BRIEF_OCR_WAIT_SECONDS + DOCS_AI_TASK_SEARCH_AI_TIMEOUT_SECONDS + 20);
+        $ocrJob = docs_create_private_ocr_job($temporaryPath, $originalName);
+        if (empty($ocrJob['ok'])) {
+            respond_error('Не удалось запустить приватный OCR: ' . (string) ($ocrJob['error'] ?? 'неизвестная ошибка'), 502);
+        }
+        $ocrResult = docs_wait_for_private_ocr_text((string) $ocrJob['jobId']);
+        if (empty($ocrResult['ok'])) {
+            respond_error((string) ($ocrResult['error'] ?? 'Приватный OCR не вернул результат.'), 504, [
+                'ocrJobId' => (string) $ocrJob['jobId'],
+                'ocrProgress' => (int) ($ocrResult['progress'] ?? 0),
+            ]);
+        }
+
+        $briefResult = docs_generate_ai_brief_from_ocr_text((string) $ocrResult['text'], $aiConfig);
+        if (empty($briefResult['ok'])) {
+            respond_error(
+                (string) ($briefResult['error'] ?? 'Не удалось получить краткий вывод.'),
+                max(400, min(599, (int) ($briefResult['status'] ?? 502)))
+            );
+        }
+
+        log_docs_event('AI brief generated through private OCR', [
+            'organization' => $organization,
+            'fileName' => $originalName,
+            'fileSize' => $size,
+            'ocrJobId' => (string) $ocrJob['jobId'],
+            'ocrPagesCount' => (int) ($ocrResult['pagesCount'] ?? 0),
+            'provider' => (string) $briefResult['provider'],
+            'model' => (string) $briefResult['model'],
+        ]);
+
+        respond_success([
+            'summary' => (string) $briefResult['summary'],
+            'model' => (string) $briefResult['model'],
+            'provider' => (string) $briefResult['provider'],
+            'ocrEngine' => 'private',
+            'ocrJobId' => (string) $ocrJob['jobId'],
+            'ocrPagesCount' => (int) ($ocrResult['pagesCount'] ?? 0),
+        ]);
+        break;
+
     case 'get_admin_settings':
         $requestedOrganization = docs_normalize_organization_candidate($_GET['organization'] ?? '');
         $accessContext = docs_resolve_access_context($requestedOrganization);
@@ -30391,10 +29703,10 @@ switch ($action) {
             'accessibleOrganizations' => $accessContext['accessible'],
             'settings' => $settings,
             'message' => 'Настройки администратора сохранены.',
-            'telegramSnapshotsQueued' => count($changedTelegramIds),
+            'telegramSnapshotsUpdated' => count($changedTelegramIds),
         ];
         if (!empty($changedTelegramIds)) {
-            $syncChangedTelegramUsers = static function () use ($changedTelegramIds): void {
+            $syncChangedTelegramUsers = static function () use ($changedTelegramIds, $folder): void {
                 foreach ($changedTelegramIds as $telegramId) {
                     $result = docs_rebuild_mini_app_user_tasks_snapshot($telegramId);
                     if (empty($result['saved'])) {
@@ -32156,16 +31468,6 @@ switch ($action) {
 
         $folder = sanitize_folder_name($organization);
         $records = load_registry($folder);
-        if (docs_remove_ocr_text_from_registry_records($records)) {
-            [$registryCleanupHandle, $lockedRegistryRecords] = docs_lock_registry($folder);
-            if ($registryCleanupHandle !== null) {
-                docs_remove_ocr_text_from_registry_records($lockedRegistryRecords);
-                if (docs_save_registry_locked($registryCleanupHandle, $lockedRegistryRecords)) {
-                    $records = $lockedRegistryRecords;
-                }
-                docs_unlock_registry($registryCleanupHandle);
-            }
-        }
         $settings = load_admin_settings($folder);
         $responsibles = isset($settings['responsibles']) && is_array($settings['responsibles'])
             ? $settings['responsibles']
@@ -32449,8 +31751,8 @@ switch ($action) {
                             'uploadedAt' => date('c'),
                             'url' => build_public_path($folder, $storedName),
                             'aiBrief' => $aiBrief,
-                            'ocr' => docs_build_new_file_ocr_state(true),
                         ];
+                        $fileEntry = docs_attach_live_ocr_state($fileEntry);
                         $record['files'][] = docs_prepare_incoming_file_storage_upload($createdFileStorageUploads, $fileEntry, $folder, $storedName, $target, [
                             'source' => 'incoming',
                             'bucket' => 'files',
@@ -32507,8 +31809,8 @@ switch ($action) {
                             'uploadedAt' => date('c'),
                             'url' => build_public_path($folder, $storedNameSingle),
                             'aiBrief' => $aiBriefSingle,
-                            'ocr' => docs_build_new_file_ocr_state(true),
                         ];
+                        $fileEntrySingle = docs_attach_live_ocr_state($fileEntrySingle);
                         $record['files'][] = docs_prepare_incoming_file_storage_upload($createdFileStorageUploads, $fileEntrySingle, $folder, $storedNameSingle, $targetSingle, [
                             'source' => 'incoming',
                             'bucket' => 'files',
@@ -32588,6 +31890,15 @@ switch ($action) {
             save_registry($folder, $records);
         }
 
+        $createdOcrQueue = docs_enqueue_live_ocr_uploads($folder, $documentId, $createdFileStorageUploads);
+        if (empty($createdOcrQueue['ok'])) {
+            docs_write_response_log('Новые файлы задачи не поставлены в OCR-очередь', [
+                'folder' => $folder,
+                'documentId' => $documentId,
+                'error' => (string) ($createdOcrQueue['error'] ?? ''),
+            ]);
+        }
+
         $permissions = docs_build_permissions_summary(
             $organization,
             docs_build_request_user_context(),
@@ -32599,7 +31910,11 @@ switch ($action) {
         $createdDocument = !empty($createdDocumentPrepared) && is_array($createdDocumentPrepared[0])
             ? $createdDocumentPrepared[0]
             : $record;
-
+        $createdTaskParticipation = docs_collect_record_telegram_participation(
+            $createdDocument,
+            $folder
+        );
+        $shouldSyncCreatedParticipantSnapshots = !empty($createdTaskParticipation);
         $responsePayload = [
             'message' => 'Документ добавлен в реестр.',
             'organization' => $organization,
@@ -32613,14 +31928,18 @@ switch ($action) {
             'canManageInstructions' => $permissions['canManageInstructions'],
         ];
 
-        if (!empty($createdFileStorageUploads) || !empty($assignedForNotification)) {
+        if (!empty($createdFileStorageUploads)
+            || !empty($assignedForNotification)
+            || $shouldSyncCreatedParticipantSnapshots
+        ) {
             $backgroundTask = function () use (
                 $createdFileStorageUploads,
                 $folder,
                 $assignedForNotification,
                 $createdDocument,
                 $organization,
-                $documentId
+                $shouldSyncCreatedParticipantSnapshots,
+                $createdTaskParticipation
             ): void {
                 if (!empty($createdFileStorageUploads)) {
                     docs_sync_uploaded_files_to_cold_storage($folder, $createdFileStorageUploads);
@@ -32628,12 +31947,16 @@ switch ($action) {
                 if (!empty($assignedForNotification)) {
                     docs_send_task_assignment_notifications($assignedForNotification, $createdDocument, $organization);
                 }
-                if (!empty($createdFileStorageUploads)) {
-                    docs_process_uploaded_files_ocr(
+                if ($shouldSyncCreatedParticipantSnapshots) {
+                    docs_sync_task_snapshots_after_participation_change(
+                        $createdDocument,
                         $folder,
-                        $documentId,
-                        $createdFileStorageUploads
+                        [],
+                        $createdTaskParticipation
                     );
+                }
+                if (!empty($createdFileStorageUploads)) {
+                    docs_activate_live_ocr_worker($folder);
                 }
             };
 
@@ -33233,7 +32556,6 @@ switch ($action) {
         $updatedRecordSanitized = null;
         $previousTaskParticipation = [];
         $updatedTaskParticipation = [];
-        $participantMembershipChanged = false;
         $documentFilesPendingDeletion = [];
         $documentFilesCreatedDuringUpdate = [];
         $updatedFileStorageUploads = [];
@@ -34213,8 +33535,8 @@ switch ($action) {
                                     'uploadedAt' => date('c'),
                                     'url' => build_public_path($folder, $storedName),
                                     'aiBrief' => $aiBrief,
-                                    'ocr' => docs_build_new_file_ocr_state(true),
                                 ];
+                                $fileEntry = docs_attach_live_ocr_state($fileEntry);
                                 $record['files'][] = docs_prepare_incoming_file_storage_upload($updatedFileStorageUploads, $fileEntry, $folder, $storedName, $target, [
                                     'source' => 'incoming',
                                     'bucket' => 'files',
@@ -34272,8 +33594,8 @@ switch ($action) {
                                     'uploadedAt' => date('c'),
                                     'url' => build_public_path($folder, $storedNameSingle),
                                     'aiBrief' => $aiBriefSingle,
-                                    'ocr' => docs_build_new_file_ocr_state(true),
                                 ];
+                                $fileEntrySingle = docs_attach_live_ocr_state($fileEntrySingle);
                                 $record['files'][] = docs_prepare_incoming_file_storage_upload($updatedFileStorageUploads, $fileEntrySingle, $folder, $storedNameSingle, $targetSingle, [
                                     'source' => 'incoming',
                                     'bucket' => 'files',
@@ -34337,8 +33659,6 @@ switch ($action) {
                 $folder,
                 $participantDirectoryEntries
             );
-            $participantMembershipChanged = docs_index_telegram_participation($previousTaskParticipation)
-                !== docs_index_telegram_participation($updatedTaskParticipation);
             $record['updatedAt'] = date('c');
             $updated = true;
             $updatedRecordSanitized = $record;
@@ -34374,6 +33694,14 @@ switch ($action) {
             docs_unlock_registry($registryHandle);
         } else {
             save_registry($folder, $records);
+        }
+        $updatedOcrQueue = docs_enqueue_live_ocr_uploads($folder, $documentId, $updatedFileStorageUploads);
+        if (empty($updatedOcrQueue['ok'])) {
+            docs_write_response_log('Новые файлы изменённой задачи не поставлены в OCR-очередь', [
+                'folder' => $folder,
+                'documentId' => $documentId,
+                'error' => (string) ($updatedOcrQueue['error'] ?? ''),
+            ]);
         }
         foreach ($documentFilesPendingDeletion as $filePendingDeletion) {
             if (is_array($filePendingDeletion)) {
@@ -34424,7 +33752,8 @@ switch ($action) {
         ];
 
         $shouldNotifyAssignments = !empty($assignmentNotifications) && $notificationRecord !== null;
-        $shouldSyncParticipantSnapshots = $participantMembershipChanged && is_array($updatedRecordSanitized);
+        $shouldSyncParticipantSnapshots = is_array($updatedRecordSanitized)
+            && (!empty($previousTaskParticipation) || !empty($updatedTaskParticipation));
         if (!empty($updatedFileStorageUploads) || $shouldNotifyAssignments || $shouldSyncParticipantSnapshots) {
             $backgroundTask = function () use (
                 $updatedFileStorageUploads,
@@ -34433,7 +33762,6 @@ switch ($action) {
                 $assignmentNotifications,
                 $notificationRecord,
                 $organization,
-                $documentId,
                 $shouldSyncParticipantSnapshots,
                 $updatedRecordSanitized,
                 $previousTaskParticipation,
@@ -34454,11 +33782,7 @@ switch ($action) {
                     );
                 }
                 if (!empty($updatedFileStorageUploads)) {
-                    docs_process_uploaded_files_ocr(
-                        $folder,
-                        $documentId,
-                        $updatedFileStorageUploads
-                    );
+                    docs_activate_live_ocr_worker($folder);
                 }
             };
 
@@ -35512,6 +34836,7 @@ switch ($action) {
         $dir = ensure_organization_directory($folder);
 
         $found = false;
+        $deletedRecord = null;
         foreach ($records as $index => $record) {
             if (!is_array($record) || !isset($record['id']) || (string) $record['id'] !== $documentId) {
                 continue;
@@ -35535,6 +34860,7 @@ switch ($action) {
             }
             docs_delete_directory_recursive(docs_get_document_responses_dir($folder, $documentId, false));
 
+            $deletedRecord = $record;
             unset($records[$index]);
             $found = true;
             break;
@@ -35572,7 +34898,7 @@ switch ($action) {
             $settings
         );
 
-        respond_success([
+        $responsePayload = [
             'message' => 'Документ удалён из реестра.',
             'organization' => $organization,
             'organizations' => $accessContext['accessible'],
@@ -35583,7 +34909,25 @@ switch ($action) {
             'canManageInstructions' => $permissions['canManageInstructions'],
             'canCreateDocuments' => $permissions['canCreateDocuments'],
             'canDeleteDocuments' => $permissions['canDeleteDocuments'],
-        ]);
+        ];
+        $deletedTaskParticipation = is_array($deletedRecord)
+            ? docs_collect_record_telegram_participation($deletedRecord, $folder)
+            : [];
+        if (!empty($deletedTaskParticipation)) {
+            respond_success_with_background_fallback(
+                $responsePayload,
+                static function () use ($deletedRecord, $folder, $deletedTaskParticipation): void {
+                    docs_sync_task_snapshots_after_participation_change(
+                        $deletedRecord,
+                        $folder,
+                        $deletedTaskParticipation,
+                        []
+                    );
+                }
+            );
+        }
+
+        respond_success($responsePayload);
         break;
 
     case 'storage_size':

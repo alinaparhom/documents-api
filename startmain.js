@@ -1392,7 +1392,9 @@
 
       return {
         login: payload.user.login,
-        name: payload.user.name || ''
+        name: payload.user.name || '',
+        role: typeof payload.user.role === 'string' ? payload.user.role : '',
+        objects: Array.isArray(payload.user.objects) ? payload.user.objects : []
       };
     }).catch(function(error) {
       if (!(error instanceof TypeError)) {
@@ -1412,7 +1414,9 @@
         if (matchedUser) {
           return {
             login: matchedUser.login,
-            name: matchedUser.name || ''
+            name: matchedUser.name || '',
+            role: typeof matchedUser.role === 'string' ? matchedUser.role : '',
+            objects: Array.isArray(matchedUser.object_ids) ? matchedUser.object_ids : []
           };
         }
         throw new Error('Неверный логин или пароль.');
@@ -2277,15 +2281,15 @@
     var title = document.createElement('h2');
     title.className = 'documents-login-modal__title frontworks-login-modal__title';
     title.id = 'frontworks-login-title';
-    title.textContent = 'Доступ к Фронту работ';
+    title.textContent = 'Фронт работ';
 
     var subtitle = document.createElement('p');
     subtitle.className = 'documents-login-modal__subtitle frontworks-login-modal__subtitle';
-    subtitle.textContent = 'Введите логин и пароль администратора из файла «users.json» или сотрудника из файла «FRbaza/Организация/FRuser.json».';
+    subtitle.innerHTML = 'Система управления строительными объектами<br>и задачами на всех этапах строительства';
 
     var helper = document.createElement('p');
     helper.className = 'documents-login-modal__subtitle frontworks-login-modal__subtitle';
-    helper.textContent = 'При совпадении данных откроется карточка Фронта работ без лишних шагов.';
+    helper.textContent = '';
 
     var header = document.createElement('div');
     header.className = 'documents-login-modal__header frontworks-login-modal__header';
@@ -2293,7 +2297,7 @@
     var icon = document.createElement('span');
     icon.className = 'documents-login-modal__icon frontworks-login-modal__icon';
     icon.setAttribute('aria-hidden', 'true');
-    icon.textContent = '⚒';
+    icon.textContent = 'ФР';
 
     var heading = document.createElement('div');
     heading.className = 'documents-login-modal__heading frontworks-login-modal__heading';
@@ -2321,10 +2325,21 @@
     loginInput.autocomplete = 'username';
     loginInput.required = true;
     loginInput.className = 'documents-login-modal__input frontworks-login-modal__input';
-    loginInput.placeholder = 'Например: admin или master';
+    loginInput.placeholder = 'Введите логин';
+
+    var loginInputWrap = document.createElement('div');
+    loginInputWrap.className = 'frontworks-login-modal__input-wrap';
+
+    var loginInputIcon = document.createElement('span');
+    loginInputIcon.className = 'frontworks-login-modal__input-icon';
+    loginInputIcon.setAttribute('aria-hidden', 'true');
+    loginInputIcon.textContent = '✉';
+
+    loginInputWrap.appendChild(loginInputIcon);
+    loginInputWrap.appendChild(loginInput);
 
     loginField.appendChild(loginCaption);
-    loginField.appendChild(loginInput);
+    loginField.appendChild(loginInputWrap);
 
     var passwordField = document.createElement('label');
     passwordField.className = 'documents-login-modal__field frontworks-login-modal__field';
@@ -2339,15 +2354,53 @@
     passwordInput.autocomplete = 'current-password';
     passwordInput.required = true;
     passwordInput.className = 'documents-login-modal__input frontworks-login-modal__input';
-    passwordInput.placeholder = 'Минимум 4 символа';
+    passwordInput.placeholder = 'Введите пароль';
+
+    var passwordInputWrap = document.createElement('div');
+    passwordInputWrap.className = 'frontworks-login-modal__input-wrap';
+
+    var passwordInputIcon = document.createElement('span');
+    passwordInputIcon.className = 'frontworks-login-modal__input-icon';
+    passwordInputIcon.setAttribute('aria-hidden', 'true');
+    passwordInputIcon.textContent = '▣';
+
+    var passwordToggle = document.createElement('button');
+    passwordToggle.type = 'button';
+    passwordToggle.className = 'frontworks-login-modal__eye';
+    passwordToggle.setAttribute('aria-label', 'Показать пароль');
+    passwordToggle.textContent = '◉';
+
+    passwordInputWrap.appendChild(passwordInputIcon);
+    passwordInputWrap.appendChild(passwordInput);
+    passwordInputWrap.appendChild(passwordToggle);
 
     passwordField.appendChild(passwordCaption);
-    passwordField.appendChild(passwordInput);
+    passwordField.appendChild(passwordInputWrap);
 
     var errorNode = document.createElement('div');
     errorNode.className = 'documents-login-modal__error frontworks-login-modal__error';
     errorNode.id = 'frontworks-login-error';
     errorNode.setAttribute('role', 'alert');
+
+    var options = document.createElement('div');
+    options.className = 'frontworks-login-modal__options';
+
+    var rememberLabel = document.createElement('label');
+    rememberLabel.className = 'frontworks-login-modal__remember';
+    var rememberInput = document.createElement('input');
+    rememberInput.type = 'checkbox';
+    var rememberBox = document.createElement('span');
+    rememberLabel.appendChild(rememberInput);
+    rememberLabel.appendChild(rememberBox);
+    rememberLabel.appendChild(document.createTextNode('Запомнить меня'));
+
+    var forgotLink = document.createElement('a');
+    forgotLink.className = 'frontworks-login-modal__forgot';
+    forgotLink.href = '#';
+    forgotLink.textContent = 'Забыли пароль?';
+
+    options.appendChild(rememberLabel);
+    options.appendChild(forgotLink);
 
     var actions = document.createElement('div');
     actions.className = 'documents-login-modal__actions frontworks-login-modal__actions';
@@ -2355,14 +2408,31 @@
     var submitButton = document.createElement('button');
     submitButton.type = 'submit';
     submitButton.className = 'documents-login-modal__submit frontworks-login-modal__submit';
-    submitButton.textContent = 'Открыть фронт работ';
+    submitButton.textContent = 'Войти';
 
     actions.appendChild(submitButton);
 
+    var divider = document.createElement('div');
+    divider.className = 'frontworks-login-modal__divider';
+    divider.appendChild(document.createElement('span')).textContent = 'или';
+
+    var registerLink = document.createElement('a');
+    registerLink.className = 'frontworks-login-modal__register';
+    registerLink.href = '#';
+    registerLink.textContent = '☷  Получить доступ / Зарегистрироваться';
+
+    var note = document.createElement('p');
+    note.className = 'frontworks-login-modal__note';
+    note.textContent = '▱ Вход для BIMMAX, заказчиков, генподрядчиков и подрядчиков';
+
     form.appendChild(loginField);
     form.appendChild(passwordField);
+    form.appendChild(options);
     form.appendChild(errorNode);
     form.appendChild(actions);
+    form.appendChild(divider);
+    form.appendChild(registerLink);
+    form.appendChild(note);
 
     dialog.setAttribute('aria-labelledby', 'frontworks-login-title');
     dialog.setAttribute('aria-describedby', 'frontworks-login-error');
@@ -2444,6 +2514,7 @@
 
       var loginValue = loginInput.value.trim();
       var passwordValue = passwordInput.value;
+      var rememberValue = rememberInput.checked;
 
       if (!loginValue || !passwordValue) {
         setError('Введите логин и пароль.');
@@ -2464,7 +2535,7 @@
 
       Promise.resolve()
         .then(function() {
-          return handler({ login: loginValue, password: passwordValue });
+          return handler({ login: loginValue, password: passwordValue, remember: rememberValue });
         })
         .then(function(result) {
           setError('');
@@ -2523,6 +2594,20 @@
     });
 
     // Клик по затемнению не закрывает окно: пользователь может закрыть его только кнопкой или Escape.
+
+    forgotLink.addEventListener('click', function(event) {
+      event.preventDefault();
+    });
+
+    registerLink.addEventListener('click', function(event) {
+      event.preventDefault();
+    });
+
+    passwordToggle.addEventListener('click', function() {
+      var isHidden = passwordInput.type === 'password';
+      passwordInput.type = isHidden ? 'text' : 'password';
+      passwordToggle.setAttribute('aria-label', isHidden ? 'Скрыть пароль' : 'Показать пароль');
+    });
 
     form.addEventListener('submit', handleSubmit);
 
@@ -4672,7 +4757,6 @@
     var mapClose = document.getElementById('map-close');
     var mapBackdrop = document.getElementById('map-backdrop');
     var summaryBackdrop = document.getElementById('summary-backdrop');
-    var summaryButton = document.getElementById('summary-launch');
     var summaryPanel = document.getElementById('master-plan-container');
     var roleMenuToggle = document.getElementById('role-menu-toggle');
     var menuContainer = document.querySelector('.menu-container');
@@ -4684,12 +4768,17 @@
     var engineeringTile = document.getElementById('engineering-tile');
     var frontWorksTile = document.getElementById('front-works-tile');
     var ispDocsTile = document.getElementById('ispdocs-tile');
+    var aosrTile = document.getElementById('aosr-tile');
     var tabelTile = document.getElementById('tabel-tile');
     var allTrackTile = document.getElementById('alltrack-tile');
     var ohranaTile = document.getElementById('ohrana-tile');
     var zavodTile = document.getElementById('zavod-tile');
     var protocol2Tile = document.getElementById('protocol2-tile');
     var protocol2ScriptPromise = null;
+    var protocol2WarmupPromise = null;
+    var protocol2AssetVersion = encodeURIComponent(String(window.__ASSET_VERSION__ || '20260731-mobile-v3') + '-desktop-only-v2');
+    var analizTile = document.getElementById('analiz-tile');
+    var convectorTile = document.getElementById('convector-tile');
     var documentsBackdrop = document.getElementById('documents-backdrop');
     var documentsPanel = document.getElementById('documents-panel');
     var documentsClose = document.getElementById('documents-close');
@@ -4784,6 +4873,8 @@
                     authenticated: true,
                     login: typeof v.login === 'string' ? v.login : '',
                     name: typeof v.name === 'string' ? v.name : '',
+                    redirect: typeof v.redirect === 'string' ? v.redirect : '',
+                    contractor: Boolean(v.contractor),
                     ts: typeof v.ts === 'number' ? v.ts : 0
                   };
                 }
@@ -5006,16 +5097,23 @@
 
             if (data && data.success) {
               var fio = String(data.name || credentials.login || '').trim();
+              // Для подрядчика сервер возвращает redirect на его страницу Организации.
+              var redirectTarget = data.redirect ? String(data.redirect).trim() : '';
               objectAccessState[safeObject] = {
                 authenticated: true,
                 login: credentials.login,
                 name: fio,
+                redirect: redirectTarget,
+                contractor: Boolean(data.contractor),
                 ts: Date.now()
               };
               persistObjectAccessState();
-              window.unifiedServiceSession = window.unifiedServiceSession || {};
-              window.unifiedServiceSession.active = true;
-              window.unifiedServiceSession.name = fio;
+              // Подрядчик не активирует сервисную (генподрядную) сессию интерфейса.
+              if (!data.contractor) {
+                window.unifiedServiceSession = window.unifiedServiceSession || {};
+                window.unifiedServiceSession.active = true;
+                window.unifiedServiceSession.name = fio;
+              }
             }
             return data;
           })
@@ -5054,7 +5152,12 @@
         var safeObject = sanitizeObjectForAuth(objectName);
         var cached = safeObject ? objectAccessState[safeObject] : null;
         if (cached && cached.authenticated) {
-          window.location.href = serviceSite;
+          // Подрядчика отправляем только на его страницу Организации (cached.redirect),
+          // остальных — на выбранную страницу объекта (Генподряд).
+          var cachedTarget = cached.redirect && String(cached.redirect).trim()
+            ? String(cached.redirect).trim()
+            : serviceSite;
+          window.location.href = cachedTarget;
           return;
         }
 
@@ -5065,7 +5168,12 @@
             }
             return;
           }
-          window.location.href = serviceSite;
+          // Если сервер вернул redirect (подрядчик) — открываем страницу Организации,
+          // иначе — страницу Генподряда выбранного объекта.
+          var target = result.redirect && String(result.redirect).trim()
+            ? String(result.redirect).trim()
+            : serviceSite;
+          window.location.href = target;
         });
       }, true);
     }
@@ -5097,12 +5205,15 @@
       { id: 'documents-tile', label: 'Документооборот' },
       { id: 'engineering-tile', label: 'Инженерная подготовка' },
       { id: 'front-works-tile', label: 'Фронт работ' },
-      { id: 'ispdocs-tile', label: 'Исполнительная документация' },
+      { id: 'ispdocs-tile', label: 'Проектная документация' },
+      { id: 'aosr-tile', label: 'Исполнительная документация' },
       { id: 'tabel-tile', label: 'Табель' },
       { id: 'alltrack-tile', label: 'AllTrack' },
       { id: 'ohrana-tile', label: 'Охрана труда' },
       { id: 'zavod-tile', label: 'Завод' },
-      { id: 'protocol2-tile', label: 'Протокол совещания' }
+      { id: 'protocol2-tile', label: 'Протокол совещания' },
+      { id: 'analiz-tile', label: 'Сбор данных' },
+      { id: 'convector-tile', label: 'Конвертер 3D' }
     ];
     var tilesActiveGroup = null;
     var tilesLockedGroup = null;
@@ -5380,7 +5491,7 @@
     }
 
     function createDefaultZavodAccess() {
-      return { authenticated: false, login: '', name: '' };
+      return { authenticated: false, login: '', name: '', role: '', objects: [] };
     }
 
     function createDefaultZa9vkaAccess() {
@@ -5645,7 +5756,10 @@
         return {
           authenticated: Boolean(parsed.authenticated),
           login: typeof parsed.login === 'string' ? parsed.login : '',
-          name: typeof parsed.name === 'string' ? parsed.name : ''
+          name: typeof parsed.name === 'string' ? parsed.name : '',
+          role: typeof parsed.role === 'string' ? parsed.role : '',
+          // Список доступных пользователю объектов ([] — видны все).
+          objects: Array.isArray(parsed.objects) ? parsed.objects : []
         };
       } catch (storageError) {
         return createDefaultZavodAccess();
@@ -5664,7 +5778,9 @@
         var payload = JSON.stringify({
           authenticated: true,
           login: zavodAccessState.login || '',
-          name: zavodAccessState.name || ''
+          name: zavodAccessState.name || '',
+          role: zavodAccessState.role || '',
+          objects: Array.isArray(zavodAccessState.objects) ? zavodAccessState.objects : []
         });
         window.sessionStorage.setItem(zavodAuthStorageKey, payload);
       } catch (storageError) {
@@ -5677,7 +5793,10 @@
       zavodAccessState = {
         authenticated: Boolean(state.authenticated),
         login: typeof state.login === 'string' ? state.login : '',
-        name: typeof state.name === 'string' ? state.name : ''
+        name: typeof state.name === 'string' ? state.name : '',
+        role: typeof state.role === 'string' ? state.role : '',
+        // Доступные объекты пользователя ([] — видны все); нормализуем к строкам.
+        objects: Array.isArray(state.objects) ? state.objects.map(String) : []
       };
       persistZavodAccessState();
       return zavodAccessState;
@@ -6589,76 +6708,6 @@
       return documentsCredentialsPromise;
     }
 
-    function openDocumentsLoginWithOptions(options) {
-      var loginOptions = options && typeof options === 'object'
-        ? options
-        : { allowAnyLogin: true, allowedLogins: [] };
-
-      if (!documentsLoginManager || typeof documentsLoginManager.open !== 'function') {
-        logDocumentsDebug('documents_login_modal_missing', {
-          allowAnyLogin: loginOptions && !!loginOptions.allowAnyLogin,
-          allowedLoginsCount: loginOptions && Array.isArray(loginOptions.allowedLogins)
-            ? loginOptions.allowedLogins.length
-            : 0
-        });
-        var fallbackAdmin = {
-          role: 'admin',
-          authenticated: true,
-          accessGranted: true,
-          forceAccess: true,
-          organization: detectedOrganization || null,
-          organizations: detectedOrganization ? [detectedOrganization] : []
-        };
-        applySessionAuthenticationFlag(fallbackAdmin);
-        openDocuments();
-        return Promise.resolve(null);
-      }
-
-      return documentsLoginManager.open(loginOptions).then(function(result) {
-        logDocumentsDebug('documents_login_modal_result', {
-          success: result && !!result.success,
-          cancelled: result && !!result.cancelled,
-          loginProvided: result && typeof result.login === 'string' && result.login.trim() !== '',
-          allowAnyLogin: loginOptions.allowAnyLogin,
-          allowedLoginsCount: Array.isArray(loginOptions.allowedLogins) ? loginOptions.allowedLogins.length : 0
-        });
-        if (!result || !result.success) {
-          return null;
-        }
-
-        logDocumentsDebug('documents_session_authenticate_start', {
-          login: result.login,
-          hasPassword: typeof result.password === 'string' && result.password !== ''
-        });
-        return authenticateDocumentsSession(result.login, result.password)
-          .then(function(contextAfterLogin) {
-            logDocumentsDebug('documents_session_authenticate_result', {
-              login: result.login,
-              authenticated: Boolean(contextAfterLogin && contextAfterLogin.authenticated),
-              accessGranted: Boolean(contextAfterLogin && contextAfterLogin.accessGranted)
-            });
-            if (contextAfterLogin && contextAfterLogin.authenticated && contextAfterLogin.accessGranted) {
-              persistDocumentsCredentials(result.login, result.password);
-              openDocuments();
-              return null;
-            }
-            logDocumentsDebug('documents_session_authenticate_denied', {
-              login: result.login,
-              authenticated: Boolean(contextAfterLogin && contextAfterLogin.authenticated),
-              accessGranted: Boolean(contextAfterLogin && contextAfterLogin.accessGranted)
-            });
-            throw new Error('Доступ к документам ограничен.');
-          })
-          .catch(function(error) {
-            logDocumentsDebug('documents_session_authenticate_error', {
-              login: result.login,
-              message: error && error.message ? error.message : 'unknown_error'
-            });
-            throw error;
-          });
-      });
-    }
-
     function ensureDocumentsAccess(event) {
       if (documentsOpen) {
         return;
@@ -6708,11 +6757,79 @@
                 if (documentsAccessContext && documentsAccessContext.authenticated && documentsAccessContext.accessGranted) {
                   return null;
                 }
-                return openDocumentsLoginWithOptions({ allowAnyLogin: true, allowedLogins: [] });
+                return loadDocumentsCredentials();
               });
           }
 
-          return openDocumentsLoginWithOptions({ allowAnyLogin: true, allowedLogins: [] });
+          return loadDocumentsCredentials().then(function(credentials) {
+            var loginOptions = credentials && typeof credentials === 'object'
+              ? credentials
+              : { allowAnyLogin: true, allowedLogins: [] };
+
+            if (!documentsLoginManager || typeof documentsLoginManager.open !== 'function') {
+              logDocumentsDebug('documents_login_modal_missing', {
+                allowAnyLogin: loginOptions && !!loginOptions.allowAnyLogin,
+                allowedLoginsCount: loginOptions && Array.isArray(loginOptions.allowedLogins)
+                  ? loginOptions.allowedLogins.length
+                  : 0
+              });
+              var fallbackAdmin = {
+                role: 'admin',
+                authenticated: true,
+                accessGranted: true,
+                forceAccess: true,
+                organization: detectedOrganization || null,
+                organizations: detectedOrganization ? [detectedOrganization] : []
+              };
+              applySessionAuthenticationFlag(fallbackAdmin);
+              openDocuments();
+              return null;
+            }
+
+            return documentsLoginManager.open(loginOptions).then(function(result) {
+              logDocumentsDebug('documents_login_modal_result', {
+                success: result && !!result.success,
+                cancelled: result && !!result.cancelled,
+                loginProvided: result && typeof result.login === 'string' && result.login.trim() !== '',
+                allowAnyLogin: loginOptions.allowAnyLogin,
+                allowedLoginsCount: Array.isArray(loginOptions.allowedLogins) ? loginOptions.allowedLogins.length : 0
+              });
+              if (!result || !result.success) {
+                return null;
+              }
+
+              logDocumentsDebug('documents_session_authenticate_start', {
+                login: result.login,
+                hasPassword: typeof result.password === 'string' && result.password !== ''
+              });
+              return authenticateDocumentsSession(result.login, result.password)
+                .then(function(contextAfterLogin) {
+                  logDocumentsDebug('documents_session_authenticate_result', {
+                    login: result.login,
+                    authenticated: Boolean(contextAfterLogin && contextAfterLogin.authenticated),
+                    accessGranted: Boolean(contextAfterLogin && contextAfterLogin.accessGranted)
+                  });
+                  if (contextAfterLogin && contextAfterLogin.authenticated && contextAfterLogin.accessGranted) {
+                    persistDocumentsCredentials(result.login, result.password);
+                    openDocuments();
+                    return null;
+                  }
+                  logDocumentsDebug('documents_session_authenticate_denied', {
+                    login: result.login,
+                    authenticated: Boolean(contextAfterLogin && contextAfterLogin.authenticated),
+                    accessGranted: Boolean(contextAfterLogin && contextAfterLogin.accessGranted)
+                  });
+                  throw new Error('Доступ к документам ограничен.');
+                })
+                .catch(function(error) {
+                  logDocumentsDebug('documents_session_authenticate_error', {
+                    login: result.login,
+                    message: error && error.message ? error.message : 'unknown_error'
+                  });
+                  throw error;
+                });
+            });
+          });
         })
         .catch(function(error) {
           logDocumentsDebug('documents_access_error', {
@@ -7121,6 +7238,9 @@
         function handleError() {
           script.removeEventListener('load', handleLoad);
           script.removeEventListener('error', handleError);
+          if (script.parentNode) {
+            script.parentNode.removeChild(script);
+          }
           reject(new Error('Не удалось загрузить скрипт: ' + src));
         }
         script.addEventListener('load', handleLoad);
@@ -8037,7 +8157,12 @@
               return updateZavodAccessState({
                 authenticated: true,
                 login: access.login || credentials.login,
-                name: access.name || ''
+                name: access.name || '',
+                role: access.role || '',
+                // Список доступных пользователю объектов ([] — видны все). Без этого
+                // поля он терялся при входе, и пользователь видел все объекты,
+                // хотя в админке ему отмечены лишь некоторые.
+                objects: Array.isArray(access.objects) ? access.objects : []
               });
             });
         });
@@ -8054,7 +8179,9 @@
           return updateZavodAccessState({
             authenticated: true,
             login: result.login,
-            name: result.name || ''
+            name: result.name || '',
+            role: result.role || '',
+            objects: Array.isArray(result.objects) ? result.objects : []
           });
         }
         if (zavodAccessState && zavodAccessState.authenticated) {
@@ -8346,17 +8473,88 @@
       return frontWorksScriptPromise;
     }
 
+    function requestScopeOfWorksAuthStatus() {
+      var formData = new FormData();
+      formData.set('entity', 'auth');
+      formData.set('action', 'status');
+
+      return fetch('scope-of-works.php', {
+        method: 'POST',
+        body: formData,
+        credentials: 'same-origin',
+        cache: 'no-store',
+        headers: { 'Accept': 'application/json' }
+      })
+        .then(function(response) {
+          return response.json()
+            .catch(function() { return {}; })
+            .then(function(payload) {
+              if (!response.ok || !payload || !payload.ok || !payload.access) {
+                return null;
+              }
+              return payload.access;
+            });
+        })
+        .catch(function() {
+          return null;
+        });
+    }
+
+    function loginToScopeOfWorks(credentials) {
+      var formData = new FormData();
+      formData.set('entity', 'auth');
+      formData.set('login', credentials && credentials.login ? credentials.login : '');
+      formData.set('password', credentials && credentials.password ? credentials.password : '');
+      if (credentials && credentials.remember) {
+        formData.set('remember', 'on');
+      }
+
+      return fetch('scope-of-works.php', {
+        method: 'POST',
+        body: formData,
+        credentials: 'same-origin',
+        cache: 'no-store',
+        headers: { 'Accept': 'application/json' }
+      })
+        .then(function(response) {
+          return response.json()
+            .catch(function() { return {}; })
+            .then(function(payload) {
+              if (!response.ok || !payload || !payload.ok || !payload.access) {
+                throw new Error(payload && payload.message ? payload.message : 'Не удалось войти.');
+              }
+
+              return payload.access;
+            });
+        });
+    }
+
+    function normalizeFrontWorksPageAccess(access) {
+      if (!access || typeof access !== 'object') {
+        return createDefaultFrontWorksAccess();
+      }
+
+      var login = typeof access.authLogin === 'string' && access.authLogin
+        ? access.authLogin
+        : (typeof access.login === 'string' ? access.login : '');
+      var name = typeof access.userName === 'string' && access.userName
+        ? access.userName
+        : (typeof access.name === 'string' ? access.name : '');
+
+      return {
+        authenticated: true,
+        isAdmin: Boolean(access.isAdmin || access.isBimmax),
+        login: login,
+        name: name
+      };
+    }
+
     function ensureFrontWorksLoginManager() {
       if (!frontWorksLoginManager) {
         frontWorksLoginManager = createFrontWorksLoginModal(function(credentials) {
-          return validateFrontWorksCredentials(credentials.login, credentials.password, detectedOrganization)
+          return loginToScopeOfWorks(credentials)
             .then(function(access) {
-              return updateFrontWorksAccessState({
-                authenticated: true,
-                isAdmin: Boolean(access.isAdmin),
-                login: access.login || credentials.login,
-                name: access.name || ''
-              });
+              return updateFrontWorksAccessState(normalizeFrontWorksPageAccess(access));
             });
         });
       }
@@ -8365,11 +8563,13 @@
     }
 
     function ensureFrontWorksAccess() {
-      if (frontWorksAccessState && frontWorksAccessState.authenticated) {
-        return Promise.resolve(frontWorksAccessState);
-      }
+      return requestScopeOfWorksAuthStatus().then(function(currentAccess) {
+        if (currentAccess) {
+          return updateFrontWorksAccessState(normalizeFrontWorksPageAccess(currentAccess));
+        }
 
-      return ensureFrontWorksLoginManager().open().then(function(result) {
+        return ensureFrontWorksLoginManager().open();
+      }).then(function(result) {
         if (result && result.login) {
           return updateFrontWorksAccessState({
             authenticated: true,
@@ -8393,38 +8593,13 @@
       }
 
       ensureFrontWorksAccess()
-        .then(function(access) {
-          return ensureFrontWorksModule()
-            .then(function(module) {
-              if (!module) {
-                throw new Error('Модуль Фронт работ не найден');
-              }
-
-              var userName = access && access.name ? access.name : (access && access.login ? access.login : '');
-              var accessPayload = {
-                isAdmin: Boolean(access && access.isAdmin),
-                userName: userName,
-                onLogout: logoutFrontWorksAccess
-              };
-
-              if (typeof module.setAccess === 'function') {
-                module.setAccess(accessPayload);
-              }
-
-              if (typeof module.open === 'function') {
-                module.open(accessPayload);
-              }
-
-              if (cardNewsModal) {
-                cardNewsModal.openForCard('Фронт работ', userName);
-              }
-            });
+        .then(function() {
+          window.location.assign('scope-of-works.php');
         })
         .catch(function(error) {
           if (error && error.message === 'Вход отменён') {
             return;
           }
-
           if (window.console && typeof window.console.error === 'function') {
             console.error(error);
           }
@@ -8438,13 +8613,13 @@
       tile.id = 'ispdocs-tile';
       tile.setAttribute('role', 'button');
       tile.setAttribute('tabindex', '0');
-      tile.setAttribute('aria-label', 'Открыть Исполнительную документацию');
+      tile.setAttribute('aria-label', 'Открыть Проектную документацию');
 
       var header = document.createElement('div');
       header.className = 'map-tile__header map-tile__header--stacked';
 
       var title = document.createElement('span');
-      title.textContent = 'Исполнительная документация';
+      title.textContent = 'Проектная документация';
 
       var status = document.createElement('span');
       status.className = 'map-tile__status';
@@ -8494,11 +8669,74 @@
       if (window.IspDocs && typeof window.IspDocs.open === 'function') {
         window.IspDocs.open(event && event.currentTarget);
         if (cardNewsModal) {
-          cardNewsModal.openForCard('Исполнительная документация');
+          cardNewsModal.openForCard('Проектная документация');
         }
       } else {
-        window.alert('Модуль Исполнительной документации недоступен.');
+        window.alert('Модуль Проектной документации недоступен.');
       }
+    }
+
+    function buildAosrTile() {
+      var tile = document.createElement('div');
+      tile.className = 'map-tile map-tile--ispdocs map-tile--aosr';
+      tile.id = 'aosr-tile';
+      tile.setAttribute('role', 'button');
+      tile.setAttribute('tabindex', '0');
+      tile.setAttribute('aria-label', 'Открыть Исполнительную документацию');
+
+      var header = document.createElement('div');
+      header.className = 'map-tile__header map-tile__header--stacked';
+
+      var title = document.createElement('span');
+      title.textContent = 'Исполнительная документация';
+
+      var status = document.createElement('span');
+      status.className = 'map-tile__status';
+      status.textContent = 'новое';
+
+      header.appendChild(title);
+      header.appendChild(status);
+
+      var body = document.createElement('div');
+      body.className = 'map-tile__body';
+
+      var content = document.createElement('div');
+      content.className = 'ispdocs-tile__content';
+
+      var icon = document.createElement('span');
+      icon.className = 'ispdocs-tile__icon';
+      icon.textContent = '📋';
+
+      var text = document.createElement('div');
+      text.className = 'ispdocs-tile__text';
+
+      var textTitle = document.createElement('span');
+      textTitle.className = 'ispdocs-tile__title';
+      textTitle.textContent = 'Акты скрытых работ и реестры';
+
+      var subtitle = document.createElement('span');
+      subtitle.className = 'ispdocs-tile__subtitle';
+      subtitle.textContent = 'АОСР, реестр паспортов, печать';
+
+      text.appendChild(textTitle);
+      text.appendChild(subtitle);
+
+      content.appendChild(icon);
+      content.appendChild(text);
+
+      body.appendChild(content);
+      tile.appendChild(header);
+      tile.appendChild(body);
+
+      return tile;
+    }
+
+    function handleAosrOpen(event) {
+      if (event && typeof event.preventDefault === 'function') {
+        event.preventDefault();
+      }
+      var org = detectedOrganization || detectOrganizationFromPage() || '';
+      window.location.assign('aosr.php' + (org ? '?org=' + encodeURIComponent(org) : ''));
     }
 
     function ensureMaterialsRequestOverlay() {
@@ -9016,6 +9254,9 @@
             module.open({
               organization: detectedOrganization || '',
               userName: zavodUserName,
+              login: (access && access.login) || '',
+              role: (access && access.role) || '',
+              objects: (access && Array.isArray(access.objects)) ? access.objects : [],
               onLogout: logoutZavodAccess,
               trigger: zavodTile || null
             });
@@ -9072,13 +9313,33 @@
     }
 
     function ensureProtocol2Styles() {
+      var viewportMeta = document.querySelector('meta[name="viewport"]');
+      if (!viewportMeta && document.head) {
+        viewportMeta = document.createElement('meta');
+        viewportMeta.name = 'viewport';
+        document.head.appendChild(viewportMeta);
+      }
+      if (viewportMeta) {
+        var viewportContent = String(viewportMeta.content || '').trim();
+        [
+          { key: 'width', value: 'width=device-width' },
+          { key: 'initial-scale', value: 'initial-scale=1' },
+          { key: 'viewport-fit', value: 'viewport-fit=cover' }
+        ].forEach(function(option) {
+          var pattern = new RegExp('(?:^|,)\\s*' + option.key.replace('-', '\\-') + '\\s*=', 'i');
+          if (!pattern.test(viewportContent)) {
+            viewportContent += (viewportContent ? ', ' : '') + option.value;
+          }
+        });
+        viewportMeta.content = viewportContent;
+      }
       if (document.getElementById('protocol2-style')) {
         return;
       }
       var link = document.createElement('link');
       link.id = 'protocol2-style';
       link.rel = 'stylesheet';
-      link.href = 'css/protocol2.css?v=' + Date.now();
+      link.href = 'css/protocol2.css?v=' + protocol2AssetVersion;
       document.head.appendChild(link);
     }
 
@@ -9090,7 +9351,7 @@
         return protocol2ScriptPromise;
       }
       ensureProtocol2Styles();
-      protocol2ScriptPromise = ensureScriptFile('protocol2-script', 'js/protocol2/protocol2.js?v=' + Date.now())
+      protocol2ScriptPromise = ensureScriptFile('protocol2-script', 'js/protocol2/protocol2.js?v=' + protocol2AssetVersion)
         .then(function() {
           if (window.Protocol2App && typeof window.Protocol2App.open === 'function') {
             return window.Protocol2App;
@@ -9103,6 +9364,20 @@
           throw error;
         });
       return protocol2ScriptPromise;
+    }
+
+    function warmProtocol2() {
+      if (protocol2WarmupPromise) {
+        return protocol2WarmupPromise;
+      }
+      protocol2WarmupPromise = ensureProtocol2Script()
+        .then(function(module) {
+          return module && typeof module.preload === 'function' ? module.preload() : module;
+        })
+        .catch(function() {
+          protocol2WarmupPromise = null;
+        });
+      return protocol2WarmupPromise;
     }
 
     function openProtocol2(event) {
@@ -9119,6 +9394,126 @@
         .catch(function(error) {
           window.alert(error && error.message ? error.message : 'Не удалось открыть «Протокол совещания».');
         });
+    }
+
+    function buildAnalizTile() {
+      var tile = document.createElement('div');
+      tile.className = 'map-tile map-tile--analiz';
+      tile.id = 'analiz-tile';
+
+      var header = document.createElement('div');
+      header.className = 'map-tile__header map-tile__header--stacked';
+
+      var title = document.createElement('span');
+      title.textContent = 'Сбор данных';
+      header.appendChild(title);
+
+      var body = document.createElement('div');
+      body.className = 'map-tile__body map-tile__body--analiz';
+
+      var content = document.createElement('div');
+      content.className = 'map-tile__analiz-content';
+
+      var icon = document.createElement('span');
+      icon.className = 'map-tile__analiz-icon';
+      icon.setAttribute('aria-hidden', 'true');
+      icon.textContent = '📊';
+
+      var text = document.createElement('span');
+      text.className = 'map-tile__analiz-text';
+      text.textContent = 'Сбор и анализ данных организации в архив для ИИ';
+
+      content.appendChild(icon);
+      content.appendChild(text);
+      body.appendChild(content);
+
+      tile.appendChild(header);
+      tile.appendChild(body);
+
+      return tile;
+    }
+
+    function ensureAnalizStyles() {
+      if (document.getElementById('analiz-tile-style')) {
+        return;
+      }
+      var link = document.createElement('link');
+      link.id = 'analiz-tile-style';
+      link.rel = 'stylesheet';
+      link.href = 'css/analiz.css?v=' + Date.now();
+      document.head.appendChild(link);
+    }
+
+    function openAnaliz(event) {
+      if (event && typeof event.preventDefault === 'function') {
+        event.preventDefault();
+      }
+      var currentPage = normalizePageName(window.location.pathname || '');
+      var params = 'page=' + encodeURIComponent(currentPage);
+      if (detectedOrganization) {
+        params += '&org=' + encodeURIComponent(detectedOrganization);
+      }
+      window.location.href = 'analiz.php?' + params;
+    }
+
+    function buildConvectorTile() {
+      var tile = document.createElement('div');
+      tile.className = 'map-tile map-tile--convector';
+      tile.id = 'convector-tile';
+
+      var header = document.createElement('div');
+      header.className = 'map-tile__header map-tile__header--stacked';
+
+      var title = document.createElement('span');
+      title.textContent = 'Конвертер 3D';
+      header.appendChild(title);
+
+      var body = document.createElement('div');
+      body.className = 'map-tile__body map-tile__body--convector';
+
+      var content = document.createElement('div');
+      content.className = 'map-tile__convector-content';
+
+      var icon = document.createElement('span');
+      icon.className = 'map-tile__convector-icon';
+      icon.setAttribute('aria-hidden', 'true');
+      icon.textContent = '🧊';
+
+      var text = document.createElement('span');
+      text.className = 'map-tile__convector-text';
+      text.textContent = 'Конвертация IFC → glTF, свойства элементов и разделение моделей';
+
+      content.appendChild(icon);
+      content.appendChild(text);
+      body.appendChild(content);
+
+      tile.appendChild(header);
+      tile.appendChild(body);
+
+      return tile;
+    }
+
+    function ensureConvectorStyles() {
+      if (document.getElementById('convector-tile-style')) {
+        return;
+      }
+      var link = document.createElement('link');
+      link.id = 'convector-tile-style';
+      link.rel = 'stylesheet';
+      link.href = 'css/convector.css?v=' + Date.now();
+      document.head.appendChild(link);
+    }
+
+    function openConvector(event) {
+      if (event && typeof event.preventDefault === 'function') {
+        event.preventDefault();
+      }
+      var currentPage = normalizePageName(window.location.pathname || '');
+      var params = 'page=' + encodeURIComponent(currentPage);
+      if (detectedOrganization) {
+        params += '&org=' + encodeURIComponent(detectedOrganization);
+      }
+      window.location.href = 'convector.php?' + params;
     }
 
     if (!materialsTile && interfaceTiles) {
@@ -9202,6 +9597,26 @@
       }
     }
 
+    if (!analizTile && interfaceTiles) {
+      analizTile = buildAnalizTile();
+      if (protocol2Tile && protocol2Tile.parentNode) {
+        protocol2Tile.insertAdjacentElement('afterend', analizTile);
+      } else {
+        interfaceTiles.appendChild(analizTile);
+      }
+    }
+
+    if (!convectorTile && interfaceTiles) {
+      convectorTile = buildConvectorTile();
+      if (analizTile && analizTile.parentNode) {
+        analizTile.insertAdjacentElement('afterend', convectorTile);
+      } else if (protocol2Tile && protocol2Tile.parentNode) {
+        protocol2Tile.insertAdjacentElement('afterend', convectorTile);
+      } else {
+        interfaceTiles.appendChild(convectorTile);
+      }
+    }
+
     if (!engineeringTile && interfaceTiles) {
       engineeringTile = buildEngineeringTile();
       if (documentsTile && documentsTile.parentNode === interfaceTiles) {
@@ -9223,6 +9638,15 @@
     if (!ispDocsTile && interfaceTiles) {
       ispDocsTile = buildIspDocsTile();
       interfaceTiles.appendChild(ispDocsTile);
+    }
+
+    if (!aosrTile && interfaceTiles) {
+      aosrTile = buildAosrTile();
+      if (ispDocsTile && ispDocsTile.parentNode === interfaceTiles) {
+        ispDocsTile.insertAdjacentElement('afterend', aosrTile);
+      } else {
+        interfaceTiles.appendChild(aosrTile);
+      }
     }
 
     syncAllTilesToGroups();
@@ -9335,10 +9759,60 @@
       }
 
       protocol2Tile.addEventListener('click', openProtocol2);
+      protocol2Tile.addEventListener('pointerenter', warmProtocol2, { once: true, passive: true });
+      protocol2Tile.addEventListener('pointerdown', warmProtocol2, { once: true, passive: true });
+      protocol2Tile.addEventListener('focus', warmProtocol2, { once: true });
       protocol2Tile.addEventListener('keydown', function(event) {
         var key = event.key || event.keyCode;
         if (key === 'Enter' || key === ' ' || key === 13 || key === 32) {
           openProtocol2(event);
+        }
+      });
+      if (typeof window.requestIdleCallback === 'function') {
+        window.requestIdleCallback(warmProtocol2, { timeout: 1800 });
+      } else {
+        window.setTimeout(warmProtocol2, 900);
+      }
+    }
+
+    if (analizTile) {
+      ensureAnalizStyles();
+      if (!analizTile.getAttribute('role')) {
+        analizTile.setAttribute('role', 'button');
+      }
+      if (!analizTile.hasAttribute('tabindex')) {
+        analizTile.setAttribute('tabindex', '0');
+      }
+      if (!analizTile.getAttribute('aria-label')) {
+        analizTile.setAttribute('aria-label', 'Открыть «Сбор данных»');
+      }
+
+      analizTile.addEventListener('click', openAnaliz);
+      analizTile.addEventListener('keydown', function(event) {
+        var key = event.key || event.keyCode;
+        if (key === 'Enter' || key === ' ' || key === 13 || key === 32) {
+          openAnaliz(event);
+        }
+      });
+    }
+
+    if (convectorTile) {
+      ensureConvectorStyles();
+      if (!convectorTile.getAttribute('role')) {
+        convectorTile.setAttribute('role', 'button');
+      }
+      if (!convectorTile.hasAttribute('tabindex')) {
+        convectorTile.setAttribute('tabindex', '0');
+      }
+      if (!convectorTile.getAttribute('aria-label')) {
+        convectorTile.setAttribute('aria-label', 'Открыть Конвертер 3D-моделей');
+      }
+
+      convectorTile.addEventListener('click', openConvector);
+      convectorTile.addEventListener('keydown', function(event) {
+        var key = event.key || event.keyCode;
+        if (key === 'Enter' || key === ' ' || key === 13 || key === 32) {
+          openConvector(event);
         }
       });
     }
@@ -9368,7 +9842,6 @@
     }
 
     if (frontWorksTile) {
-      ensureFrontWorksStyles();
       if (!frontWorksTile.getAttribute('role')) {
         frontWorksTile.setAttribute('role', 'button');
       }
@@ -9388,7 +9861,7 @@
         ispDocsTile.setAttribute('tabindex', '0');
       }
       if (!ispDocsTile.getAttribute('aria-label')) {
-        ispDocsTile.setAttribute('aria-label', 'Открыть Исполнительную документацию');
+        ispDocsTile.setAttribute('aria-label', 'Открыть Проектную документацию');
       }
 
       ispDocsTile.addEventListener('click', handleIspDocsOpen);
@@ -9397,6 +9870,27 @@
         if (key === 'Enter' || key === ' ' || key === 'Space' || key === 'Spacebar') {
           event.preventDefault();
           handleIspDocsOpen(event);
+        }
+      });
+    }
+
+    if (aosrTile) {
+      if (!aosrTile.getAttribute('role')) {
+        aosrTile.setAttribute('role', 'button');
+      }
+      if (!aosrTile.hasAttribute('tabindex')) {
+        aosrTile.setAttribute('tabindex', '0');
+      }
+      if (!aosrTile.getAttribute('aria-label')) {
+        aosrTile.setAttribute('aria-label', 'Открыть Исполнительную документацию');
+      }
+
+      aosrTile.addEventListener('click', handleAosrOpen);
+      aosrTile.addEventListener('keydown', function(event) {
+        var key = event && (event.key || event.code || '');
+        if (key === 'Enter' || key === ' ' || key === 'Space' || key === 'Spacebar') {
+          event.preventDefault();
+          handleAosrOpen(event);
         }
       });
     }
@@ -9695,16 +10189,6 @@
         return true;
       }
       return false;
-    }
-
-    if (summaryButton) {
-      summaryButton.addEventListener('click', function(event) {
-        event.preventDefault();
-        if (!callSummaryToggle() && summaryPanel) {
-          summaryPanel.style.display = summaryPanel.style.display === 'none' ? 'block' : 'none';
-          updateSummaryState();
-        }
-      });
     }
 
     if (roleMenuToggle && menuContainer) {

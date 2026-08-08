@@ -741,6 +741,8 @@ const telegramBriefModalFactory = createTelegramBriefAi({
   normalizeValue,
   getAttachmentName,
   resolveFileFetchUrl,
+  getTaskOrganization,
+  buildRequestBody,
 });
 
 const ALLOWED_LOG_EVENTS = new Set([
@@ -16529,11 +16531,6 @@ function handleViewerBriefClick() {
     return;
   }
   const fileName = getAttachmentName(file) || 'Файл';
-  const briefText = normalizeBriefText(file.aiBrief);
-  if (briefText) {
-    openTelegramFileAiBriefModal(fileName, briefText);
-    return;
-  }
   void generateViewerFileAiBrief(file, fileName);
 }
 
@@ -16611,6 +16608,8 @@ async function generateViewerFileAiBrief(file, fileName) {
     label: fileName || getAttachmentName(file) || 'Файл',
     url: resolveFileFetchUrl(file),
     fileObject: file && file.fileObject instanceof File ? file.fileObject : null,
+    organization: getTaskOrganization(task),
+    authPayload: buildRequestBody({ includeInitData: true, includeNameTokens: false }),
   };
 
   try {
