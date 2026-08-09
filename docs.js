@@ -3,7 +3,7 @@
   var DOCUMENTS_SCRIPT_SOURCE = document.currentScript && document.currentScript.src
     ? document.currentScript.src
     : '';
-  var DOCUMENTS_FEATURES_MODULE_VERSION = 'automatic-snapshots-20260807'; // Обновляет клиент после удаления массового TEXT audit и перехода на событийную S3-синхронизацию.
+  var DOCUMENTS_FEATURES_MODULE_VERSION = 'cron-management-20260808'; // Обновляет клиент после удаления автоматического OCR и добавления управления старым cron.
   var DATE_FORMATTER = new Intl.DateTimeFormat('ru-RU');
   var DATE_TIME_FORMATTER;
   var docsLogger = {
@@ -694,6 +694,13 @@
     s3RefreshButton: null,
     s3TestButton: null,
     s3CloseButton: null,
+    cronManagementButton: null,
+    cronManagementModal: null,
+    cronManagementStatus: null,
+    cronManagementSummary: null,
+    cronManagementRefreshButton: null,
+    cronManagementRemoveButton: null,
+    cronManagementCloseButton: null,
     templateButton: null,
     templateModal: null,
     templateStatus: null,
@@ -1405,7 +1412,8 @@
       settings: {
         responsibles: [],
         block2: [],
-        block3: []
+        block3: [],
+        aiBriefProvider: 'default'
       },
       loaded: false,
       saving: false,
@@ -7785,7 +7793,8 @@
     state.admin.settings = {
       responsibles: responsibles,
       block2: block2,
-      block3: block3
+      block3: block3,
+      aiBriefProvider: String(next.aiBriefProvider || '').toLowerCase() === 'deepseek' ? 'deepseek' : 'default'
     };
     state.admin.loaded = true;
 
@@ -28064,7 +28073,8 @@
     state.admin.settings = {
       responsibles: [],
       block2: [],
-      block3: []
+      block3: [],
+      aiBriefProvider: 'default'
     };
     state.responsiblesIndex = {};
     state.subordinatesIndex = {};
@@ -28268,7 +28278,7 @@
     state.realtime.registrySignature = '';
     state.realtime.registryMetaSignature = '';
     state.permissions = { canManageInstructions: false, canCreateDocuments: false, canDeleteDocuments: false, canManageSubordinates: false };
-    state.admin.settings = { responsibles: [], block2: [], block3: [] };
+    state.admin.settings = { responsibles: [], block2: [], block3: [], aiBriefProvider: 'default' };
     state.admin.loaded = false;
     state.admin.saving = false;
     state.admin.loadingPromise = null;
