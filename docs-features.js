@@ -23,12 +23,26 @@ export function createDocumentsFeatures(core) {
   var uploadFormDataWithProgress = core.uploadFormDataWithProgress;
   var adminRenderTokens = {};
   var lastFocusedElement = null;
+  var adminUiState = {
+    activeSection: 'responsibles',
+    activeNavigation: 'users',
+    query: '',
+    filters: {
+      telegram: 'all',
+      login: 'all',
+      password: 'all'
+    },
+    dirty: false
+  };
   var cronManagementView = {
     loading: false,
     removing: false,
     data: null,
     error: ''
   };
+  var ADMIN_OCR_POLL_INTERVAL_MS = 3000;
+  var ADMIN_OCR_SEARCH_DELAY_MS = 350;
+  var ADMIN_OCR_TEXT_CHUNK_SIZE = 50000;
 function ensureResponsesStyle() {
     if (document.getElementById('documents-responses-style')) {
       return;
@@ -1867,13 +1881,133 @@ function ensureAdminTemplateStyles() {
     var style = document.createElement('style');
     style.id = 'documents-admin-template-style';
     style.textContent = '' +
-      '.documents-admin__template-button{margin-right:8px;}' +
-      '.documents-template-modal{position:fixed;inset:0;z-index:1900;display:none;align-items:center;justify-content:center;padding:16px;background:rgba(15,23,42,0.32);backdrop-filter:blur(10px);}' +
-      '.documents-template-modal.is-visible{display:flex;}' +
-      '.documents-template-modal__panel{width:min(560px,100%);max-height:min(88vh,760px);overflow:auto;border-radius:22px;background:linear-gradient(165deg, rgba(255,255,255,0.96), rgba(248,250,252,0.92));border:1px solid rgba(255,255,255,0.95);box-shadow:0 28px 60px rgba(15,23,42,0.22);padding:18px;display:flex;flex-direction:column;gap:14px;}' +
+      '.documents-admin{position:fixed;inset:0;z-index:1800;display:none;background:#f8fafc;color:#0f172a;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}' +
+      '.documents-admin.is-visible{display:block;}' +
+      '.documents-admin__backdrop{position:absolute;inset:0;background:#f8fafc;}' +
+      '.documents-admin__dialog{position:relative;z-index:1;width:100%;height:100vh;height:100dvh;display:grid;grid-template-rows:auto auto minmax(0,1fr) auto;overflow:hidden;background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%);}' +
+      '.documents-admin__header{display:flex;align-items:flex-start;justify-content:space-between;gap:24px;padding:18px 22px 12px;}' +
+      '.documents-admin__heading{display:flex;align-items:center;gap:22px;min-width:0;flex-wrap:wrap;}' +
+      '.documents-admin__title{margin:0;font-size:28px;line-height:1.2;font-weight:850;letter-spacing:-.025em;color:#0f172a;}' +
+      '.documents-admin__message{display:none;position:relative;padding-left:24px;color:#16a34a;font-size:14px;font-weight:700;line-height:24px;}' +
+      '.documents-admin__message::before{content:"✓";position:absolute;left:0;top:3px;display:flex;align-items:center;justify-content:center;width:16px;height:16px;border:2px solid currentColor;border-radius:999px;font-size:10px;line-height:1;}' +
+      '.documents-admin__message--error{color:#dc2626;}' +
+      '.documents-admin__dismiss{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 18px;border:1px solid #e2e8f0;border-radius:12px;background:#f8fafc;color:#334155;font-size:14px;font-weight:750;cursor:pointer;}' +
+      '.documents-admin__dismiss:hover,.documents-admin__dismiss:focus-visible{border-color:#bfdbfe;background:#eff6ff;color:#1d4ed8;outline:none;}' +
+      '.documents-admin__navigation{display:flex;align-items:stretch;gap:8px;margin:0 18px;border-bottom:1px solid #e2e8f0;overflow-x:auto;scrollbar-gutter:stable;}' +
+      '.documents-admin__nav-button{position:relative;flex:0 0 auto;min-height:52px;padding:0 18px;border:0;background:transparent;color:#64748b;font-size:14px;font-weight:750;cursor:pointer;}' +
+      '.documents-admin__nav-button::after{content:"";position:absolute;left:12px;right:12px;bottom:-1px;height:2px;border-radius:999px;background:transparent;}' +
+      '.documents-admin__nav-button:hover,.documents-admin__nav-button:focus-visible{color:#1d4ed8;outline:none;}' +
+      '.documents-admin__nav-button.is-active{color:#2563eb;}' +
+      '.documents-admin__nav-button.is-active::after{background:#2563eb;}' +
+      '.documents-admin__body{min-height:0;overflow:auto;scrollbar-gutter:stable;padding:24px 20px 28px;}' +
+      '.documents-admin__users-view{display:flex;flex-direction:column;gap:22px;min-height:100%;max-width:1680px;margin:0 auto;}' +
+      '.documents-admin__users-view[hidden],.documents-admin__log-panel[hidden]{display:none;}' +
+      '.documents-admin__ai-settings{display:grid;grid-template-columns:minmax(240px,.85fr) minmax(360px,1.6fr);gap:8px 28px;align-items:center;padding:22px 24px;border:1px solid #e2e8f0;border-radius:14px;background:#fff;box-shadow:0 1px 2px rgba(15,23,42,.03);}' +
+      '.documents-admin__ai-settings-label{font-size:15px;font-weight:800;color:#0f172a;}' +
+      '.documents-admin__ai-settings-hint{grid-column:1;margin:0;color:#64748b;font-size:13px;line-height:1.5;}' +
+      '.documents-admin__ai-settings-select{grid-column:2;grid-row:1 / span 2;width:100%;min-height:46px;border:1px solid #dbe3ee;border-radius:10px;background:#fff;color:#0f172a;padding:0 14px;font-size:14px;font-weight:700;}' +
+      '.documents-admin__ai-settings-select:focus{outline:3px solid rgba(37,99,235,.13);border-color:#60a5fa;}' +
+      '.documents-admin__groups{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));overflow:hidden;border:1px solid #e2e8f0;border-radius:12px;background:#fff;}' +
+      '.documents-admin__group-button{display:flex;align-items:center;justify-content:center;gap:10px;min-height:54px;padding:0 16px;border:0;border-right:1px solid #e2e8f0;background:#fff;color:#0f172a;font-size:14px;font-weight:800;cursor:pointer;}' +
+      '.documents-admin__group-button:last-child{border-right:0;}' +
+      '.documents-admin__group-button:hover,.documents-admin__group-button:focus-visible{background:#f8fafc;outline:none;}' +
+      '.documents-admin__group-button.is-active{background:linear-gradient(110deg,#eff6ff,#f8fbff);color:#2563eb;}' +
+      '.documents-admin__group-count{display:inline-flex;align-items:center;justify-content:center;min-width:26px;height:24px;padding:0 7px;border-radius:999px;background:#f1f5f9;color:#475569;font-size:12px;font-weight:850;box-sizing:border-box;}' +
+      '.documents-admin__group-button.is-active .documents-admin__group-count{background:#2563eb;color:#fff;box-shadow:0 5px 12px rgba(37,99,235,.22);}' +
+      '.documents-admin__users-card{position:relative;display:flex;flex-direction:column;min-height:390px;border:1px solid #e2e8f0;border-radius:16px;background:#fff;box-shadow:0 8px 28px rgba(15,23,42,.045);overflow:hidden;}' +
+      '.documents-admin__toolbar{display:grid;grid-template-columns:minmax(180px,1fr) minmax(300px,430px) auto auto;align-items:center;gap:12px;padding:20px 22px;}' +
+      '.documents-admin__section-heading{margin:0;font-size:20px;line-height:1.25;font-weight:850;color:#0f172a;}' +
+      '.documents-admin__search{position:relative;min-width:0;}' +
+      '.documents-admin__search::before{content:"⌕";position:absolute;left:14px;top:50%;transform:translateY(-52%) rotate(-20deg);color:#94a3b8;font-size:20px;line-height:1;pointer-events:none;}' +
+      '.documents-admin__search-input{width:100%;min-height:42px;box-sizing:border-box;padding:0 14px 0 40px;border:1px solid #dbe3ee;border-radius:9px;background:#fff;color:#0f172a;font-size:13px;}' +
+      '.documents-admin__search-input::placeholder{color:#94a3b8;}' +
+      '.documents-admin__search-input:focus{outline:3px solid rgba(37,99,235,.12);border-color:#60a5fa;}' +
+      '.documents-admin__filter-wrap{position:relative;}' +
+      '.documents-admin__filter-button,.documents-admin__add-row{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:42px;padding:0 16px;border-radius:9px;font-size:13px;font-weight:800;white-space:nowrap;cursor:pointer;}' +
+      '.documents-admin__filter-button{border:1px solid #dbe3ee;background:#f8fafc;color:#334155;}' +
+      '.documents-admin__filter-button:hover,.documents-admin__filter-button:focus-visible{border-color:#bfdbfe;background:#eff6ff;color:#1d4ed8;outline:none;}' +
+      '.documents-admin__filter-button.is-active{border-color:#93c5fd;background:#eff6ff;color:#1d4ed8;}' +
+      '.documents-admin__filter-panel{position:absolute;z-index:12;top:calc(100% + 8px);right:0;width:260px;padding:14px;border:1px solid #e2e8f0;border-radius:12px;background:#fff;box-shadow:0 18px 38px rgba(15,23,42,.16);}' +
+      '.documents-admin__filter-panel[hidden]{display:none;}' +
+      '.documents-admin__filter-field{display:flex;flex-direction:column;gap:6px;margin-bottom:11px;color:#475569;font-size:12px;font-weight:750;}' +
+      '.documents-admin__filter-select{width:100%;min-height:36px;border:1px solid #dbe3ee;border-radius:8px;background:#fff;color:#0f172a;padding:0 9px;font-size:13px;}' +
+      '.documents-admin__filter-reset{width:100%;min-height:36px;border:1px solid #dbe3ee;border-radius:8px;background:#f8fafc;color:#334155;font-size:12px;font-weight:800;cursor:pointer;}' +
+      '.documents-admin__add-row{border:1px solid #2563eb;background:#2563eb;color:#fff;box-shadow:0 8px 18px rgba(37,99,235,.2);}' +
+      '.documents-admin__add-row:hover,.documents-admin__add-row:focus-visible{border-color:#1d4ed8;background:#1d4ed8;outline:none;}' +
+      '.documents-admin__section{min-height:0;}' +
+      '.documents-admin__section[hidden]{display:none;}' +
+      '.documents-admin__table-wrapper{max-height:calc(100vh - 430px);max-height:calc(100dvh - 430px);min-height:280px;overflow:auto;overflow-x:auto;scrollbar-gutter:stable;border-top:1px solid #eef2f7;}' +
+      '.documents-admin__table{width:100%;min-width:1420px;border-collapse:separate;border-spacing:0;table-layout:fixed;color:#334155;font-size:13px;}' +
+      '.documents-admin__table th{position:sticky;top:0;z-index:4;height:46px;padding:0 10px;border-bottom:1px solid #e2e8f0;background:#f8fafc;color:#64748b;font-size:12px;font-weight:800;text-align:left;white-space:nowrap;}' +
+      '.documents-admin__table td{height:58px;padding:7px 7px;border-bottom:1px solid #eef2f7;background:#fff;vertical-align:middle;}' +
+      '.documents-admin__table tr:last-child td{border-bottom:0;}' +
+      '.documents-admin__table tbody tr:hover td{background:#fbfdff;}' +
+      '.documents-admin__table th:nth-child(1),.documents-admin__table td:nth-child(1){width:56px;text-align:center;}' +
+      '.documents-admin__table th:nth-child(2),.documents-admin__table td:nth-child(2){width:180px;}' +
+      '.documents-admin__table th:nth-child(3),.documents-admin__table td:nth-child(3){width:155px;}' +
+      '.documents-admin__table th:nth-child(4),.documents-admin__table td:nth-child(4){width:135px;}' +
+      '.documents-admin__table th:nth-child(5),.documents-admin__table td:nth-child(5){width:125px;}' +
+      '.documents-admin__table th:nth-child(6),.documents-admin__table td:nth-child(6){width:170px;}' +
+      '.documents-admin__table th:nth-child(7),.documents-admin__table td:nth-child(7){width:135px;}' +
+      '.documents-admin__table th:nth-child(8),.documents-admin__table td:nth-child(8){width:165px;}' +
+      '.documents-admin__table th:nth-child(9),.documents-admin__table td:nth-child(9){width:145px;}' +
+      '.documents-admin__table th:nth-child(10),.documents-admin__table td:nth-child(10){width:76px;text-align:center;}' +
+      '.documents-admin__input{width:100%;min-width:0;height:38px;box-sizing:border-box;padding:0 10px;border:1px solid transparent;border-radius:8px;background:transparent;color:#0f172a;font:inherit;transition:border-color .16s ease,background .16s ease,box-shadow .16s ease;}' +
+      '.documents-admin__table td:nth-child(n+4):nth-child(-n+9) .documents-admin__input{border-color:#e7edf4;background:#fff;}' +
+      '.documents-admin__table td:nth-child(2) .documents-admin__input{font-weight:750;}' +
+      '.documents-admin__table td:first-child .documents-admin__input{text-align:center;color:#475569;font-weight:750;}' +
+      '.documents-admin__input:hover{border-color:#cbd5e1;background:#fff;}' +
+      '.documents-admin__input:focus{outline:3px solid rgba(37,99,235,.12);border-color:#60a5fa;background:#fff;}' +
+      '.documents-admin__input--error{border-color:#ef4444;background:#fff1f2;}' +
+      '.documents-admin__row-actions{position:relative;text-align:center;}' +
+      '.documents-admin__row-menu-toggle{display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;padding:0;border:1px solid #e2e8f0;border-radius:9px;background:#fff;color:#0f172a;font-size:20px;font-weight:850;line-height:1;cursor:pointer;}' +
+      '.documents-admin__row-menu-toggle:hover,.documents-admin__row-menu-toggle:focus-visible,.documents-admin__row-menu-toggle[aria-expanded="true"]{border-color:#bfdbfe;background:#eff6ff;color:#1d4ed8;outline:none;}' +
+      '.documents-admin__row-menu{position:fixed;z-index:1850;display:flex;flex-direction:column;width:210px;padding:6px;border:1px solid #e2e8f0;border-radius:11px;background:#fff;box-shadow:0 16px 34px rgba(15,23,42,.17);text-align:left;}' +
+      '.documents-admin__row-menu[hidden]{display:none;}' +
+      '.documents-admin__row-menu-button{min-height:38px;padding:0 11px;border:0;border-radius:7px;background:transparent;color:#334155;font-size:13px;font-weight:700;text-align:left;cursor:pointer;}' +
+      '.documents-admin__row-menu-button:hover,.documents-admin__row-menu-button:focus-visible{background:#f8fafc;outline:none;}' +
+      '.documents-admin__row-menu-button--danger{color:#dc2626;}' +
+      '.documents-admin__row-menu-button:disabled{color:#94a3b8;cursor:default;}' +
+      '.documents-admin__empty-search{padding:34px 20px;color:#64748b;font-size:14px;font-weight:700;text-align:center;}' +
+      '.documents-admin__empty-search[hidden]{display:none;}' +
+      '.documents-admin__footer{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:14px 22px;border-top:1px solid #e2e8f0;background:rgba(255,255,255,.97);box-shadow:0 -8px 28px rgba(15,23,42,.05);}' +
+      '.documents-admin__footer[hidden]{display:none;}' +
+      '.documents-admin__footer-status{display:flex;align-items:center;gap:10px;color:#64748b;font-size:13px;font-weight:700;}' +
+      '.documents-admin__footer-status::before{content:"i";display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:2px solid #3b82f6;border-radius:999px;color:#2563eb;font-size:12px;font-weight:900;box-sizing:border-box;}' +
+      '.documents-admin__footer-status.is-dirty{color:#334155;}' +
+      '.documents-admin__footer-actions{display:flex;align-items:center;gap:12px;}' +
+      '.documents-admin__close,.documents-admin__save{min-width:170px;min-height:42px;padding:0 18px;border-radius:9px;font-size:13px;font-weight:800;cursor:pointer;}' +
+      '.documents-admin__close{border:1px solid #dbe3ee;background:#fff;color:#334155;}' +
+      '.documents-admin__save{border:1px solid #2563eb;background:#2563eb;color:#fff;box-shadow:0 8px 18px rgba(37,99,235,.2);}' +
+      '.documents-admin__close:hover,.documents-admin__close:focus-visible{background:#f8fafc;outline:none;}' +
+      '.documents-admin__save:hover,.documents-admin__save:focus-visible{background:#1d4ed8;outline:none;}' +
+      '.documents-admin__save:disabled{opacity:.6;cursor:wait;}' +
+      '.documents-admin__log-panel{max-width:1680px;min-height:360px;box-sizing:border-box;margin:0 auto;padding:24px;border:1px solid #e2e8f0;border-radius:16px;background:#fff;box-shadow:0 8px 28px rgba(15,23,42,.045);}' +
+      '.documents-admin__log-header{display:flex;align-items:center;justify-content:space-between;gap:12px;}' +
+      '.documents-admin__log-title{margin:0;font-size:20px;color:#0f172a;}' +
+      '.documents-admin__log-close,.documents-admin__log-copy{min-height:38px;padding:0 13px;border:1px solid #dbe3ee;border-radius:8px;background:#f8fafc;color:#334155;font-weight:750;cursor:pointer;}' +
+      '.documents-admin__log-list{padding-left:24px;color:#334155;}' +
+      '.documents-admin__log-textarea{width:100%;box-sizing:border-box;border:1px solid #dbe3ee;border-radius:9px;padding:10px;color:#334155;}' +
+      '.documents-admin__log-hint,.documents-admin__log-status{color:#64748b;font-size:13px;}' +
+      '@media (max-width: 1180px){' +
+      '.documents-admin__toolbar{grid-template-columns:minmax(160px,1fr) minmax(260px,1.3fr) auto;}' +
+      '.documents-admin__add-row{grid-column:2 / 4;justify-self:end;}' +
+      '}' +
+      '@media (max-width: 900px){' +
+      '.documents-admin__header{padding-left:16px;padding-right:16px;}' +
+      '.documents-admin__title{font-size:24px;}' +
+      '.documents-admin__body{padding-left:12px;padding-right:12px;}' +
+      '.documents-admin__ai-settings{grid-template-columns:minmax(200px,.8fr) minmax(280px,1.2fr);padding:18px;}' +
+      '.documents-admin__toolbar{grid-template-columns:1fr auto;}' +
+      '.documents-admin__section-heading,.documents-admin__search{grid-column:1 / -1;}' +
+      '.documents-admin__add-row{grid-column:auto;justify-self:stretch;}' +
+      '}' +
+      '.documents-template-modal{display:none;width:100%;max-width:1680px;box-sizing:border-box;margin:0 auto;}' +
+      '.documents-template-modal.is-visible{display:block;}' +
+      '.documents-template-modal__panel{width:100%;box-sizing:border-box;overflow:auto;border-radius:16px;background:#fff;border:1px solid #e2e8f0;box-shadow:0 8px 28px rgba(15,23,42,.045);padding:24px;display:flex;flex-direction:column;gap:18px;}' +
       '.documents-template-modal__title{margin:0;font-size:20px;font-weight:700;color:#0f172a;}' +
       '.documents-template-modal__subtitle{margin:0;color:#64748b;font-size:13px;line-height:1.45;}' +
-      '.documents-template-modal__card{border:1px solid rgba(148,163,184,0.3);border-radius:16px;padding:14px;background:rgba(255,255,255,0.72);display:flex;flex-direction:column;gap:8px;}' +
+      '.documents-template-modal__card{border:1px solid #e2e8f0;border-radius:12px;padding:16px;background:#f8fafc;display:flex;flex-direction:column;gap:8px;}' +
       '.documents-template-modal__name{font-size:15px;font-weight:700;color:#0f172a;word-break:break-word;}' +
       '.documents-template-modal__meta{font-size:12px;color:#64748b;word-break:break-word;}' +
       '.documents-template-modal__status{display:none;padding:10px 12px;border-radius:12px;font-size:13px;font-weight:600;background:rgba(59,130,246,0.12);color:#1d4ed8;}' +
@@ -1881,32 +2015,27 @@ function ensureAdminTemplateStyles() {
       '.documents-template-modal__status--error{background:rgba(239,68,68,0.14);color:#b91c1c;}' +
       '.documents-template-modal__status--success{background:rgba(16,185,129,0.15);color:#047857;}' +
       '.documents-template-modal__actions{display:flex;flex-wrap:wrap;gap:10px;}' +
-      '.documents-template-modal__button{border:none;border-radius:12px;padding:11px 14px;font-size:14px;font-weight:600;cursor:pointer;transition:transform .2s ease, box-shadow .2s ease, opacity .2s ease;}' +
+      '.documents-template-modal__button{min-height:40px;border:1px solid transparent;border-radius:9px;padding:0 14px;font-size:13px;font-weight:750;cursor:pointer;transition:background .16s ease,border-color .16s ease,opacity .16s ease;}' +
       '.documents-template-modal__button:disabled{opacity:0.6;cursor:default;transform:none;box-shadow:none;}' +
-      '.documents-template-modal__button--primary{background:linear-gradient(120deg,#2563eb,#38bdf8);color:#fff;box-shadow:0 16px 28px rgba(37,99,235,0.28);}' +
-      '.documents-template-modal__button--secondary{background:rgba(148,163,184,0.18);color:#0f172a;}' +
-      '.documents-template-modal__button:hover:not(:disabled){transform:translateY(-1px);}' +
-      '.documents-admin__s3-button{margin-right:8px;}' +
-      '.documents-admin__ai-settings{display:grid;grid-template-columns:minmax(180px,260px) minmax(0,1fr);gap:10px 16px;align-items:center;padding:14px;border:1px solid rgba(148,163,184,0.3);border-radius:16px;background:rgba(255,255,255,0.74);}' +
-      '.documents-admin__ai-settings-label{font-size:13px;font-weight:800;color:#0f172a;}' +
-      '.documents-admin__ai-settings-hint{grid-column:1 / -1;margin:0;color:#64748b;font-size:12px;line-height:1.45;}' +
-      '.documents-admin__ai-settings-select{width:100%;min-height:38px;border:1px solid rgba(148,163,184,0.4);border-radius:10px;background:#fff;color:#0f172a;padding:0 10px;font-size:13px;font-weight:700;}' +
-      '.documents-admin__ai-settings-select:focus{outline:2px solid rgba(37,99,235,0.2);border-color:rgba(37,99,235,0.55);}' +
-      '.documents-s3-modal{position:fixed;inset:0;z-index:1900;display:none;align-items:center;justify-content:center;padding:16px;background:rgba(15,23,42,0.32);backdrop-filter:blur(10px);}' +
-      '.documents-s3-modal.is-visible{display:flex;}' +
-      '.documents-s3-modal__panel{width:min(1320px,calc(100vw - 24px));height:min(920px,calc(100dvh - 24px));max-height:calc(100dvh - 24px);overflow:hidden;border-radius:22px;background:linear-gradient(165deg, rgba(255,255,255,0.96), rgba(248,250,252,0.92));border:1px solid rgba(255,255,255,0.95);box-shadow:0 28px 60px rgba(15,23,42,0.22);padding:18px;display:grid;grid-template-rows:auto auto auto minmax(0,1fr) auto;gap:14px;}' +
+      '.documents-template-modal__button--primary{border-color:#2563eb;background:#2563eb;color:#fff;box-shadow:0 8px 18px rgba(37,99,235,.18);}' +
+      '.documents-template-modal__button--secondary{border-color:#dbe3ee;background:#f8fafc;color:#334155;}' +
+      '.documents-template-modal__button:hover:not(:disabled){border-color:#93c5fd;background:#eff6ff;color:#1d4ed8;}' +
+      '.documents-template-modal__button--primary:hover:not(:disabled){border-color:#1d4ed8;background:#1d4ed8;color:#fff;}' +
+      '.documents-s3-modal{display:none;width:100%;max-width:1680px;box-sizing:border-box;margin:0 auto;}' +
+      '.documents-s3-modal.is-visible{display:block;}' +
+      '.documents-s3-modal__panel{width:100%;min-height:0;box-sizing:border-box;overflow:visible;border-radius:16px;background:#fff;border:1px solid #e2e8f0;box-shadow:0 8px 28px rgba(15,23,42,.045);padding:24px;display:grid;grid-template-rows:auto auto auto auto auto;gap:14px;}' +
       '.documents-s3-modal__title{margin:0;font-size:20px;font-weight:700;color:#0f172a;}' +
       '.documents-s3-modal__subtitle{margin:0;color:#64748b;font-size:13px;line-height:1.45;}' +
       '.documents-s3-modal__status{display:none;padding:10px 12px;border-radius:12px;font-size:13px;font-weight:600;background:rgba(59,130,246,0.12);color:#1d4ed8;}' +
       '.documents-s3-modal__status.is-visible{display:block;}' +
       '.documents-s3-modal__status--error{background:rgba(239,68,68,0.14);color:#b91c1c;}' +
       '.documents-s3-modal__status--success{background:rgba(16,185,129,0.15);color:#047857;}' +
-      '.documents-s3-modal__summary{min-height:0;overflow:hidden;display:grid;grid-template-rows:auto minmax(0,1fr);gap:12px;}' +
-      '.documents-s3-modal__grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;}' +
+      '.documents-s3-modal__summary{min-height:0;overflow:visible;display:grid;grid-template-rows:auto auto;gap:12px;}' +
+      '.documents-s3-modal__grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;}' +
       '.documents-s3-modal__metric{border:1px solid rgba(148,163,184,0.3);border-radius:14px;padding:12px;background:rgba(255,255,255,0.74);display:flex;flex-direction:column;gap:4px;min-width:0;}' +
       '.documents-s3-modal__metric-label{font-size:12px;font-weight:700;color:#64748b;line-height:1.3;}' +
       '.documents-s3-modal__metric-value{font-size:18px;font-weight:800;color:#0f172a;line-height:1.2;word-break:break-word;}' +
-      '.documents-s3-modal__explorer{min-height:0;border:1px solid rgba(148,163,184,0.3);border-radius:14px;background:rgba(255,255,255,0.74);overflow:hidden;display:grid;grid-template-rows:auto auto auto auto minmax(0,1fr) auto;}' +
+      '.documents-s3-modal__explorer{min-height:420px;border:1px solid rgba(148,163,184,0.3);border-radius:14px;background:rgba(255,255,255,0.74);overflow:hidden;display:grid;grid-template-rows:auto auto auto auto minmax(240px,1fr) auto;}' +
       '.documents-s3-modal__explorer-head{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(148,163,184,0.22);}' +
       '.documents-s3-modal__explorer-title{font-size:13px;font-weight:900;color:#0f172a;}' +
       '.documents-s3-modal__explorer-path{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#475569;font-size:12px;font-weight:700;}' +
@@ -1946,21 +2075,86 @@ function ensureAdminTemplateStyles() {
       '.documents-s3-reader__body{min-height:0;overflow:auto;scrollbar-gutter:stable;padding:12px 16px 16px;background:#f8fafc;}' +
       '.documents-s3-reader__text{min-height:100%;margin:0;padding:12px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;color:#0f172a;font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere;}' +
       '.documents-s3-modal__actions{display:flex;flex-wrap:wrap;gap:10px;}' +
-      '.documents-s3-modal__button{border:none;border-radius:12px;padding:11px 14px;font-size:14px;font-weight:600;cursor:pointer;transition:transform .2s ease, box-shadow .2s ease, opacity .2s ease;}' +
+      '.documents-s3-modal__button{min-height:40px;border:1px solid transparent;border-radius:9px;padding:0 14px;font-size:13px;font-weight:750;cursor:pointer;transition:background .16s ease,border-color .16s ease,opacity .16s ease;}' +
       '.documents-s3-modal__button:disabled{opacity:0.6;cursor:default;transform:none;box-shadow:none;}' +
-      '.documents-s3-modal__button--primary{background:linear-gradient(120deg,#2563eb,#38bdf8);color:#fff;box-shadow:0 16px 28px rgba(37,99,235,0.28);}' +
-      '.documents-s3-modal__button--secondary{background:rgba(148,163,184,0.18);color:#0f172a;}' +
-      '.documents-s3-modal__button:hover:not(:disabled){transform:translateY(-1px);}' +
-      '.documents-admin__ocr-button{margin-right:8px;}' +
+      '.documents-s3-modal__button--primary{border-color:#2563eb;background:#2563eb;color:#fff;box-shadow:0 8px 18px rgba(37,99,235,.18);}' +
+      '.documents-s3-modal__button--secondary{border-color:#dbe3ee;background:#f8fafc;color:#334155;}' +
+      '.documents-s3-modal__button:hover:not(:disabled){border-color:#93c5fd;background:#eff6ff;color:#1d4ed8;}' +
+      '.documents-s3-modal__button--primary:hover:not(:disabled){border-color:#1d4ed8;background:#1d4ed8;color:#fff;}' +
+      '.documents-cron-modal .documents-s3-modal__panel{height:auto;min-height:380px;grid-template-rows:auto auto auto minmax(160px,auto) auto;}' +
+      '.documents-ocr-modal__panel{height:auto;min-height:0;grid-template-rows:auto auto auto auto auto auto;}' +
+      '.documents-ocr-admin__tabs{display:flex;gap:8px;padding:4px;border:1px solid rgba(148,163,184,0.25);border-radius:14px;background:rgba(241,245,249,0.82);}' +
+      '.documents-ocr-admin__tab{min-height:38px;border:0;border-radius:10px;padding:0 14px;background:transparent;color:#475569;font-size:13px;font-weight:850;cursor:pointer;}' +
+      '.documents-ocr-admin__tab.is-active{background:#fff;color:#1d4ed8;box-shadow:0 5px 14px rgba(15,23,42,0.08);}' +
+      '.documents-ocr-admin__content{min-height:0;overflow:visible;display:flex;flex-direction:column;gap:12px;}' +
+      '.documents-ocr-admin__progress{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px;padding:10px 12px;border:1px solid rgba(148,163,184,0.28);border-radius:14px;background:rgba(255,255,255,0.78);}' +
+      '.documents-ocr-admin__progress-track{height:9px;border-radius:999px;background:#e2e8f0;overflow:hidden;}' +
+      '.documents-ocr-admin__progress-bar{height:100%;width:0;border-radius:inherit;background:linear-gradient(90deg,#2563eb,#22c55e);transition:width .25s ease;}' +
+      '.documents-ocr-admin__progress-value{font-size:13px;font-weight:900;color:#0f172a;}' +
+      '.documents-ocr-admin__active{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;padding:12px;border:1px solid rgba(59,130,246,0.25);border-radius:14px;background:linear-gradient(135deg,rgba(239,246,255,0.92),rgba(255,255,255,0.92));}' +
+      '.documents-ocr-admin__active-title{font-size:13px;font-weight:900;color:#0f172a;overflow-wrap:anywhere;}' +
+      '.documents-ocr-admin__active-meta{margin-top:5px;color:#64748b;font-size:12px;line-height:1.45;overflow-wrap:anywhere;}' +
+      '.documents-ocr-admin__active-state{align-self:start;padding:6px 9px;border-radius:999px;background:#dbeafe;color:#1d4ed8;font-size:11px;font-weight:900;white-space:nowrap;}' +
+      '.documents-ocr-admin__deliveries{grid-column:1 / -1;display:flex;flex-wrap:wrap;gap:6px;}' +
+      '.documents-ocr-admin__delivery{padding:5px 8px;border-radius:9px;background:#dcfce7;color:#047857;font-size:11px;font-weight:800;overflow-wrap:anywhere;}' +
+      '.documents-ocr-admin__delivery.is-error{background:#fee2e2;color:#b91c1c;}' +
+      '.documents-ocr-admin__toolbar{display:grid;grid-template-columns:minmax(220px,1fr) minmax(150px,220px) auto;gap:8px;align-items:center;}' +
+      '.documents-ocr-admin__table-wrap{min-height:320px;max-height:52vh;max-height:52dvh;flex:1 1 auto;overflow:auto;overflow-x:auto;scrollbar-gutter:stable;border:1px solid rgba(148,163,184,0.28);border-radius:14px;background:rgba(255,255,255,0.8);touch-action:pan-x pan-y;}' +
+      '.documents-ocr-admin__table{width:100%;min-width:980px;border-collapse:separate;border-spacing:0;color:#334155;font-size:12px;}' +
+      '.documents-ocr-admin__table--users{min-width:650px;}' +
+      '.documents-ocr-admin__table--files{min-width:920px;}' +
+      '.documents-ocr-admin__table th{position:sticky;top:0;z-index:1;padding:8px;background:#f8fafc;border-bottom:1px solid rgba(148,163,184,0.25);color:#475569;font-size:11px;text-align:left;text-transform:uppercase;}' +
+      '.documents-ocr-admin__table td{padding:8px;border-bottom:1px solid rgba(148,163,184,0.16);vertical-align:top;}' +
+      '.documents-ocr-admin__table tr:last-child td{border-bottom:0;}' +
+      '.documents-ocr-admin__name{font-weight:850;color:#0f172a;overflow-wrap:anywhere;}' +
+      '.documents-ocr-admin__muted{margin-top:3px;color:#64748b;font-size:11px;line-height:1.4;overflow-wrap:anywhere;}' +
+      '.documents-ocr-admin__badge{display:inline-flex;padding:4px 7px;border-radius:999px;background:#e2e8f0;color:#475569;font-size:10px;font-weight:900;white-space:nowrap;}' +
+      '.documents-ocr-admin__badge--completed,.documents-ocr-admin__badge--complete{background:#dcfce7;color:#047857;}' +
+      '.documents-ocr-admin__badge--processing,.documents-ocr-admin__badge--running{background:#dbeafe;color:#1d4ed8;}' +
+      '.documents-ocr-admin__badge--retry,.documents-ocr-admin__badge--attention,.documents-ocr-admin__badge--incomplete{background:#fef3c7;color:#b45309;}' +
+      '.documents-ocr-admin__badge--failed,.documents-ocr-admin__badge--error,.documents-ocr-admin__badge--missing,.documents-ocr-admin__badge--ocr_missing{background:#fee2e2;color:#b91c1c;}' +
+      '.documents-ocr-admin__pagination{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;color:#64748b;font-size:12px;font-weight:800;}' +
+      '.documents-ocr-admin__pagination button{min-height:32px;border:1px solid rgba(148,163,184,0.32);border-radius:9px;background:#fff;color:#0f172a;padding:0 10px;font-size:12px;font-weight:850;}' +
+      '.documents-ocr-admin__pagination button:disabled{opacity:.45;}' +
+      '.documents-ocr-admin__users-layout{min-height:0;flex:1 1 auto;display:grid;grid-template-columns:minmax(300px,.82fr) minmax(0,1.5fr);gap:12px;}' +
+      '.documents-ocr-admin__pane{min-height:0;display:flex;flex-direction:column;gap:10px;overflow:visible;}' +
+      '.documents-ocr-admin__pane-title{margin:0;color:#0f172a;font-size:14px;font-weight:900;}' +
+      '.documents-ocr-admin__user-button{border:0;background:transparent;color:#1d4ed8;font:inherit;font-weight:900;text-align:left;padding:0;cursor:pointer;}' +
+      '.documents-ocr-admin__user-button.is-active{color:#0f172a;text-decoration:underline;text-decoration-color:#60a5fa;text-decoration-thickness:2px;text-underline-offset:3px;}' +
+      '.documents-ocr-admin__preview{max-width:460px;white-space:pre-wrap;overflow-wrap:anywhere;color:#475569;line-height:1.45;}' +
+      '.documents-ocr-admin__empty{padding:18px;border:1px dashed rgba(148,163,184,0.35);border-radius:14px;color:#64748b;text-align:center;font-size:13px;font-weight:700;}' +
+      '.documents-ocr-text-reader{display:none;}' +
+      '.documents-ocr-text-reader.is-visible{display:flex;}' +
       '@media (max-width: 720px){' +
-      '.documents-template-modal{padding:8px;align-items:flex-end;}' +
-      '.documents-template-modal__panel{width:100%;max-height:calc(100vh - 16px);border-radius:20px;padding:14px;}' +
+      '.documents-admin__header{padding:14px 14px 10px;gap:12px;}' +
+      '.documents-admin__heading{gap:8px;}' +
+      '.documents-admin__title{font-size:20px;}' +
+      '.documents-admin__message{width:100%;font-size:12px;}' +
+      '.documents-admin__dismiss{min-height:38px;padding:0 12px;font-size:12px;}' +
+      '.documents-admin__navigation{margin:0 10px;gap:0;}' +
+      '.documents-admin__nav-button{min-height:46px;padding:0 13px;font-size:13px;}' +
+      '.documents-admin__body{padding:14px 10px 18px;}' +
+      '.documents-admin__users-view{gap:12px;}' +
+      '.documents-admin__ai-settings{grid-template-columns:1fr;padding:16px;gap:7px;}' +
+      '.documents-admin__ai-settings-hint,.documents-admin__ai-settings-select{grid-column:1;grid-row:auto;}' +
+      '.documents-admin__groups{overflow-x:auto;scrollbar-gutter:stable;}' +
+      '.documents-admin__group-button{min-width:150px;min-height:48px;}' +
+      '.documents-admin__toolbar{grid-template-columns:1fr 1fr;gap:9px;padding:14px;}' +
+      '.documents-admin__section-heading{grid-column:1 / -1;font-size:18px;}' +
+      '.documents-admin__search{grid-column:1 / -1;}' +
+      '.documents-admin__filter-button,.documents-admin__add-row{width:100%;padding:0 11px;}' +
+      '.documents-admin__filter-panel{left:0;right:auto;width:min(260px,calc(100vw - 40px));}' +
+      '.documents-admin__table-wrapper{max-height:58vh;max-height:58dvh;min-height:300px;touch-action:pan-x pan-y;}' +
+      '.documents-admin__footer{padding:10px;flex-direction:column;align-items:stretch;gap:9px;}' +
+      '.documents-admin__footer-status{font-size:12px;}' +
+      '.documents-admin__footer-actions{display:grid;grid-template-columns:1fr 1fr;}' +
+      '.documents-admin__close,.documents-admin__save{min-width:0;width:100%;padding:0 10px;}' +
+      '.documents-template-modal{padding:0;}' +
+      '.documents-template-modal__panel{width:100%;border-radius:14px;padding:16px;}' +
       '.documents-template-modal__actions{display:grid;grid-template-columns:1fr;}' +
       '.documents-template-modal__button{width:100%;}' +
-      '.documents-admin__ai-settings{grid-template-columns:1fr;}' +
-      '.documents-admin__ai-settings-hint{grid-column:auto;}' +
-      '.documents-s3-modal{padding:8px;align-items:flex-end;}' +
-      '.documents-s3-modal__panel{width:100%;height:calc(100dvh - 16px);max-height:calc(100dvh - 16px);border-radius:20px;padding:14px;}' +
+      '.documents-s3-modal{padding:0;}' +
+      '.documents-s3-modal__panel{width:100%;height:auto;min-height:0;border-radius:14px;padding:14px;}' +
       '.documents-s3-modal__grid{grid-template-columns:repeat(2,minmax(0,1fr));}' +
       '.documents-s3-modal__explorer-head{grid-template-columns:1fr auto;align-items:start;}' +
       '.documents-s3-modal__explorer-title{grid-column:1 / 2;}' +
@@ -1975,6 +2169,12 @@ function ensureAdminTemplateStyles() {
       '.documents-s3-reader__actions{display:grid;grid-template-columns:1fr;min-width:104px;}' +
       '.documents-s3-reader__actions .documents-s3-modal__mini-button{width:100%;}' +
       '.documents-s3-reader__body{padding:10px 12px 12px;}' +
+      '.documents-ocr-admin__toolbar{grid-template-columns:1fr;}' +
+      '.documents-ocr-admin__users-layout{grid-template-columns:1fr;overflow:auto;scrollbar-gutter:stable;}' +
+      '.documents-ocr-admin__pane{min-height:420px;overflow:visible;}' +
+      '.documents-ocr-admin__active{grid-template-columns:1fr;}' +
+      '.documents-ocr-admin__active-state{justify-self:start;}' +
+      '.documents-ocr-admin__tabs{display:grid;grid-template-columns:1fr;}' +
       '}' +
       '';
     document.head.appendChild(style);
@@ -2001,38 +2201,53 @@ function ensureAdminTemplateStyles() {
     var header = createElement('header', 'documents-admin__header');
     var title = createElement('h2', 'documents-admin__title', 'Администратор документооборота');
     title.id = 'documents-admin-title';
-    header.appendChild(title);
-
-    var headerActions = createElement('div', 'documents-admin__header-actions');
+    var heading = createElement('div', 'documents-admin__heading');
+    heading.appendChild(title);
     var message = createElement('div', 'documents-admin__message');
     message.id = 'documents-admin-message';
     message.setAttribute('role', 'status');
     message.setAttribute('aria-live', 'polite');
-    headerActions.appendChild(message);
+    heading.appendChild(message);
+    header.appendChild(heading);
 
-    var templateButton = createElement('button', 'documents-admin__log-button documents-admin__template-button', 'Шаблон');
+    var dismiss = createElement('button', 'documents-admin__dismiss', '×  Закрыть');
+    dismiss.type = 'button';
+    header.appendChild(dismiss);
+    dialog.appendChild(header);
+
+    var navigation = createElement('nav', 'documents-admin__navigation');
+    navigation.setAttribute('aria-label', 'Разделы администратора');
+    var usersButton = createElement('button', 'documents-admin__nav-button is-active', 'Пользователи');
+    usersButton.type = 'button';
+    usersButton.dataset.adminNavigation = 'users';
+    navigation.appendChild(usersButton);
+
+    var templateButton = createElement('button', 'documents-admin__nav-button documents-admin__template-button', 'Шаблон');
     templateButton.type = 'button';
-    headerActions.appendChild(templateButton);
+    templateButton.dataset.adminNavigation = 'template';
+    navigation.appendChild(templateButton);
 
-    var s3Button = createElement('button', 'documents-admin__log-button documents-admin__s3-button', 'S3');
+    var s3Button = createElement('button', 'documents-admin__nav-button documents-admin__s3-button', 'S3');
     s3Button.type = 'button';
-    headerActions.appendChild(s3Button);
+    s3Button.dataset.adminNavigation = 's3';
+    navigation.appendChild(s3Button);
 
-    var cronManagementButton = createElement('button', 'documents-admin__log-button documents-admin__cron-button', 'Cron');
+    var ocrButton = createElement('button', 'documents-admin__nav-button documents-admin__ocr-button', 'OCR файлов');
+    ocrButton.type = 'button';
+    ocrButton.dataset.adminNavigation = 'ocr';
+    navigation.appendChild(ocrButton);
+
+    var cronManagementButton = createElement('button', 'documents-admin__nav-button documents-admin__cron-button', 'Cron');
     cronManagementButton.type = 'button';
-    headerActions.appendChild(cronManagementButton);
+    cronManagementButton.dataset.adminNavigation = 'cron';
+    navigation.appendChild(cronManagementButton);
 
-    var logButton = createElement('button', 'documents-admin__log-button', 'Журнал мини-приложения');
+    var logButton = createElement('button', 'documents-admin__nav-button', 'Журнал');
     logButton.type = 'button';
     logButton.setAttribute('aria-expanded', 'false');
-    headerActions.appendChild(logButton);
-
-    var dismiss = createElement('button', 'documents-admin__dismiss', 'Закрыть');
-    dismiss.type = 'button';
-    headerActions.appendChild(dismiss);
-
-    header.appendChild(headerActions);
-    dialog.appendChild(header);
+    logButton.dataset.adminNavigation = 'log';
+    navigation.appendChild(logButton);
+    dialog.appendChild(navigation);
 
     var body = createElement('div', 'documents-admin__body');
 
@@ -2073,6 +2288,8 @@ function ensureAdminTemplateStyles() {
 
     body.appendChild(logPanel);
 
+    var usersView = createElement('div', 'documents-admin__users-view');
+
     var aiSettings = createElement('section', 'documents-admin__ai-settings');
     var aiSettingsLabel = createElement('label', 'documents-admin__ai-settings-label', 'Модель для «Кратко ИИ»');
     var aiProviderSelect = document.createElement('select');
@@ -2089,19 +2306,97 @@ function ensureAdminTemplateStyles() {
       'documents-admin__ai-settings-hint',
       'Выбор действует для веб-версии и Telegram. Для DeepSeek ключ DEEPSEEK_API_KEY хранится только в .env.'
     ));
-    body.appendChild(aiSettings);
+    usersView.appendChild(aiSettings);
 
-    function buildAdminSection(key, titleText) {
+    var groups = createElement('div', 'documents-admin__groups');
+    groups.setAttribute('role', 'tablist');
+    var groupDefinitions = [
+      { key: 'responsibles', label: 'Ответственные' },
+      { key: 'block2', label: 'Директор' },
+      { key: 'block3', label: 'Подчинённые' }
+    ];
+    groupDefinitions.forEach(function(definition, index) {
+      var button = createElement('button', 'documents-admin__group-button' + (index === 0 ? ' is-active' : ''));
+      button.type = 'button';
+      button.dataset.adminSection = definition.key;
+      button.setAttribute('role', 'tab');
+      button.setAttribute('aria-selected', index === 0 ? 'true' : 'false');
+      button.appendChild(createElement('span', '', definition.label));
+      var count = createElement('span', 'documents-admin__group-count', '0');
+      count.dataset.adminSectionCount = definition.key;
+      button.appendChild(count);
+      groups.appendChild(button);
+    });
+    usersView.appendChild(groups);
+
+    var usersCard = createElement('div', 'documents-admin__users-card');
+    var toolbar = createElement('div', 'documents-admin__toolbar');
+    var sectionHeading = createElement('h3', 'documents-admin__section-heading', 'Ответственные');
+    toolbar.appendChild(sectionHeading);
+
+    var search = createElement('label', 'documents-admin__search');
+    var searchInput = document.createElement('input');
+    searchInput.type = 'search';
+    searchInput.className = 'documents-admin__search-input';
+    searchInput.placeholder = 'Поиск по имени, логину или Telegram ID';
+    searchInput.setAttribute('aria-label', 'Поиск пользователей');
+    search.appendChild(searchInput);
+    toolbar.appendChild(search);
+
+    var filterWrap = createElement('div', 'documents-admin__filter-wrap');
+    var filterButton = createElement('button', 'documents-admin__filter-button', '▽  Фильтры');
+    filterButton.type = 'button';
+    filterButton.setAttribute('aria-expanded', 'false');
+    var filterPanel = createElement('div', 'documents-admin__filter-panel');
+    filterPanel.hidden = true;
+
+    function appendAdminFilter(labelText, filterKey, options) {
+      var label = createElement('label', 'documents-admin__filter-field', labelText);
+      var select = document.createElement('select');
+      select.className = 'documents-admin__filter-select';
+      select.dataset.adminFilter = filterKey;
+      options.forEach(function(optionData) {
+        var option = document.createElement('option');
+        option.value = optionData.value;
+        option.textContent = optionData.label;
+        select.appendChild(option);
+      });
+      label.appendChild(select);
+      filterPanel.appendChild(label);
+    }
+
+    var presenceOptions = [
+      { value: 'all', label: 'Все' },
+      { value: 'present', label: 'Заполнено' },
+      { value: 'missing', label: 'Не заполнено' }
+    ];
+    appendAdminFilter('Telegram', 'telegram', presenceOptions);
+    appendAdminFilter('Логин', 'login', presenceOptions);
+    appendAdminFilter('Пароль', 'password', presenceOptions);
+    var filterReset = createElement('button', 'documents-admin__filter-reset', 'Сбросить фильтры');
+    filterReset.type = 'button';
+    filterReset.dataset.adminFilterReset = '1';
+    filterPanel.appendChild(filterReset);
+    filterWrap.appendChild(filterButton);
+    filterWrap.appendChild(filterPanel);
+    toolbar.appendChild(filterWrap);
+
+    var addRowButton = createElement('button', 'documents-admin__add-row', '+  Добавить пользователя');
+    addRowButton.type = 'button';
+    toolbar.appendChild(addRowButton);
+    usersCard.appendChild(toolbar);
+
+    function buildAdminSection(key) {
       var includeCredentials = sectionHasCredentials(key);
       var section = createElement('section', 'documents-admin__section');
-      var sectionTitle = createElement('h3', 'documents-admin__section-title', titleText);
-      section.appendChild(sectionTitle);
+      section.dataset.adminSectionPanel = key;
+      section.hidden = key !== 'responsibles';
 
       var tableWrapper = createElement('div', 'documents-admin__table-wrapper');
       var table = createElement('table', 'documents-admin__table');
       var headerCells = [
-        '<th>№ п/п</th>',
-        '<th>Ответственный</th>',
+        '<th>№</th>',
+        '<th>Сотрудник</th>',
         '<th>Должность</th>',
         '<th>ID Telegram</th>',
         '<th>ID чата</th>',
@@ -2112,8 +2407,7 @@ function ensureAdminTemplateStyles() {
         headerCells.push('<th>Пароль</th>');
       }
       headerCells.push('<th>Отдел</th>');
-      headerCells.push('<th>Примечание</th>');
-      headerCells.push('<th></th>');
+      headerCells.push('<th>Действия</th>');
       table.innerHTML = '' +
         '<thead>' +
         '  <tr>' + headerCells.join('') + '</tr>' +
@@ -2121,37 +2415,37 @@ function ensureAdminTemplateStyles() {
         '<tbody></tbody>';
       tableWrapper.appendChild(table);
       section.appendChild(tableWrapper);
-
-      var addRowButton = createElement('button', 'documents-admin__add-row', 'Добавить строку');
-      addRowButton.type = 'button';
-      section.appendChild(addRowButton);
-
-      body.appendChild(section);
+      usersCard.appendChild(section);
 
       adminElements.sections[key] = {
         section: section,
-        tableBody: table.querySelector('tbody'),
-        addRowButton: addRowButton
+        tableBody: table.querySelector('tbody')
       };
-
-      addRowButton.addEventListener('click', function() {
-        addAdminRow(null, key);
-      });
     }
 
-    buildAdminSection('responsibles', 'Блок 1. Ответственные');
-    buildAdminSection('block2', 'Блок 2. Директор');
-    buildAdminSection('block3', 'Блок 3. Подчинённые');
+    buildAdminSection('responsibles');
+    buildAdminSection('block2');
+    buildAdminSection('block3');
+
+    var emptySearch = createElement('div', 'documents-admin__empty-search', 'По текущему поиску и фильтрам никого нет.');
+    emptySearch.hidden = true;
+    usersCard.appendChild(emptySearch);
+    usersView.appendChild(usersCard);
+    body.appendChild(usersView);
 
     dialog.appendChild(body);
 
     var footer = createElement('div', 'documents-admin__footer');
-    var closeButton = createElement('button', 'documents-admin__close', 'Закрыть без сохранения');
+    var footerStatus = createElement('div', 'documents-admin__footer-status', 'Нет несохранённых изменений');
+    footer.appendChild(footerStatus);
+    var footerActions = createElement('div', 'documents-admin__footer-actions');
+    var closeButton = createElement('button', 'documents-admin__close', 'Отменить');
     closeButton.type = 'button';
-    var saveButton = createElement('button', 'documents-admin__save', 'Сохранить и закрыть');
+    var saveButton = createElement('button', 'documents-admin__save', 'Сохранить изменения');
     saveButton.type = 'button';
-    footer.appendChild(closeButton);
-    footer.appendChild(saveButton);
+    footerActions.appendChild(closeButton);
+    footerActions.appendChild(saveButton);
+    footer.appendChild(footerActions);
     dialog.appendChild(footer);
 
     modal.appendChild(dialog);
@@ -2159,9 +2453,10 @@ function ensureAdminTemplateStyles() {
     var templateModal = createElement('div', 'documents-template-modal');
     templateModal.setAttribute('aria-hidden', 'true');
     var templatePanel = createElement('div', 'documents-template-modal__panel');
-    templatePanel.setAttribute('role', 'dialog');
-    templatePanel.setAttribute('aria-modal', 'true');
+    templatePanel.setAttribute('role', 'region');
+    templatePanel.setAttribute('aria-labelledby', 'documents-template-title');
     var templateTitle = createElement('h3', 'documents-template-modal__title', 'Шаблон организации');
+    templateTitle.id = 'documents-template-title';
     var templateSubtitle = createElement('p', 'documents-template-modal__subtitle', 'Здесь можно посмотреть текущий шаблон и загрузить новый файл .docx. Замена выполняется безопасно с индикатором прогресса.');
     var templateStatus = createElement('div', 'documents-template-modal__status');
     templateStatus.setAttribute('role', 'status');
@@ -2177,12 +2472,9 @@ function ensureAdminTemplateStyles() {
     templateDownloadButton.type = 'button';
     var templateUploadButton = createElement('button', 'documents-template-modal__button documents-template-modal__button--secondary', 'Загрузить новый шаблон');
     templateUploadButton.type = 'button';
-    var templateCloseButton = createElement('button', 'documents-template-modal__button documents-template-modal__button--secondary', 'Закрыть');
-    templateCloseButton.type = 'button';
     templateActions.appendChild(templateOpenButton);
     templateActions.appendChild(templateDownloadButton);
     templateActions.appendChild(templateUploadButton);
-    templateActions.appendChild(templateCloseButton);
     var templateUploadInput = document.createElement('input');
     templateUploadInput.type = 'file';
     templateUploadInput.accept = '.doc,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword';
@@ -2194,14 +2486,15 @@ function ensureAdminTemplateStyles() {
     templatePanel.appendChild(templateActions);
     templatePanel.appendChild(templateUploadInput);
     templateModal.appendChild(templatePanel);
-    document.body.appendChild(templateModal);
+    body.appendChild(templateModal);
 
     var s3Modal = createElement('div', 'documents-s3-modal');
     s3Modal.setAttribute('aria-hidden', 'true');
     var s3Panel = createElement('div', 'documents-s3-modal__panel');
-    s3Panel.setAttribute('role', 'dialog');
-    s3Panel.setAttribute('aria-modal', 'true');
+    s3Panel.setAttribute('role', 'region');
+    s3Panel.setAttribute('aria-labelledby', 'documents-s3-title');
     var s3Title = createElement('h3', 'documents-s3-modal__title', 'S3 холодное хранилище');
+    s3Title.id = 'documents-s3-title';
     var s3Subtitle = createElement('p', 'documents-s3-modal__subtitle', 'Просмотр файлов, которые лежат в S3, и проверка загрузки новых вложений.');
     var s3Status = createElement('div', 'documents-s3-modal__status');
     s3Status.setAttribute('role', 'status');
@@ -2211,24 +2504,100 @@ function ensureAdminTemplateStyles() {
     s3RefreshButton.type = 'button';
     var s3TestButton = createElement('button', 'documents-s3-modal__button documents-s3-modal__button--primary', 'Проверить загрузку');
     s3TestButton.type = 'button';
-    var s3CloseButton = createElement('button', 'documents-s3-modal__button documents-s3-modal__button--secondary', 'Закрыть');
-    s3CloseButton.type = 'button';
     s3Actions.appendChild(s3RefreshButton);
     s3Actions.appendChild(s3TestButton);
-    s3Actions.appendChild(s3CloseButton);
     s3Panel.appendChild(s3Title);
     s3Panel.appendChild(s3Subtitle);
     s3Panel.appendChild(s3Status);
     s3Panel.appendChild(s3Summary);
     s3Panel.appendChild(s3Actions);
     s3Modal.appendChild(s3Panel);
-    document.body.appendChild(s3Modal);
+    body.appendChild(s3Modal);
+
+    var ocrModal = createElement('div', 'documents-s3-modal documents-ocr-modal');
+    ocrModal.setAttribute('aria-hidden', 'true');
+    var ocrPanel = createElement('div', 'documents-s3-modal__panel documents-ocr-modal__panel');
+    ocrPanel.setAttribute('role', 'region');
+    ocrPanel.setAttribute('aria-labelledby', 'documents-ocr-title');
+    var ocrTitle = createElement('h3', 'documents-s3-modal__title', 'OCR старых файлов и Telegram S3');
+    ocrTitle.id = 'documents-ocr-title';
+    var ocrSubtitle = createElement(
+      'p',
+      'documents-s3-modal__subtitle',
+      'Одноразовый проход основных вложений задач. В каждый момент вычисляется строго один файл; готовность подтверждается контрольным чтением S3.'
+    );
+    var ocrStatus = createElement('div', 'documents-s3-modal__status');
+    ocrStatus.setAttribute('role', 'status');
+    ocrStatus.setAttribute('aria-live', 'polite');
+    var ocrTabs = createElement('div', 'documents-ocr-admin__tabs');
+    ocrTabs.setAttribute('role', 'tablist');
+    var ocrBackfillTab = createElement('button', 'documents-ocr-admin__tab is-active', 'Проход старых файлов');
+    ocrBackfillTab.type = 'button';
+    ocrBackfillTab.setAttribute('role', 'tab');
+    ocrBackfillTab.setAttribute('aria-selected', 'true');
+    ocrBackfillTab.setAttribute('data-ocr-tab', 'backfill');
+    var ocrUsersTab = createElement('button', 'documents-ocr-admin__tab', 'Пользователи / OCR в S3');
+    ocrUsersTab.type = 'button';
+    ocrUsersTab.setAttribute('role', 'tab');
+    ocrUsersTab.setAttribute('aria-selected', 'false');
+    ocrUsersTab.setAttribute('data-ocr-tab', 'users');
+    ocrTabs.appendChild(ocrBackfillTab);
+    ocrTabs.appendChild(ocrUsersTab);
+    var ocrSummary = createElement('div', 'documents-ocr-admin__content');
+    var ocrActions = createElement('div', 'documents-s3-modal__actions');
+    var ocrRefreshButton = createElement('button', 'documents-s3-modal__button documents-s3-modal__button--secondary', 'Обновить');
+    ocrRefreshButton.type = 'button';
+    ocrRefreshButton.setAttribute('data-ocr-action', 'refresh');
+    ocrActions.appendChild(ocrRefreshButton);
+    ocrPanel.appendChild(ocrTitle);
+    ocrPanel.appendChild(ocrSubtitle);
+    ocrPanel.appendChild(ocrStatus);
+    ocrPanel.appendChild(ocrTabs);
+    ocrPanel.appendChild(ocrSummary);
+    ocrPanel.appendChild(ocrActions);
+    ocrModal.appendChild(ocrPanel);
+    body.appendChild(ocrModal);
+
+    var ocrTextReader = createElement('div', 'documents-s3-reader documents-ocr-text-reader');
+    ocrTextReader.setAttribute('aria-hidden', 'true');
+    var ocrTextReaderPanel = createElement('div', 'documents-s3-reader__panel');
+    ocrTextReaderPanel.setAttribute('role', 'dialog');
+    ocrTextReaderPanel.setAttribute('aria-modal', 'true');
+    ocrTextReaderPanel.setAttribute('aria-labelledby', 'documents-ocr-text-title');
+    var ocrTextReaderHeader = createElement('div', 'documents-s3-reader__header');
+    var ocrTextReaderHeading = createElement('div');
+    var ocrTextReaderTitle = createElement('h4', 'documents-s3-reader__title', 'OCR-текст из S3');
+    ocrTextReaderTitle.id = 'documents-ocr-text-title';
+    var ocrTextReaderMeta = createElement('div', 'documents-s3-reader__meta');
+    ocrTextReaderHeading.appendChild(ocrTextReaderTitle);
+    ocrTextReaderHeading.appendChild(ocrTextReaderMeta);
+    var ocrTextReaderActions = createElement('div', 'documents-s3-reader__actions');
+    var ocrTextReaderMore = createElement('button', 'documents-s3-modal__mini-button', 'Загрузить ещё');
+    ocrTextReaderMore.type = 'button';
+    ocrTextReaderMore.setAttribute('data-ocr-text-more', '1');
+    ocrTextReaderMore.hidden = true;
+    var ocrTextReaderClose = createElement('button', 'documents-s3-modal__mini-button', 'Закрыть');
+    ocrTextReaderClose.type = 'button';
+    ocrTextReaderClose.setAttribute('data-ocr-text-close', '1');
+    ocrTextReaderActions.appendChild(ocrTextReaderMore);
+    ocrTextReaderActions.appendChild(ocrTextReaderClose);
+    ocrTextReaderHeader.appendChild(ocrTextReaderHeading);
+    ocrTextReaderHeader.appendChild(ocrTextReaderActions);
+    var ocrTextReaderStatus = createElement('div', 'documents-s3-reader__status');
+    ocrTextReaderStatus.setAttribute('role', 'status');
+    var ocrTextReaderBody = createElement('div', 'documents-s3-reader__body');
+    var ocrTextReaderText = createElement('pre', 'documents-s3-reader__text');
+    ocrTextReaderBody.appendChild(ocrTextReaderText);
+    ocrTextReaderPanel.appendChild(ocrTextReaderHeader);
+    ocrTextReaderPanel.appendChild(ocrTextReaderStatus);
+    ocrTextReaderPanel.appendChild(ocrTextReaderBody);
+    ocrTextReader.appendChild(ocrTextReaderPanel);
+    document.body.appendChild(ocrTextReader);
 
     var cronManagementModal = createElement('div', 'documents-s3-modal documents-cron-modal');
     cronManagementModal.setAttribute('aria-hidden', 'true');
     var cronManagementPanel = createElement('div', 'documents-s3-modal__panel');
-    cronManagementPanel.setAttribute('role', 'dialog');
-    cronManagementPanel.setAttribute('aria-modal', 'true');
+    cronManagementPanel.setAttribute('role', 'region');
     cronManagementPanel.setAttribute('aria-labelledby', 'documents-cron-title');
     var cronManagementTitle = createElement('h3', 'documents-s3-modal__title', 'Cron на сервере');
     cronManagementTitle.id = 'documents-cron-title';
@@ -2241,23 +2610,33 @@ function ensureAdminTemplateStyles() {
     cronManagementRefreshButton.type = 'button';
     var cronManagementRemoveButton = createElement('button', 'documents-s3-modal__button documents-s3-modal__button--secondary', 'Удалить старый OCR-cron');
     cronManagementRemoveButton.type = 'button';
-    var cronManagementCloseButton = createElement('button', 'documents-s3-modal__button documents-s3-modal__button--secondary', 'Закрыть');
-    cronManagementCloseButton.type = 'button';
     cronManagementActions.appendChild(cronManagementRefreshButton);
     cronManagementActions.appendChild(cronManagementRemoveButton);
-    cronManagementActions.appendChild(cronManagementCloseButton);
     cronManagementPanel.appendChild(cronManagementTitle);
     cronManagementPanel.appendChild(cronManagementSubtitle);
     cronManagementPanel.appendChild(cronManagementStatus);
     cronManagementPanel.appendChild(cronManagementSummary);
     cronManagementPanel.appendChild(cronManagementActions);
     cronManagementModal.appendChild(cronManagementPanel);
-    document.body.appendChild(cronManagementModal);
+    body.appendChild(cronManagementModal);
     document.body.appendChild(modal);
 
     adminElements.modal = modal;
     adminElements.backdrop = backdrop;
     adminElements.dialog = dialog;
+    adminElements.navigation = navigation;
+    adminElements.usersButton = usersButton;
+    adminElements.usersView = usersView;
+    adminElements.groups = groups;
+    adminElements.usersCard = usersCard;
+    adminElements.sectionHeading = sectionHeading;
+    adminElements.searchInput = searchInput;
+    adminElements.filterButton = filterButton;
+    adminElements.filterPanel = filterPanel;
+    adminElements.addRowButton = addRowButton;
+    adminElements.emptySearch = emptySearch;
+    adminElements.footer = footer;
+    adminElements.footerStatus = footerStatus;
     adminElements.message = message;
     adminElements.saveButton = saveButton;
     adminElements.aiBriefProviderSelect = aiProviderSelect;
@@ -2269,14 +2648,19 @@ function ensureAdminTemplateStyles() {
     adminElements.s3Summary = s3Summary;
     adminElements.s3RefreshButton = s3RefreshButton;
     adminElements.s3TestButton = s3TestButton;
-    adminElements.s3CloseButton = s3CloseButton;
+    adminElements.ocrButton = ocrButton;
+    adminElements.ocrModal = ocrModal;
+    adminElements.ocrStatus = ocrStatus;
+    adminElements.ocrSummary = ocrSummary;
+    adminElements.ocrTabs = ocrTabs;
+    adminElements.ocrActions = ocrActions;
+    adminElements.ocrTextReader = ocrTextReader;
     adminElements.cronManagementButton = cronManagementButton;
     adminElements.cronManagementModal = cronManagementModal;
     adminElements.cronManagementStatus = cronManagementStatus;
     adminElements.cronManagementSummary = cronManagementSummary;
     adminElements.cronManagementRefreshButton = cronManagementRefreshButton;
     adminElements.cronManagementRemoveButton = cronManagementRemoveButton;
-    adminElements.cronManagementCloseButton = cronManagementCloseButton;
     adminElements.templateButton = templateButton;
     adminElements.logPanel = logPanel;
     adminElements.logStatus = logStatus;
@@ -2292,7 +2676,70 @@ function ensureAdminTemplateStyles() {
     adminElements.templateDownloadButton = templateDownloadButton;
     adminElements.templateUploadButton = templateUploadButton;
     adminElements.templateUploadInput = templateUploadInput;
-    adminElements.templateCloseButton = templateCloseButton;
+
+    usersButton.addEventListener('click', function() {
+      showAdminUsersView();
+    });
+
+    groups.addEventListener('click', function(event) {
+      var button = event.target && event.target.closest
+        ? event.target.closest('[data-admin-section]')
+        : null;
+      if (!button || !groups.contains(button)) {
+        return;
+      }
+      setActiveAdminSection(button.dataset.adminSection);
+    });
+
+    searchInput.addEventListener('input', function() {
+      adminUiState.query = searchInput.value || '';
+      applyAdminRowFilters();
+    });
+
+    filterButton.addEventListener('click', function() {
+      var shouldOpen = filterPanel.hidden;
+      closeAdminRowMenus();
+      filterPanel.hidden = !shouldOpen;
+      filterButton.setAttribute('aria-expanded', shouldOpen ? 'true' : 'false');
+    });
+
+    filterPanel.addEventListener('change', function(event) {
+      var select = event.target && event.target.closest
+        ? event.target.closest('[data-admin-filter]')
+        : null;
+      if (!select || !filterPanel.contains(select)) {
+        return;
+      }
+      adminUiState.filters[select.dataset.adminFilter] = select.value || 'all';
+      applyAdminRowFilters();
+      updateAdminFilterButtonState();
+    });
+
+    filterPanel.addEventListener('click', function(event) {
+      var resetButton = event.target && event.target.closest
+        ? event.target.closest('[data-admin-filter-reset]')
+        : null;
+      if (!resetButton || !filterPanel.contains(resetButton)) {
+        return;
+      }
+      resetAdminFilters();
+    });
+
+    addRowButton.addEventListener('click', function() {
+      adminUiState.query = '';
+      searchInput.value = '';
+      resetAdminFilters();
+      addAdminRow(null, adminUiState.activeSection);
+      markAdminDirty();
+    });
+
+    usersCard.addEventListener('click', handleAdminUsersCardClick);
+    usersCard.addEventListener('input', handleAdminUsersCardInput);
+    usersCard.addEventListener('scroll', function() {
+      closeAdminRowMenus();
+    }, true);
+    aiProviderSelect.addEventListener('change', markAdminDirty);
+
     closeButton.addEventListener('click', function() {
       closeAdminModal();
     });
@@ -2302,15 +2749,40 @@ function ensureAdminTemplateStyles() {
     });
 
     templateButton.addEventListener('click', function() {
+      closeAdminRowMenus();
+      prepareAdminInlineView('template');
       openAdminTemplateModal();
+      setAdminNavigation('template');
     });
 
     s3Button.addEventListener('click', function() {
+      closeAdminRowMenus();
+      prepareAdminInlineView('s3');
       openAdminS3Modal();
+      setAdminNavigation('s3');
     });
 
+    ocrButton.addEventListener('click', function() {
+      closeAdminRowMenus();
+      prepareAdminInlineView('ocr');
+      openAdminOcrModal();
+      if (ensureAdminOcrState().visible) {
+        setAdminNavigation('ocr');
+      } else {
+        showAdminUsersView();
+      }
+    });
+
+    ocrModal.addEventListener('click', handleAdminOcrClick);
+    ocrModal.addEventListener('input', handleAdminOcrInput);
+    ocrModal.addEventListener('change', handleAdminOcrChange);
+    ocrTextReader.addEventListener('click', handleAdminOcrTextReaderClick);
+
     cronManagementButton.addEventListener('click', function() {
+      closeAdminRowMenus();
+      prepareAdminInlineView('cron');
       openCronManagementModal();
+      setAdminNavigation('cron');
     });
 
     cronManagementRefreshButton.addEventListener('click', function() {
@@ -2321,17 +2793,9 @@ function ensureAdminTemplateStyles() {
       removeLegacyOcrCron();
     });
 
-    cronManagementCloseButton.addEventListener('click', function() {
-      closeCronManagementModal(true);
-    });
-
-    cronManagementModal.addEventListener('click', function(event) {
-      if (event.target === cronManagementModal) {
-        closeCronManagementModal(true);
-      }
-    });
     logButton.addEventListener('click', function() {
-      toggleAdminLogPanel();
+      closeAdminRowMenus();
+      showAdminLogView();
     });
 
     logClose.addEventListener('click', function() {
@@ -2340,26 +2804,6 @@ function ensureAdminTemplateStyles() {
 
     logCopy.addEventListener('click', function() {
       copyAdminLogToClipboard();
-    });
-
-    templateCloseButton.addEventListener('click', function() {
-      closeAdminTemplateModal();
-    });
-
-    templateModal.addEventListener('click', function(event) {
-      if (event.target === templateModal) {
-        closeAdminTemplateModal();
-      }
-    });
-
-    s3Modal.addEventListener('click', function(event) {
-      if (event.target === s3Modal) {
-        closeAdminS3Modal();
-      }
-    });
-
-    s3CloseButton.addEventListener('click', function() {
-      closeAdminS3Modal();
     });
 
     s3RefreshButton.addEventListener('click', function() {
@@ -2491,6 +2935,374 @@ function ensureAdminTemplateStyles() {
     return adminElements.sections[key];
   }
 
+  function getAdminSectionLabel(sectionKey) {
+    if (sectionKey === 'block2') {
+      return 'Директор';
+    }
+    if (sectionKey === 'block3') {
+      return 'Подчинённые';
+    }
+    return 'Ответственные';
+  }
+
+  function setAdminNavigation(key) {
+    adminUiState.activeNavigation = key || 'users';
+    if (!adminElements.navigation) {
+      return;
+    }
+    adminElements.navigation.querySelectorAll('[data-admin-navigation]').forEach(function(button) {
+      var isActive = button.dataset.adminNavigation === adminUiState.activeNavigation;
+      button.classList.toggle('is-active', isActive);
+      if (isActive) {
+        button.setAttribute('aria-current', 'page');
+      } else {
+        button.removeAttribute('aria-current');
+      }
+    });
+  }
+
+  function showAdminUsersView() {
+    ensureAdminModal();
+    closeAdminTemplateModal({ skipFocus: true });
+    closeAdminS3Modal({ skipFocus: true });
+    closeAdminOcrModal({ skipFocus: true });
+    closeCronManagementModal(false);
+    ensureAdminUserLogState().visible = false;
+    if (adminElements.logPanel) {
+      adminElements.logPanel.hidden = true;
+    }
+    if (adminElements.logButton) {
+      adminElements.logButton.setAttribute('aria-expanded', 'false');
+    }
+    if (adminElements.usersView) {
+      adminElements.usersView.hidden = false;
+    }
+    if (adminElements.footer) {
+      adminElements.footer.hidden = false;
+    }
+    setAdminNavigation('users');
+    setActiveAdminSection(adminUiState.activeSection);
+  }
+
+  function prepareAdminInlineView(viewKey) {
+    ensureAdminModal();
+    if (viewKey !== 'template') {
+      closeAdminTemplateModal({ skipFocus: true });
+    }
+    if (viewKey !== 's3') {
+      closeAdminS3Modal({ skipFocus: true });
+    }
+    if (viewKey !== 'ocr') {
+      closeAdminOcrModal({ skipFocus: true });
+    }
+    if (viewKey !== 'cron') {
+      closeCronManagementModal(false);
+    }
+    ensureAdminUserLogState().visible = false;
+    updateAdminLogPanel();
+    if (adminElements.usersView) {
+      adminElements.usersView.hidden = true;
+    }
+    if (adminElements.footer) {
+      adminElements.footer.hidden = true;
+    }
+    setAdminNavigation(viewKey);
+  }
+
+  function showAdminLogView() {
+    prepareAdminInlineView('log');
+    openAdminLogPanel();
+    setAdminNavigation('log');
+  }
+
+  function setActiveAdminSection(sectionKey) {
+    var key = sectionKey === 'block2' || sectionKey === 'block3' ? sectionKey : 'responsibles';
+    adminUiState.activeSection = key;
+    if (adminElements.groups) {
+      adminElements.groups.querySelectorAll('[data-admin-section]').forEach(function(button) {
+        var isActive = button.dataset.adminSection === key;
+        button.classList.toggle('is-active', isActive);
+        button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+      });
+    }
+    if (adminElements.sections) {
+      Object.keys(adminElements.sections).forEach(function(sectionName) {
+        var section = adminElements.sections[sectionName];
+        if (section && section.section) {
+          section.section.hidden = sectionName !== key;
+        }
+      });
+    }
+    if (adminElements.sectionHeading) {
+      adminElements.sectionHeading.textContent = getAdminSectionLabel(key);
+    }
+    closeAdminRowMenus();
+    applyAdminRowFilters();
+  }
+
+  function adminRowHasContent(row) {
+    if (!row) {
+      return false;
+    }
+    var fields = ['responsible', 'position', 'telegram', 'chatId', 'email', 'login', 'department', 'note'];
+    return fields.some(function(field) {
+      var input = row.querySelector('input[data-field="' + field + '"]');
+      return Boolean(input && String(input.value || '').trim());
+    });
+  }
+
+  function updateAdminSectionCounts() {
+    if (!adminElements.sections || !adminElements.groups) {
+      return;
+    }
+    Object.keys(adminElements.sections).forEach(function(sectionKey) {
+      var section = adminElements.sections[sectionKey];
+      var count = 0;
+      if (section && section.tableBody) {
+        section.tableBody.querySelectorAll('tr').forEach(function(row) {
+          if (adminRowHasContent(row)) {
+            count += 1;
+          }
+        });
+      }
+      var countElement = adminElements.groups.querySelector('[data-admin-section-count="' + sectionKey + '"]');
+      if (countElement) {
+        countElement.textContent = String(count);
+      }
+    });
+  }
+
+  function normalizeAdminSearchValue(value) {
+    return String(value || '').trim().toLocaleLowerCase('ru');
+  }
+
+  function adminRowMatchesPresence(row, field, filterValue) {
+    if (filterValue === 'all') {
+      return true;
+    }
+    var hasValue = false;
+    if (field === 'password') {
+      var passwordInput = row.querySelector('input[data-field="password"]');
+      hasValue = Boolean(row.dataset.passwordHash || (passwordInput && String(passwordInput.value || '').trim()));
+    } else {
+      var input = row.querySelector('input[data-field="' + field + '"]');
+      hasValue = Boolean(input && String(input.value || '').trim());
+    }
+    return filterValue === 'present' ? hasValue : !hasValue;
+  }
+
+  function applyAdminRowFilters() {
+    var section = adminElements.sections && adminElements.sections[adminUiState.activeSection]
+      ? adminElements.sections[adminUiState.activeSection]
+      : null;
+    if (!section || !section.tableBody) {
+      return;
+    }
+    var query = normalizeAdminSearchValue(adminUiState.query);
+    var visibleCount = 0;
+    section.tableBody.querySelectorAll('tr').forEach(function(row) {
+      var responsible = row.querySelector('input[data-field="responsible"]');
+      var login = row.querySelector('input[data-field="login"]');
+      var telegram = row.querySelector('input[data-field="telegram"]');
+      var searchable = normalizeAdminSearchValue([
+        responsible ? responsible.value : '',
+        login ? login.value : '',
+        telegram ? telegram.value : ''
+      ].join(' '));
+      var matches = (!query || searchable.indexOf(query) !== -1)
+        && adminRowMatchesPresence(row, 'telegram', adminUiState.filters.telegram)
+        && adminRowMatchesPresence(row, 'login', adminUiState.filters.login)
+        && adminRowMatchesPresence(row, 'password', adminUiState.filters.password);
+      row.hidden = !matches;
+      if (matches) {
+        visibleCount += 1;
+      }
+    });
+    if (adminElements.emptySearch) {
+      adminElements.emptySearch.hidden = visibleCount !== 0;
+    }
+  }
+
+  function updateAdminFilterButtonState() {
+    if (!adminElements.filterButton) {
+      return;
+    }
+    var hasFilters = Object.keys(adminUiState.filters).some(function(key) {
+      return adminUiState.filters[key] !== 'all';
+    });
+    adminElements.filterButton.classList.toggle('is-active', hasFilters);
+  }
+
+  function resetAdminFilters() {
+    adminUiState.filters.telegram = 'all';
+    adminUiState.filters.login = 'all';
+    adminUiState.filters.password = 'all';
+    if (adminElements.filterPanel) {
+      adminElements.filterPanel.querySelectorAll('[data-admin-filter]').forEach(function(select) {
+        select.value = 'all';
+      });
+    }
+    updateAdminFilterButtonState();
+    applyAdminRowFilters();
+  }
+
+  function markAdminDirty() {
+    adminUiState.dirty = true;
+    if (adminElements.footerStatus) {
+      adminElements.footerStatus.textContent = 'Есть несохранённые изменения';
+      adminElements.footerStatus.classList.add('is-dirty');
+    }
+  }
+
+  function clearAdminDirtyState() {
+    adminUiState.dirty = false;
+    if (adminElements.footerStatus) {
+      adminElements.footerStatus.textContent = 'Нет несохранённых изменений';
+      adminElements.footerStatus.classList.remove('is-dirty');
+    }
+  }
+
+  function refreshAdminPasswordState(row) {
+    if (!row) {
+      return;
+    }
+    var passwordInput = row.querySelector('input[data-field="password"]');
+    var clearButton = row.querySelector('[data-admin-row-action="clear-password"]');
+    var hasPassword = Boolean(row.dataset.passwordHash || (passwordInput && String(passwordInput.value || '').trim()));
+    if (passwordInput) {
+      passwordInput.placeholder = row.dataset.passwordHash
+        ? 'Оставьте пустым'
+        : 'Введите пароль';
+    }
+    if (clearButton) {
+      clearButton.disabled = !hasPassword;
+    }
+  }
+
+  function closeAdminRowMenus(exceptMenu) {
+    if (!adminElements.usersCard) {
+      return;
+    }
+    adminElements.usersCard.querySelectorAll('.documents-admin__row-menu').forEach(function(menu) {
+      if (exceptMenu && menu === exceptMenu) {
+        return;
+      }
+      menu.hidden = true;
+      var actions = menu.closest('.documents-admin__row-actions');
+      var toggle = actions ? actions.querySelector('[data-admin-row-menu]') : null;
+      if (toggle) {
+        toggle.setAttribute('aria-expanded', 'false');
+      }
+    });
+  }
+
+  function handleAdminUsersCardClick(event) {
+    var filterOwner = event.target && event.target.closest
+      ? event.target.closest('.documents-admin__filter-wrap')
+      : null;
+    if (!filterOwner && adminElements.filterPanel && !adminElements.filterPanel.hidden) {
+      adminElements.filterPanel.hidden = true;
+      if (adminElements.filterButton) {
+        adminElements.filterButton.setAttribute('aria-expanded', 'false');
+      }
+    }
+    var menuToggle = event.target && event.target.closest
+      ? event.target.closest('[data-admin-row-menu]')
+      : null;
+    if (menuToggle && adminElements.usersCard.contains(menuToggle)) {
+      var actions = menuToggle.closest('.documents-admin__row-actions');
+      var menu = actions ? actions.querySelector('.documents-admin__row-menu') : null;
+      if (!menu) {
+        return;
+      }
+      var shouldOpen = menu.hidden;
+      closeAdminRowMenus(menu);
+      menu.hidden = !shouldOpen;
+      menuToggle.setAttribute('aria-expanded', shouldOpen ? 'true' : 'false');
+      if (shouldOpen) {
+        var toggleRect = menuToggle.getBoundingClientRect();
+        var menuWidth = 210;
+        var menuHeight = 92;
+        var viewportPadding = 10;
+        var menuLeft = Math.max(viewportPadding, Math.min(toggleRect.right - menuWidth, window.innerWidth - menuWidth - viewportPadding));
+        var menuTop = toggleRect.bottom + 6;
+        if (menuTop + menuHeight > window.innerHeight - viewportPadding) {
+          menuTop = Math.max(viewportPadding, toggleRect.top - menuHeight - 6);
+        }
+        menu.style.left = String(menuLeft) + 'px';
+        menu.style.top = String(menuTop) + 'px';
+      }
+      if (adminElements.filterPanel) {
+        adminElements.filterPanel.hidden = true;
+      }
+      if (adminElements.filterButton) {
+        adminElements.filterButton.setAttribute('aria-expanded', 'false');
+      }
+      return;
+    }
+
+    var actionButton = event.target && event.target.closest
+      ? event.target.closest('[data-admin-row-action]')
+      : null;
+    if (!actionButton || !adminElements.usersCard.contains(actionButton)) {
+      closeAdminRowMenus();
+      return;
+    }
+    var row = actionButton.closest('tr');
+    if (!row) {
+      return;
+    }
+    var action = actionButton.dataset.adminRowAction;
+    if (action === 'clear-password') {
+      row.dataset.passwordHash = '';
+      row.dataset.initialPasswordHash = '';
+      var passwordInput = row.querySelector('input[data-field="password"]');
+      if (passwordInput) {
+        passwordInput.value = '';
+      }
+      refreshAdminPasswordState(row);
+      markAdminDirty();
+      closeAdminRowMenus();
+      if (passwordInput) {
+        passwordInput.focus();
+      }
+      applyAdminRowFilters();
+      return;
+    }
+    if (action === 'remove') {
+      var responsibleInput = row.querySelector('input[data-field="responsible"]');
+      var label = responsibleInput && String(responsibleInput.value || '').trim()
+        ? ' «' + String(responsibleInput.value).trim() + '»'
+        : '';
+      if (!window.confirm('Удалить пользователя' + label + '?')) {
+        return;
+      }
+      removeAdminRow(adminUiState.activeSection, row);
+      markAdminDirty();
+    }
+  }
+
+  function handleAdminUsersCardInput(event) {
+    var input = event.target && event.target.closest
+      ? event.target.closest('input[data-field]')
+      : null;
+    if (!input || !adminElements.usersCard.contains(input)) {
+      return;
+    }
+    var row = input.closest('tr');
+    if (row && input.dataset.field === 'password') {
+      if (String(input.value || '').trim()) {
+        row.dataset.passwordHash = '';
+      } else {
+        row.dataset.passwordHash = row.dataset.initialPasswordHash || '';
+      }
+      refreshAdminPasswordState(row);
+    }
+    markAdminDirty();
+    updateAdminSectionCounts();
+    applyAdminRowFilters();
+  }
+
   function sectionHasCredentials(sectionKey) {
     return sectionKey === 'responsibles' || sectionKey === 'block2' || sectionKey === 'block3';
   }
@@ -2577,7 +3389,6 @@ function ensureAdminTemplateStyles() {
     appendInputCell('email', data.email, 'email', 'email');
 
     var passwordInput = null;
-    var clearPasswordButton = null;
     if (includeCredentials) {
       appendInputCell('login', data.login, 'text', 'username');
       passwordInput = appendInputCell('password', '', 'password', 'new-password');
@@ -2587,57 +3398,38 @@ function ensureAdminTemplateStyles() {
       var initialHash = data.passwordHash ? String(data.passwordHash) : '';
       tr.dataset.passwordHash = initialHash;
       tr.dataset.initialPasswordHash = initialHash;
-
-      clearPasswordButton = createElement('button', 'documents-admin__clear-password', 'Сбросить пароль');
-      clearPasswordButton.type = 'button';
-      clearPasswordButton.title = 'Удалить текущий пароль';
-
-      function refreshPasswordState() {
-        var hasHash = Boolean(tr.dataset.passwordHash);
-        clearPasswordButton.disabled = !hasHash;
-        passwordInput.placeholder = hasHash
-          ? 'Оставьте пустым, чтобы не менять пароль'
-          : 'Введите пароль';
-      }
-
-      passwordInput.addEventListener('input', function() {
-        var value = passwordInput.value.trim();
-        if (value !== '') {
-          tr.dataset.passwordHash = '';
-        } else {
-          tr.dataset.passwordHash = tr.dataset.initialPasswordHash || '';
-        }
-        refreshPasswordState();
-      });
-
-      clearPasswordButton.addEventListener('click', function() {
-        tr.dataset.passwordHash = '';
-        tr.dataset.initialPasswordHash = '';
-        passwordInput.value = '';
-        refreshPasswordState();
-        passwordInput.focus();
-      });
-
-      refreshPasswordState();
+      refreshAdminPasswordState(tr);
     } else {
       tr.dataset.passwordHash = '';
       tr.dataset.initialPasswordHash = '';
     }
 
     appendInputCell('department', data.department, 'text', 'organization-title');
-    appendInputCell('note', data.note, 'text', 'off');
+
+    var noteInput = createAdminInput('note', data.note, 'hidden');
 
     var actions = document.createElement('td');
     actions.className = 'documents-admin__row-actions';
-    if (includeCredentials && clearPasswordButton) {
-      actions.appendChild(clearPasswordButton);
-    }
-    var removeButton = createElement('button', 'documents-admin__remove-row', 'Удалить');
+    actions.appendChild(noteInput);
+    var menuToggle = createElement('button', 'documents-admin__row-menu-toggle', '…');
+    menuToggle.type = 'button';
+    menuToggle.title = 'Действия с пользователем';
+    menuToggle.setAttribute('aria-label', 'Действия с пользователем');
+    menuToggle.setAttribute('aria-expanded', 'false');
+    menuToggle.dataset.adminRowMenu = '1';
+    var rowMenu = createElement('div', 'documents-admin__row-menu');
+    rowMenu.hidden = true;
+    var clearPasswordButton = createElement('button', 'documents-admin__row-menu-button', 'Очистить пароль');
+    clearPasswordButton.type = 'button';
+    clearPasswordButton.dataset.adminRowAction = 'clear-password';
+    clearPasswordButton.disabled = !Boolean(tr.dataset.passwordHash);
+    var removeButton = createElement('button', 'documents-admin__row-menu-button documents-admin__row-menu-button--danger', 'Удалить пользователя');
     removeButton.type = 'button';
-    removeButton.addEventListener('click', function() {
-      removeAdminRow(sectionKey, tr);
-    });
-    actions.appendChild(removeButton);
+    removeButton.dataset.adminRowAction = 'remove';
+    rowMenu.appendChild(clearPasswordButton);
+    rowMenu.appendChild(removeButton);
+    actions.appendChild(menuToggle);
+    actions.appendChild(rowMenu);
     tr.appendChild(actions);
 
     return tr;
@@ -2775,6 +3567,10 @@ function ensureAdminTemplateStyles() {
         return;
       }
       renumberAdminRows(sectionKey);
+      updateAdminSectionCounts();
+      if (sectionKey === adminUiState.activeSection) {
+        applyAdminRowFilters();
+      }
       if (shouldFocus) {
         var focus = function() {
           focusFirstAdminInput(sectionKey);
@@ -2842,8 +3638,17 @@ function ensureAdminTemplateStyles() {
     } else {
       data.number = normalizedNumber;
     }
-    section.tableBody.appendChild(createAdminRow(data, index, sectionKey));
+    var addedRow = createAdminRow(data, index, sectionKey);
+    section.tableBody.appendChild(addedRow);
     sortAdminTableRows(sectionKey);
+    updateAdminSectionCounts();
+    applyAdminRowFilters();
+    if (addedRow) {
+      var firstEditableInput = addedRow.querySelector('input[data-field="responsible"]');
+      if (firstEditableInput) {
+        firstEditableInput.focus();
+      }
+    }
   }
 
   function removeAdminRow(sectionKey, row) {
@@ -2857,6 +3662,8 @@ function ensureAdminTemplateStyles() {
     } else {
       renumberAdminRows(sectionKey);
     }
+    updateAdminSectionCounts();
+    applyAdminRowFilters();
   }
 
   function collectAdminRows(sectionKey, options) {
@@ -3122,7 +3929,7 @@ function ensureAdminTemplateStyles() {
     state.admin.saving = Boolean(isSaving);
     if (adminElements.saveButton) {
       adminElements.saveButton.disabled = state.admin.saving;
-      adminElements.saveButton.textContent = state.admin.saving ? 'Сохранение...' : 'Сохранить и закрыть';
+      adminElements.saveButton.textContent = state.admin.saving ? 'Сохранение…' : 'Сохранить изменения';
     }
   }
 
@@ -4159,6 +4966,1623 @@ function ensureAdminTemplateStyles() {
     }
   }
 
+  function canUseGlobalAdminOcr() {
+    var adminScope = state.access && typeof state.access.adminScope === 'string'
+      ? state.access.adminScope.toLowerCase()
+      : '';
+    return isCurrentUserAdmin() && (adminScope === 'global' || adminScope === 'mainadmin');
+  }
+
+  function ensureAdminOcrState() {
+    if (!state.admin.ocr || typeof state.admin.ocr !== 'object') {
+      state.admin.ocr = {};
+    }
+    var ocrState = state.admin.ocr;
+    var defaults = {
+      visible: false,
+      activeTab: 'backfill',
+      loading: false,
+      action: '',
+      error: '',
+      backfill: null,
+      query: '',
+      statusFilter: '',
+      page: 1,
+      pageSize: 25,
+      pollTimer: null,
+      pollInFlight: false,
+      requestToken: 0,
+      inputTimer: null,
+      focusReturnElement: null
+    };
+    Object.keys(defaults).forEach(function(key) {
+      if (!Object.prototype.hasOwnProperty.call(ocrState, key)) {
+        ocrState[key] = defaults[key];
+      }
+    });
+    if (ocrState.activeTab !== 'users') {
+      ocrState.activeTab = 'backfill';
+    }
+    if (!ocrState.users || typeof ocrState.users !== 'object') {
+      ocrState.users = {};
+    }
+    var userDefaults = {
+      loading: false,
+      error: '',
+      items: [],
+      pagination: null,
+      query: '',
+      statusFilter: '',
+      page: 1,
+      pageSize: 12,
+      selectedId: '',
+      detailLoading: false,
+      detailError: '',
+      detail: null,
+      detailQuery: '',
+      detailPage: 1,
+      detailPageSize: 20,
+      textLoading: false,
+      textResult: null,
+      requestToken: 0,
+      detailRequestToken: 0,
+      textRequestToken: 0,
+      inputTimer: null,
+      detailInputTimer: null,
+      textReturnFocusElement: null
+    };
+    Object.keys(userDefaults).forEach(function(key) {
+      if (!Object.prototype.hasOwnProperty.call(ocrState.users, key)) {
+        ocrState.users[key] = userDefaults[key];
+      }
+    });
+
+    return ocrState;
+  }
+
+  function setAdminOcrElementInert(element, shouldBeInert) {
+    if (!element) {
+      return;
+    }
+    if (shouldBeInert) {
+      element.setAttribute('inert', '');
+    } else {
+      element.removeAttribute('inert');
+    }
+  }
+
+  function focusAdminOcrElement(element) {
+    if (!element
+      || element.disabled
+      || element.hidden
+      || !document.documentElement.contains(element)
+      || typeof element.focus !== 'function'
+    ) {
+      return false;
+    }
+    try {
+      element.focus();
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  function focusAdminOcrDialog() {
+    var ocrState = ensureAdminOcrState();
+    var activeTab = adminElements.ocrTabs
+      ? adminElements.ocrTabs.querySelector('[data-ocr-tab="' + ocrState.activeTab + '"]')
+      : null;
+    if (!focusAdminOcrElement(activeTab)) {
+      focusAdminOcrElement(adminElements.ocrButton);
+    }
+  }
+
+  function getAdminOcrFocusableElements(container) {
+    if (!container) {
+      return [];
+    }
+    return Array.prototype.filter.call(container.querySelectorAll(
+      'button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),a[href],[tabindex]:not([tabindex="-1"])'
+    ), function(element) {
+      return !element.hidden && element.getClientRects().length > 0;
+    });
+  }
+
+  function trapAdminOcrFocus(event) {
+    var container = adminElements.ocrTextReader
+      && adminElements.ocrTextReader.classList.contains('is-visible')
+      ? adminElements.ocrTextReader
+      : null;
+    if (!container) {
+      return false;
+    }
+    var focusable = getAdminOcrFocusableElements(container);
+    if (!focusable.length) {
+      event.preventDefault();
+      return true;
+    }
+    var first = focusable[0];
+    var last = focusable[focusable.length - 1];
+    var active = document.activeElement;
+    if (!container.contains(active)) {
+      event.preventDefault();
+      focusAdminOcrElement(event.shiftKey ? last : first);
+      return true;
+    }
+    if ((event.shiftKey && active === first) || (!event.shiftKey && active === last)) {
+      event.preventDefault();
+      focusAdminOcrElement(event.shiftKey ? last : first);
+      return true;
+    }
+    return false;
+  }
+
+  function resetAdminOcrUserDetail(usersState) {
+    usersState.detailRequestToken += 1;
+    usersState.detailLoading = false;
+    usersState.detailError = '';
+    usersState.detail = null;
+    usersState.detailQuery = '';
+    usersState.detailPage = 1;
+  }
+
+  function adminOcrNumber(value) {
+    var number = Number(value);
+    return Number.isFinite(number) ? Math.max(0, number).toLocaleString('ru-RU') : '0';
+  }
+
+  function formatAdminOcrDate(value) {
+    var formatted = value ? formatDateTime(value) : '';
+    return formatted || '—';
+  }
+
+  function adminOcrStatusLabel(status) {
+    var labels = {
+      idle: 'Не запускался',
+      running: 'Выполняется',
+      paused: 'Остановлен после файла',
+      completed: 'Завершено',
+      attention: 'Нужны действия',
+      pending: 'Ожидает',
+      processing: 'Обрабатывается',
+      retry: 'Повтор',
+      failed: 'Ошибка',
+      skipped: 'Файл удалён',
+      unsupported: 'Формат не поддерживается',
+      complete: 'Все тексты есть',
+      incomplete: 'Есть пропуски',
+      error: 'Ошибка чтения',
+      missing: 'JSON отсутствует',
+      ocr_missing: 'OCR-текст отсутствует',
+      not_checked: 'Не проверен'
+    };
+    return labels[status] || (status ? String(status) : 'Неизвестно');
+  }
+
+  function adminOcrStageLabel(stage) {
+    var labels = {
+      waiting: 'Ожидание',
+      waiting_slot: 'Ожидание единственного OCR-слота',
+      resolving_file: 'Получение исходного файла',
+      source: 'Исходный файл недоступен',
+      creating_job: 'Создание OCR-задания',
+      ocr: 'Распознавание текста',
+      archive: 'Запись и проверка OCR-архива S3',
+      registry: 'Сохранение метаданных задачи',
+      delivery: 'Запись и проверка Telegram JSON в S3',
+      resource_guard: 'Остановлено защитой памяти',
+      completed: 'S3 подтверждён',
+      failed: 'Ошибка',
+      skipped: 'Файл удалён',
+      unsupported: 'Формат не поддерживается'
+    };
+    return labels[stage] || (stage ? String(stage) : 'Ожидание');
+  }
+
+  function createAdminOcrBadge(status) {
+    var normalized = String(status || '').toLowerCase().replace(/[^a-z0-9_-]/g, '');
+    return createElement(
+      'span',
+      'documents-ocr-admin__badge' + (normalized ? ' documents-ocr-admin__badge--' + normalized : ''),
+      adminOcrStatusLabel(status)
+    );
+  }
+
+  function createAdminOcrPagination(scope, pagination) {
+    var page = Math.max(1, Number(pagination && pagination.page) || 1);
+    var pages = Math.max(1, Number(pagination && pagination.pages) || 1);
+    var total = Math.max(0, Number(pagination && pagination.total) || 0);
+    var wrapper = createElement('div', 'documents-ocr-admin__pagination');
+    var previous = createElement('button', '', 'Назад');
+    previous.type = 'button';
+    previous.disabled = page <= 1;
+    previous.setAttribute('data-ocr-page-scope', scope);
+    previous.setAttribute('data-ocr-page-number', String(Math.max(1, page - 1)));
+    var label = createElement(
+      'span',
+      '',
+      'Страница ' + page + ' из ' + pages + ' · найдено ' + adminOcrNumber(total)
+    );
+    var next = createElement('button', '', 'Вперёд');
+    next.type = 'button';
+    next.disabled = page >= pages;
+    next.setAttribute('data-ocr-page-scope', scope);
+    next.setAttribute('data-ocr-page-number', String(Math.min(pages, page + 1)));
+    wrapper.appendChild(previous);
+    wrapper.appendChild(label);
+    wrapper.appendChild(next);
+    return wrapper;
+  }
+
+  function createAdminOcrFilter(options, selectedValue, focusKey) {
+    var select = document.createElement('select');
+    select.className = 'documents-s3-modal__input';
+    select.setAttribute('data-ocr-focus', focusKey);
+    options.forEach(function(item) {
+      var option = document.createElement('option');
+      option.value = item.value;
+      option.textContent = item.label;
+      select.appendChild(option);
+    });
+    select.value = selectedValue || '';
+    return select;
+  }
+
+  function createAdminOcrActionButton(label, operation, primary, disabled) {
+    var button = createElement(
+      'button',
+      'documents-s3-modal__mini-button' + (primary ? ' documents-s3-modal__button--primary' : ''),
+      label
+    );
+    button.type = 'button';
+    button.disabled = Boolean(disabled);
+    button.setAttribute('data-ocr-action', operation);
+    return button;
+  }
+
+  function isAdminOcrArchiveConfirmed(item) {
+    return Boolean(
+      item
+      && String(item.status || '') === 'completed'
+      && String(item.archiveKey || '').trim() !== ''
+    );
+  }
+
+  function adminOcrNoRecipientsState(item) {
+    var status = String(item && item.status ? item.status : 'pending');
+    if (isAdminOcrArchiveConfirmed(item)) {
+      return 'OCR-архив S3 подтверждён';
+    }
+    if (status === 'unsupported') {
+      return 'формат не поддерживается OCR';
+    }
+    if (status === 'failed') {
+      return 'ошибка обработки';
+    }
+    if (status === 'skipped') {
+      return 'файл удалён';
+    }
+    if (status === 'retry') {
+      return 'ожидает повторной обработки';
+    }
+    if (status === 'pending') {
+      return 'ожидает обработки';
+    }
+    if (item && String(item.archiveKey || '').trim() !== '') {
+      return 'ключ OCR-архива получен, завершение не подтверждено';
+    }
+    if (status === 'completed') {
+      return 'ключ OCR-архива не подтверждён';
+    }
+    return status === 'processing' ? 'обработка не завершена' : 'ожидает обработки';
+  }
+
+  function renderAdminOcrDeliveries(deliveries, participants, item) {
+    var wrapper = createElement('div', 'documents-ocr-admin__deliveries');
+    var entries = Array.isArray(deliveries) ? deliveries : [];
+    if (!entries.length) {
+      wrapper.appendChild(createElement(
+        'span',
+        'documents-ocr-admin__delivery',
+        Number(participants) > 0
+          ? 'Доставка в ' + adminOcrNumber(participants) + ' Telegram JSON начнётся после записи OCR-архива.'
+          : 'Telegram-получателей нет: ' + adminOcrNoRecipientsState(item) + '.'
+      ));
+      return wrapper;
+    }
+    entries.forEach(function(delivery) {
+      var verified = delivery && delivery.status === 'verified' && delivery.hasText === true;
+      var telegramId = delivery && delivery.telegramId ? String(delivery.telegramId) : 'без ID';
+      var key = delivery && delivery.key ? String(delivery.key) : 'ключ S3 не получен';
+      var text = telegramId + '.json — ' + (verified ? 'текст подтверждён' : 'не подтверждён');
+      if (verified) {
+        text += ' · ' + adminOcrNumber(delivery.textLength) + ' симв.';
+      }
+      text += ' · ' + key;
+      var chip = createElement(
+        'span',
+        'documents-ocr-admin__delivery' + (verified ? '' : ' is-error'),
+        text
+      );
+      if (delivery && delivery.error) {
+        chip.title = String(delivery.error);
+      }
+      wrapper.appendChild(chip);
+    });
+    return wrapper;
+  }
+
+  function renderAdminOcrBackfill(container, ocrState) {
+    var backfill = ocrState.backfill && typeof ocrState.backfill === 'object'
+      ? ocrState.backfill
+      : {};
+    var summary = backfill.summary && typeof backfill.summary === 'object' ? backfill.summary : {};
+    var scan = backfill.scan && typeof backfill.scan === 'object' ? backfill.scan : {};
+    var finalAudit = backfill.finalAudit && typeof backfill.finalAudit === 'object'
+      ? backfill.finalAudit
+      : {};
+    var status = String(backfill.status || 'idle');
+    var busy = Boolean(ocrState.loading || ocrState.action);
+    var errorCount = Math.max(0, Number(summary.failed) || 0) + Math.max(0, Number(summary.skipped) || 0);
+    var finalAuditFailed = String(finalAudit.status || '') === 'failed';
+
+    var metrics = createElement('div', 'documents-s3-modal__grid');
+    metrics.appendChild(createAdminS3Metric('Основных вложений', adminOcrNumber(scan.files || summary.total)));
+    metrics.appendChild(createAdminS3Metric('Поддерживается OCR', adminOcrNumber(summary.eligible)));
+    metrics.appendChild(createAdminS3Metric('S3 подтверждено', adminOcrNumber(summary.completed)));
+    metrics.appendChild(createAdminS3Metric('Осталось', adminOcrNumber(summary.remaining)));
+    metrics.appendChild(createAdminS3Metric('Ошибки / удалены', adminOcrNumber(errorCount)));
+    metrics.appendChild(createAdminS3Metric('Формат не OCR', adminOcrNumber(summary.unsupported)));
+    metrics.appendChild(createAdminS3Metric(
+      'Telegram JSON подтверждено',
+      adminOcrNumber(summary.delivered) + ' из ' + adminOcrNumber(summary.participants)
+    ));
+    metrics.appendChild(createAdminS3Metric('Без Telegram ID', adminOcrNumber(summary.noRecipients)));
+    metrics.appendChild(createAdminS3Metric(
+      'Финальная сверка JSON',
+      String(finalAudit.status || '') === 'completed'
+        ? adminOcrNumber(finalAudit.verifiedFiles) + ' из ' + adminOcrNumber(finalAudit.expectedFiles)
+        : (finalAuditFailed ? 'Ошибка' : 'Ожидает')
+    ));
+    container.appendChild(metrics);
+
+    var percent = Math.max(0, Math.min(100, Number(summary.percent) || 0));
+    var progress = createElement('div', 'documents-ocr-admin__progress');
+    var progressTrack = createElement('div', 'documents-ocr-admin__progress-track');
+    var progressBar = createElement('div', 'documents-ocr-admin__progress-bar');
+    progressBar.style.width = String(percent) + '%';
+    progressTrack.appendChild(progressBar);
+    progress.appendChild(progressTrack);
+    progress.appendChild(createElement(
+      'div',
+      'documents-ocr-admin__progress-value',
+      percent + '% · ' + adminOcrNumber(summary.completed) + ' из ' + adminOcrNumber(summary.eligible)
+    ));
+    container.appendChild(progress);
+
+    var current = backfill.current && typeof backfill.current === 'object' ? backfill.current : null;
+    var active = createElement('section', 'documents-ocr-admin__active');
+    if (current) {
+      active.appendChild(createElement(
+        'div',
+        'documents-ocr-admin__active-title',
+        (current.originalName || current.storedName || 'Файл без имени') + ' · задача ' + (current.taskLabel || 'без номера')
+      ));
+      active.appendChild(createElement(
+        'span',
+        'documents-ocr-admin__active-state',
+        adminOcrStageLabel(current.stage)
+      ));
+      var pageText = Number(current.totalPages) > 0
+        ? ' · страница ' + adminOcrNumber(current.currentPage) + ' из ' + adminOcrNumber(current.totalPages)
+        : '';
+      active.appendChild(createElement(
+        'div',
+        'documents-ocr-admin__active-meta',
+        'Организация: ' + (current.organization || '—') +
+          ' · OCR ' + adminOcrNumber(current.progress) + '%' + pageText +
+          ' · попытка ' + adminOcrNumber(current.attempts)
+      ));
+      active.appendChild(renderAdminOcrDeliveries(current.deliveries, current.participants, current));
+    } else {
+      active.appendChild(createElement(
+        'div',
+        'documents-ocr-admin__active-title',
+        status === 'running' && summary.filesPassedBeforeFinalAudit
+          ? 'Все файлы обработаны. Worker перечитывает конечные Telegram JSON и сверяет полный набор текстов.'
+          : (status === 'running'
+            ? 'Worker выбирает следующий файл. Одновременно второй OCR-файл не запускается.'
+            : 'Сейчас файл не обрабатывается.')
+      ));
+      active.appendChild(createElement('span', 'documents-ocr-admin__active-state', adminOcrStatusLabel(status)));
+      active.appendChild(createElement(
+        'div',
+        'documents-ocr-admin__active-meta',
+        'Последний heartbeat: ' + formatAdminOcrDate(backfill.heartbeatAt) +
+          (backfill.stopRequested ? ' · остановка запрошена после текущего файла' : '')
+      ));
+    }
+    container.appendChild(active);
+
+    var toolbar = createElement('div', 'documents-ocr-admin__toolbar');
+    var queryInput = document.createElement('input');
+    queryInput.type = 'search';
+    queryInput.className = 'documents-s3-modal__input';
+    queryInput.placeholder = 'Организация, задача, файл, Telegram ID или ошибка';
+    queryInput.value = ocrState.query || '';
+    queryInput.setAttribute('data-ocr-backfill-query', '1');
+    queryInput.setAttribute('data-ocr-focus', 'backfill-query');
+    toolbar.appendChild(queryInput);
+    var statusSelect = createAdminOcrFilter([
+      { value: '', label: 'Все статусы' },
+      { value: 'pending', label: 'Ожидают' },
+      { value: 'processing', label: 'Обрабатывается' },
+      { value: 'retry', label: 'Ожидают повтора' },
+      { value: 'completed', label: 'S3 подтверждён' },
+      { value: 'failed', label: 'Ошибки' },
+      { value: 'skipped', label: 'Удалены во время прохода' },
+      { value: 'unsupported', label: 'Формат не поддерживается' }
+    ], ocrState.statusFilter, 'backfill-status');
+    statusSelect.setAttribute('data-ocr-backfill-status', '1');
+    toolbar.appendChild(statusSelect);
+    var controlActions = createElement('div', 'documents-s3-modal__actions');
+    var startLabel = backfill.runId ? 'Новый проход' : 'Найти и запустить';
+    var startButton = createAdminOcrActionButton(startLabel, 'start', status === 'idle', busy || status === 'running' || status === 'paused');
+    var pauseButton = createAdminOcrActionButton(
+      backfill.stopRequested ? 'Остановка запрошена' : 'Остановить после файла',
+      'stop_after_current',
+      false,
+      busy || status !== 'running' || Boolean(backfill.stopRequested)
+    );
+    var resumeButton = createAdminOcrActionButton('Продолжить', 'resume', true, busy || status !== 'paused');
+    var retryButton = createAdminOcrActionButton(
+      finalAuditFailed && errorCount <= 0 ? 'Повторить сверку JSON' : 'Повторить ошибки',
+      'retry_failed',
+      false,
+      busy || status === 'running' || (errorCount <= 0 && !finalAuditFailed)
+    );
+    startButton.hidden = status === 'running' || status === 'paused';
+    pauseButton.hidden = status !== 'running';
+    resumeButton.hidden = status !== 'paused';
+    controlActions.appendChild(startButton);
+    controlActions.appendChild(pauseButton);
+    controlActions.appendChild(resumeButton);
+    controlActions.appendChild(retryButton);
+    toolbar.appendChild(controlActions);
+    container.appendChild(toolbar);
+
+    var tableWrap = createElement('div', 'documents-ocr-admin__table-wrap');
+    tableWrap.setAttribute('data-ocr-scroll', 'backfill-table');
+    var table = createElement('table', 'documents-ocr-admin__table');
+    var thead = document.createElement('thead');
+    var headRow = document.createElement('tr');
+    ['Организация / задача', 'Файл', 'Статус / этап', 'Прогресс', 'OCR-архив S3', 'Telegram JSON', 'Ошибка / обновлено'].forEach(function(label) {
+      headRow.appendChild(createElement('th', '', label));
+    });
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+    var tbody = document.createElement('tbody');
+    var items = Array.isArray(backfill.items) ? backfill.items : [];
+    if (!items.length) {
+      var emptyRow = document.createElement('tr');
+      var emptyCell = createElement('td', 'documents-ocr-admin__empty', backfill.runId
+        ? 'По выбранному фильтру файлы не найдены.'
+        : 'Проход ещё не запускался. Нажмите «Найти и запустить».'
+      );
+      emptyCell.colSpan = 7;
+      emptyRow.appendChild(emptyCell);
+      tbody.appendChild(emptyRow);
+    }
+    items.forEach(function(item) {
+      var row = document.createElement('tr');
+      var taskCell = document.createElement('td');
+      taskCell.appendChild(createElement('div', 'documents-ocr-admin__name', item.organization || '—'));
+      taskCell.appendChild(createElement('div', 'documents-ocr-admin__muted', 'Задача ' + (item.taskLabel || 'без номера')));
+      row.appendChild(taskCell);
+      var fileCell = document.createElement('td');
+      fileCell.appendChild(createElement('div', 'documents-ocr-admin__name', item.originalName || item.storedName || 'Файл без имени'));
+      fileCell.appendChild(createElement('div', 'documents-ocr-admin__muted', item.storedName || 'Нет имени хранения'));
+      row.appendChild(fileCell);
+      var statusCell = document.createElement('td');
+      statusCell.appendChild(createAdminOcrBadge(item.status));
+      statusCell.appendChild(createElement('div', 'documents-ocr-admin__muted', adminOcrStageLabel(item.stage)));
+      row.appendChild(statusCell);
+      var itemPageText = Number(item.totalPages) > 0
+        ? ' · стр. ' + adminOcrNumber(item.currentPage) + '/' + adminOcrNumber(item.totalPages)
+        : '';
+      row.appendChild(createElement('td', '', adminOcrNumber(item.progress) + '%' + itemPageText));
+      var archiveKey = item.archiveKey ? String(item.archiveKey) : '';
+      var archiveConfirmed = isAdminOcrArchiveConfirmed(item);
+      var archiveText = archiveConfirmed
+        ? archiveKey
+        : (archiveKey
+          ? archiveKey + ' · завершение не подтверждено'
+          : (item.status === 'completed' ? 'Ключ архива не подтверждён' : '—'));
+      var archiveCell = createElement('td', 'documents-s3-modal__key', archiveText);
+      archiveCell.title = archiveText;
+      row.appendChild(archiveCell);
+      var participants = Math.max(0, Number(item.participants) || 0);
+      var telegramText = participants > 0
+        ? adminOcrNumber(item.delivered) + ' из ' + adminOcrNumber(participants) +
+          (item.allPresent ? ' · подтверждено' : ' · не завершено')
+        : 'Нет получателей · ' + adminOcrNoRecipientsState(item);
+      row.appendChild(createElement('td', '', telegramText));
+      var errorCell = document.createElement('td');
+      errorCell.appendChild(createElement('div', '', item.error || '—'));
+      errorCell.appendChild(createElement('div', 'documents-ocr-admin__muted', formatAdminOcrDate(item.updatedAt)));
+      row.appendChild(errorCell);
+      tbody.appendChild(row);
+    });
+    table.appendChild(tbody);
+    tableWrap.appendChild(table);
+    container.appendChild(tableWrap);
+    container.appendChild(createAdminOcrPagination('backfill', backfill.pagination || {}));
+  }
+
+  function renderAdminOcrUsers(container, ocrState) {
+    var usersState = ocrState.users;
+    var layout = createElement('div', 'documents-ocr-admin__users-layout');
+    var usersPane = createElement('section', 'documents-ocr-admin__pane');
+    usersPane.appendChild(createElement('h4', 'documents-ocr-admin__pane-title', 'Telegram-пользователи в S3'));
+
+    var usersToolbar = createElement('div', 'documents-ocr-admin__toolbar');
+    var usersQuery = document.createElement('input');
+    usersQuery.type = 'search';
+    usersQuery.className = 'documents-s3-modal__input';
+    usersQuery.placeholder = 'Имя, Telegram ID или организация';
+    usersQuery.value = usersState.query || '';
+    usersQuery.setAttribute('data-ocr-users-query', '1');
+    usersQuery.setAttribute('data-ocr-focus', 'users-query');
+    usersToolbar.appendChild(usersQuery);
+    var usersStatus = createAdminOcrFilter([
+      { value: '', label: 'Все состояния' },
+      { value: 'complete', label: 'Все OCR-тексты есть' },
+      { value: 'incomplete', label: 'Есть пропуски' },
+      { value: 'error', label: 'Ошибка чтения' },
+      { value: 'missing', label: 'JSON отсутствует' },
+      { value: 'not_checked', label: 'Ещё не прочитан' }
+    ], usersState.statusFilter, 'users-status');
+    usersStatus.setAttribute('data-ocr-users-status', '1');
+    usersToolbar.appendChild(usersStatus);
+    usersToolbar.appendChild(createAdminOcrActionButton('Обновить список', 'refresh_users', false, usersState.loading));
+    usersPane.appendChild(usersToolbar);
+
+    var usersTableWrap = createElement('div', 'documents-ocr-admin__table-wrap');
+    usersTableWrap.setAttribute('data-ocr-scroll', 'users-table');
+    var usersTable = createElement('table', 'documents-ocr-admin__table documents-ocr-admin__table--users');
+    var usersHead = document.createElement('thead');
+    var usersHeadRow = document.createElement('tr');
+    ['Пользователь', 'Состояние', 'OCR-файлы', 'S3 JSON'].forEach(function(label) {
+      usersHeadRow.appendChild(createElement('th', '', label));
+    });
+    usersHead.appendChild(usersHeadRow);
+    usersTable.appendChild(usersHead);
+    var usersBody = document.createElement('tbody');
+    var users = Array.isArray(usersState.items) ? usersState.items : [];
+    if (!users.length) {
+      var emptyUsersRow = document.createElement('tr');
+      var emptyUsersCell = createElement(
+        'td',
+        'documents-ocr-admin__empty',
+        usersState.loading ? 'Читаем каталог пользовательских JSON из S3…' : 'Пользователи не найдены.'
+      );
+      emptyUsersCell.colSpan = 4;
+      emptyUsersRow.appendChild(emptyUsersCell);
+      usersBody.appendChild(emptyUsersRow);
+    }
+    users.forEach(function(user) {
+      var row = document.createElement('tr');
+      var userCell = document.createElement('td');
+      var userButton = createElement(
+        'button',
+        'documents-ocr-admin__user-button' + (String(usersState.selectedId) === String(user.telegramId) ? ' is-active' : ''),
+        user.name || ('Telegram ' + (user.telegramId || 'без ID'))
+      );
+      userButton.type = 'button';
+      userButton.disabled = !user.s3Exists;
+      userButton.setAttribute('data-ocr-user-id', user.telegramId || '');
+      userCell.appendChild(userButton);
+      userCell.appendChild(createElement('div', 'documents-ocr-admin__muted', 'ID ' + (user.telegramId || '—')));
+      var organizations = Array.isArray(user.organizations) ? user.organizations.join(', ') : '';
+      if (organizations) {
+        userCell.appendChild(createElement('div', 'documents-ocr-admin__muted', organizations));
+      }
+      row.appendChild(userCell);
+      var userStatusCell = document.createElement('td');
+      userStatusCell.appendChild(createAdminOcrBadge(user.s3Status));
+      if (user.error) {
+        userStatusCell.appendChild(createElement('div', 'documents-ocr-admin__muted', user.error));
+      }
+      row.appendChild(userStatusCell);
+      var coverageCell = document.createElement('td');
+      coverageCell.appendChild(createElement(
+        'div',
+        'documents-ocr-admin__name',
+        adminOcrNumber(user.filesWithOcr) + ' из ' + adminOcrNumber(user.eligibleFiles)
+      ));
+      coverageCell.appendChild(createElement(
+        'div',
+        'documents-ocr-admin__muted',
+        'Пропусков: ' + adminOcrNumber(user.missingOcrFiles) + ' · ' + adminOcrNumber(user.ocrTextCharacters) + ' симв.'
+      ));
+      row.appendChild(coverageCell);
+      var s3Cell = document.createElement('td');
+      s3Cell.appendChild(createElement('div', 'documents-ocr-admin__name', user.s3Exists ? (user.s3SizeLabel || formatFileSize(user.s3Size || 0)) : 'Нет файла'));
+      s3Cell.appendChild(createElement('div', 'documents-ocr-admin__muted', formatAdminOcrDate(user.s3ModifiedAt || user.verifiedAt)));
+      if (user.s3Key) {
+        s3Cell.appendChild(createElement('div', 'documents-s3-modal__key', user.s3Key));
+      }
+      row.appendChild(s3Cell);
+      usersBody.appendChild(row);
+    });
+    usersTable.appendChild(usersBody);
+    usersTableWrap.appendChild(usersTable);
+    usersPane.appendChild(usersTableWrap);
+    usersPane.appendChild(createAdminOcrPagination('users', usersState.pagination || {}));
+    layout.appendChild(usersPane);
+
+    var detailPane = createElement('section', 'documents-ocr-admin__pane');
+    var detail = usersState.detail && typeof usersState.detail === 'object' ? usersState.detail : null;
+    var selectedLabel = detail && detail.user
+      ? (detail.user.name || ('Telegram ' + (detail.user.telegramId || usersState.selectedId)))
+      : (usersState.selectedId ? 'Telegram ' + usersState.selectedId : 'Файлы выбранного пользователя');
+    detailPane.appendChild(createElement('h4', 'documents-ocr-admin__pane-title', selectedLabel));
+    if (!usersState.selectedId) {
+      detailPane.appendChild(createElement(
+        'div',
+        'documents-ocr-admin__empty',
+        'Выберите пользователя слева. Будут показаны все его файлы, включая строки без OCR-текста.'
+      ));
+      layout.appendChild(detailPane);
+      container.appendChild(layout);
+      return;
+    }
+    if (usersState.detailLoading && !detail) {
+      detailPane.appendChild(createElement('div', 'documents-ocr-admin__empty', 'Читаем выбранный JSON непосредственно из S3…'));
+      layout.appendChild(detailPane);
+      container.appendChild(layout);
+      return;
+    }
+    if (usersState.detailError && !detail) {
+      detailPane.appendChild(createElement('div', 'documents-ocr-admin__empty', usersState.detailError));
+      layout.appendChild(detailPane);
+      container.appendChild(layout);
+      return;
+    }
+    if (usersState.detailError) {
+      detailPane.appendChild(createElement('div', 'documents-ocr-admin__empty', usersState.detailError));
+    }
+
+    var detailSummary = detail && detail.summary && typeof detail.summary === 'object' ? detail.summary : {};
+    var detailMetrics = createElement('div', 'documents-s3-modal__grid');
+    detailMetrics.appendChild(createAdminS3Metric('Задач', adminOcrNumber(detailSummary.tasksCount)));
+    detailMetrics.appendChild(createAdminS3Metric('Файлов', adminOcrNumber(detailSummary.filesCount)));
+    detailMetrics.appendChild(createAdminS3Metric(
+      'С OCR-текстом',
+      adminOcrNumber(detailSummary.filesWithOcr) + ' из ' + adminOcrNumber(detailSummary.eligibleFiles)
+    ));
+    detailMetrics.appendChild(createAdminS3Metric('Символов OCR', adminOcrNumber(detailSummary.ocrTextCharacters)));
+    detailPane.appendChild(detailMetrics);
+
+    var detailToolbar = createElement('div', 'documents-ocr-admin__toolbar');
+    var detailQuery = document.createElement('input');
+    detailQuery.type = 'search';
+    detailQuery.className = 'documents-s3-modal__input';
+    detailQuery.placeholder = 'Организация, задача, файл или текст внутри OCR';
+    detailQuery.value = usersState.detailQuery || '';
+    detailQuery.setAttribute('data-ocr-detail-query', '1');
+    detailQuery.setAttribute('data-ocr-focus', 'detail-query');
+    detailToolbar.appendChild(detailQuery);
+    var snapshotMeta = detail && detail.snapshot ? detail.snapshot : {};
+    detailToolbar.appendChild(createElement(
+      'div',
+      'documents-ocr-admin__muted',
+      'S3 прочитан: ' + formatAdminOcrDate(snapshotMeta.readAt) + ' · снимок: ' + formatAdminOcrDate(snapshotMeta.generatedAt)
+    ));
+    detailToolbar.appendChild(createAdminOcrActionButton('Перечитать JSON', 'refresh_detail', false, usersState.detailLoading));
+    detailPane.appendChild(detailToolbar);
+
+    var detailTableWrap = createElement('div', 'documents-ocr-admin__table-wrap');
+    detailTableWrap.setAttribute('data-ocr-scroll', 'detail-table');
+    var detailTable = createElement('table', 'documents-ocr-admin__table documents-ocr-admin__table--files');
+    var detailHead = document.createElement('thead');
+    var detailHeadRow = document.createElement('tr');
+    ['Организация / задача', 'Файл', 'OCR в S3', 'Фрагмент текста', 'Действие'].forEach(function(label) {
+      detailHeadRow.appendChild(createElement('th', '', label));
+    });
+    detailHead.appendChild(detailHeadRow);
+    detailTable.appendChild(detailHead);
+    var detailBody = document.createElement('tbody');
+    var files = detail && Array.isArray(detail.items) ? detail.items : [];
+    if (!files.length) {
+      var emptyFilesRow = document.createElement('tr');
+      var emptyFilesCell = createElement('td', 'documents-ocr-admin__empty', usersState.detailLoading
+        ? 'Перечитываем S3…'
+        : 'Файлы по выбранному поиску не найдены.'
+      );
+      emptyFilesCell.colSpan = 5;
+      emptyFilesRow.appendChild(emptyFilesCell);
+      detailBody.appendChild(emptyFilesRow);
+    }
+    files.forEach(function(file) {
+      var row = document.createElement('tr');
+      var taskCell = document.createElement('td');
+      taskCell.appendChild(createElement('div', 'documents-ocr-admin__name', file.organization || '—'));
+      taskCell.appendChild(createElement('div', 'documents-ocr-admin__muted', 'Задача ' + (file.taskLabel || 'без номера')));
+      row.appendChild(taskCell);
+      var fileCell = document.createElement('td');
+      fileCell.appendChild(createElement('div', 'documents-ocr-admin__name', file.fileName || file.storedName || 'Файл без имени'));
+      fileCell.appendChild(createElement('div', 'documents-ocr-admin__muted', file.storedName || 'Нет имени хранения'));
+      row.appendChild(fileCell);
+      var textStateCell = document.createElement('td');
+      textStateCell.appendChild(createAdminOcrBadge(
+        file.textPresent ? 'complete' : (file.supported ? 'ocr_missing' : 'unsupported')
+      ));
+      textStateCell.appendChild(createElement(
+        'div',
+        'documents-ocr-admin__muted',
+        file.supported ? adminOcrNumber(file.ocrTextLength) + ' симв.' : 'Формат не поддерживается OCR'
+      ));
+      row.appendChild(textStateCell);
+      row.appendChild(createElement(
+        'td',
+        'documents-ocr-admin__preview',
+        file.textPreview || (file.textPresent ? 'Текст есть; откройте для просмотра.' : 'OCR-текст отсутствует.')
+      ));
+      var actionCell = document.createElement('td');
+      var openText = createElement('button', 'documents-s3-modal__mini-button', 'Открыть текст');
+      openText.type = 'button';
+      openText.disabled = !file.textPresent || !file.entryToken;
+      openText.setAttribute('data-ocr-text-token', file.entryToken || '');
+      openText.setAttribute('data-ocr-text-user-id', usersState.selectedId || '');
+      actionCell.appendChild(openText);
+      row.appendChild(actionCell);
+      detailBody.appendChild(row);
+    });
+    detailTable.appendChild(detailBody);
+    detailTableWrap.appendChild(detailTable);
+    detailPane.appendChild(detailTableWrap);
+    detailPane.appendChild(createAdminOcrPagination('detail', detail && detail.pagination ? detail.pagination : {}));
+    layout.appendChild(detailPane);
+    container.appendChild(layout);
+  }
+
+  function setAdminOcrStatus(message, type) {
+    if (!adminElements.ocrStatus) {
+      return;
+    }
+    adminElements.ocrStatus.textContent = message || '';
+    adminElements.ocrStatus.classList.toggle('is-visible', Boolean(message));
+    adminElements.ocrStatus.classList.remove(
+      'documents-s3-modal__status--error',
+      'documents-s3-modal__status--success'
+    );
+    if (type === 'error') {
+      adminElements.ocrStatus.classList.add('documents-s3-modal__status--error');
+    } else if (type === 'success') {
+      adminElements.ocrStatus.classList.add('documents-s3-modal__status--success');
+    }
+  }
+
+  function renderAdminOcrModal() {
+    if (!adminElements.ocrSummary || !adminElements.ocrTabs) {
+      return;
+    }
+    var ocrState = ensureAdminOcrState();
+    var activeElement = document.activeElement;
+    var focusKey = activeElement && adminElements.ocrModal && adminElements.ocrModal.contains(activeElement)
+      ? activeElement.getAttribute('data-ocr-focus') || ''
+      : '';
+    var selectionStart = focusKey && typeof activeElement.selectionStart === 'number'
+      ? activeElement.selectionStart
+      : null;
+    var scrollPositions = {};
+    adminElements.ocrSummary.querySelectorAll('[data-ocr-scroll]').forEach(function(element) {
+      scrollPositions[element.getAttribute('data-ocr-scroll')] = {
+        top: element.scrollTop,
+        left: element.scrollLeft
+      };
+    });
+
+    adminElements.ocrTabs.querySelectorAll('[data-ocr-tab]').forEach(function(tab) {
+      var active = tab.getAttribute('data-ocr-tab') === ocrState.activeTab;
+      tab.classList.toggle('is-active', active);
+      tab.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+    adminElements.ocrSummary.innerHTML = '';
+    if (ocrState.activeTab === 'users') {
+      renderAdminOcrUsers(adminElements.ocrSummary, ocrState);
+    } else {
+      renderAdminOcrBackfill(adminElements.ocrSummary, ocrState);
+    }
+
+    adminElements.ocrSummary.querySelectorAll('[data-ocr-scroll]').forEach(function(element) {
+      var key = element.getAttribute('data-ocr-scroll');
+      if (Object.prototype.hasOwnProperty.call(scrollPositions, key)) {
+        element.scrollTop = scrollPositions[key].top;
+        element.scrollLeft = scrollPositions[key].left;
+      }
+    });
+    if (focusKey) {
+      var nextFocus = adminElements.ocrSummary.querySelector('[data-ocr-focus="' + focusKey + '"]');
+      if (nextFocus && typeof nextFocus.focus === 'function') {
+        nextFocus.focus();
+        if (selectionStart !== null && typeof nextFocus.setSelectionRange === 'function') {
+          nextFocus.setSelectionRange(selectionStart, selectionStart);
+        }
+      }
+    }
+
+    var refreshButton = adminElements.ocrActions
+      ? adminElements.ocrActions.querySelector('[data-ocr-action="refresh"]')
+      : null;
+    if (refreshButton) {
+      refreshButton.disabled = Boolean(
+        ocrState.loading || ocrState.action || ocrState.users.loading || ocrState.users.detailLoading
+      );
+      refreshButton.textContent = ocrState.loading || ocrState.users.loading || ocrState.users.detailLoading
+        ? 'Обновляем…'
+        : 'Обновить';
+    }
+
+    if (ocrState.action) {
+      setAdminOcrStatus('Сервер принимает команду. Текущий файл будет доведён до безопасной точки…', 'info');
+    } else if (ocrState.error) {
+      setAdminOcrStatus(ocrState.error, 'error');
+    } else if (ocrState.activeTab === 'users' && ocrState.users.error) {
+      setAdminOcrStatus(ocrState.users.error, 'error');
+    } else if (ocrState.activeTab === 'users' && ocrState.users.loading) {
+      setAdminOcrStatus('Читаем реальный каталог Telegram JSON из S3…', 'info');
+    } else if (ocrState.activeTab === 'users') {
+      setAdminOcrStatus(
+        'Список берётся из каталога S3. Поиск внутри OCR выполняется только в JSON выбранного пользователя.',
+        'success'
+      );
+    } else if (ocrState.loading && !ocrState.backfill) {
+      setAdminOcrStatus('Загружаем состояние одноразового прохода…', 'info');
+    } else {
+      var backfill = ocrState.backfill || {};
+      var summary = backfill.summary || {};
+      if (summary.allFilesPassed) {
+        setAdminOcrStatus('Все поддерживаемые основные вложения подтверждены в OCR-архиве и Telegram JSON S3.', 'success');
+      } else if (backfill.workerError) {
+        setAdminOcrStatus(backfill.workerError, 'error');
+      } else if (backfill.status === 'running' && backfill.workerActive === false) {
+        setAdminOcrStatus('Проход отмечен активным, но heartbeat worker ещё не подтверждён. Серверу отправлен запрос на продолжение.', 'error');
+      } else if (backfill.status === 'running') {
+        setAdminOcrStatus('Проход работает на сервере и продолжится после закрытия панели. Одновременно обрабатывается один файл.', 'info');
+      } else if (backfill.status === 'attention') {
+        setAdminOcrStatus('Проход завершился с ошибками или удалёнными файлами. Общий успех не засчитан.', 'error');
+      } else if (backfill.status === 'paused') {
+        setAdminOcrStatus('Проход остановлен после полного завершения текущего файла. Его можно продолжить.', 'info');
+      } else {
+        setAdminOcrStatus('Нажмите «Найти и запустить»: сервер один раз соберёт основные вложения всех задач.', 'info');
+      }
+    }
+  }
+
+  function stopAdminOcrPoll() {
+    var ocrState = ensureAdminOcrState();
+    if (ocrState.pollTimer) {
+      clearTimeout(ocrState.pollTimer);
+      ocrState.pollTimer = null;
+    }
+  }
+
+  function scheduleAdminOcrPoll() {
+    var ocrState = ensureAdminOcrState();
+    stopAdminOcrPoll();
+    var backfill = ocrState.backfill && typeof ocrState.backfill === 'object' ? ocrState.backfill : {};
+    if (!ocrState.visible
+      || ocrState.activeTab !== 'backfill'
+      || String(backfill.status || '') !== 'running'
+    ) {
+      return;
+    }
+    ocrState.pollTimer = setTimeout(function() {
+      ocrState.pollTimer = null;
+      fetchAdminOcrBackfillStatus(true).catch(function(error) {
+        docsLogger.warn('Не удалось обновить состояние OCR backfill:', error);
+      });
+    }, ADMIN_OCR_POLL_INTERVAL_MS);
+  }
+
+  function fetchAdminOcrBackfillStatus(silent) {
+    var ocrState = ensureAdminOcrState();
+    if (silent && (!ocrState.visible || ocrState.activeTab !== 'backfill')) {
+      stopAdminOcrPoll();
+      return Promise.resolve(ocrState.backfill);
+    }
+    if (ocrState.pollInFlight) {
+      if (silent) {
+        return Promise.resolve(ocrState.backfill);
+      }
+      ocrState.requestToken += 1;
+      ocrState.pollInFlight = false;
+    }
+    var requestToken = ++ocrState.requestToken;
+    ocrState.pollInFlight = true;
+    ocrState.loading = !silent;
+    if (!silent) {
+      ocrState.error = '';
+    }
+    if (!silent) {
+      renderAdminOcrModal();
+    }
+    return fetch(buildApiUrl('admin_ocr_backfill', {
+      organization: state.organization || '',
+      page: ocrState.page,
+      pageSize: ocrState.pageSize,
+      q: ocrState.query || '',
+      status: ocrState.statusFilter || ''
+    }), {
+      credentials: 'same-origin',
+      cache: 'no-store'
+    })
+      .then(handleResponse)
+      .then(function(payload) {
+        if (requestToken !== ocrState.requestToken) {
+          return ocrState.backfill;
+        }
+        ocrState.backfill = payload && payload.backfill && typeof payload.backfill === 'object'
+          ? payload.backfill
+          : {};
+        if (ocrState.backfill.pagination) {
+          ocrState.page = Math.max(1, Number(ocrState.backfill.pagination.page) || 1);
+        }
+        ocrState.error = '';
+        if (!silent || (ocrState.visible && ocrState.activeTab === 'backfill')) {
+          renderAdminOcrModal();
+        }
+        return ocrState.backfill;
+      })
+      .catch(function(error) {
+        if (requestToken === ocrState.requestToken) {
+          ocrState.error = error && error.message ? error.message : 'Не удалось получить состояние OCR-прохода.';
+          if (!silent || (ocrState.visible && ocrState.activeTab === 'backfill')) {
+            renderAdminOcrModal();
+          }
+        }
+        if (!silent) {
+          throw error;
+        }
+        return ocrState.backfill;
+      })
+      .finally(function() {
+        if (requestToken === ocrState.requestToken) {
+          ocrState.pollInFlight = false;
+          ocrState.loading = false;
+          if (!silent) {
+            renderAdminOcrModal();
+          }
+          scheduleAdminOcrPoll();
+        }
+      });
+  }
+
+  function runAdminOcrBackfillAction(operation) {
+    var allowed = ['start', 'stop_after_current', 'resume', 'retry_failed'];
+    if (allowed.indexOf(operation) === -1) {
+      return Promise.reject(new Error('Неизвестная команда OCR.'));
+    }
+    var ocrState = ensureAdminOcrState();
+    if (ocrState.action) {
+      return Promise.resolve(ocrState.backfill);
+    }
+    stopAdminOcrPoll();
+    ocrState.requestToken += 1;
+    ocrState.pollInFlight = false;
+    ocrState.action = operation;
+    ocrState.error = '';
+    renderAdminOcrModal();
+    var payload = {
+      action: 'admin_ocr_backfill',
+      operation: operation,
+      organization: state.organization || ''
+    };
+    mergeTelegramUserId(payload);
+    return fetch(buildApiUrl('admin_ocr_backfill', {
+      page: ocrState.page,
+      pageSize: ocrState.pageSize,
+      q: ocrState.query || '',
+      status: ocrState.statusFilter || ''
+    }), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      cache: 'no-store',
+      body: JSON.stringify(payload)
+    })
+      .then(handleResponse)
+      .then(function(response) {
+        ocrState.backfill = response && response.backfill && typeof response.backfill === 'object'
+          ? response.backfill
+          : ocrState.backfill;
+        ocrState.error = '';
+        var messages = {
+          start: 'Одноразовый OCR-проход запущен на сервере.',
+          stop_after_current: 'Остановка запрошена. Текущий файл будет полностью сохранён и проверен.',
+          resume: 'OCR-проход продолжен.',
+          retry_failed: 'Ошибочные файлы или итоговая сверка JSON возвращены на повтор.'
+        };
+        showMessage('success', messages[operation]);
+        return ocrState.backfill;
+      })
+      .catch(function(error) {
+        if (error && error.responseData && error.responseData.backfill) {
+          ocrState.backfill = error.responseData.backfill;
+        }
+        ocrState.error = error && error.message ? error.message : 'Не удалось выполнить команду OCR.';
+        showMessage('error', ocrState.error);
+        throw error;
+      })
+      .finally(function() {
+        ocrState.action = '';
+        renderAdminOcrModal();
+        scheduleAdminOcrPoll();
+      });
+  }
+
+  function fetchAdminOcrUsers() {
+    var ocrState = ensureAdminOcrState();
+    var usersState = ocrState.users;
+    var requestToken = ++usersState.requestToken;
+    usersState.loading = true;
+    usersState.error = '';
+    renderAdminOcrModal();
+    return fetch(buildApiUrl('admin_ocr_s3_users', {
+      organization: state.organization || '',
+      page: usersState.page,
+      pageSize: usersState.pageSize,
+      q: usersState.query || '',
+      status: usersState.statusFilter || ''
+    }), {
+      credentials: 'same-origin',
+      cache: 'no-store'
+    })
+      .then(handleResponse)
+      .then(function(payload) {
+        if (requestToken !== usersState.requestToken) {
+          return usersState;
+        }
+        var result = payload && payload.users && typeof payload.users === 'object' ? payload.users : {};
+        usersState.items = Array.isArray(result.items) ? result.items : [];
+        usersState.pagination = result.pagination || null;
+        if (usersState.pagination) {
+          usersState.page = Math.max(1, Number(usersState.pagination.page) || 1);
+        }
+        usersState.error = '';
+        var selectedStillVisible = usersState.selectedId && usersState.items.some(function(user) {
+          return user
+            && user.s3Exists
+            && String(user.telegramId || '') === String(usersState.selectedId);
+        });
+        if (usersState.selectedId && !selectedStillVisible) {
+          usersState.selectedId = '';
+          resetAdminOcrUserDetail(usersState);
+        }
+        if (!usersState.selectedId) {
+          var firstReadable = usersState.items.find(function(user) {
+            return user && user.s3Exists && user.telegramId;
+          });
+          if (firstReadable) {
+            usersState.selectedId = String(firstReadable.telegramId);
+          }
+        }
+        return usersState;
+      })
+      .catch(function(error) {
+        if (requestToken === usersState.requestToken) {
+          usersState.error = error && error.message ? error.message : 'Не удалось прочитать список OCR-пользователей из S3.';
+        }
+        throw error;
+      })
+      .finally(function() {
+        if (requestToken !== usersState.requestToken) {
+          return;
+        }
+        usersState.loading = false;
+        renderAdminOcrModal();
+        var detailTelegramId = usersState.detail && usersState.detail.user
+          ? String(usersState.detail.user.telegramId || '')
+          : '';
+        if (ocrState.visible
+          && ocrState.activeTab === 'users'
+          && usersState.selectedId
+          && !usersState.detailLoading
+          && detailTelegramId !== String(usersState.selectedId)
+        ) {
+          fetchAdminOcrUserDetail(usersState.selectedId).catch(function(error) {
+            docsLogger.warn('Не удалось прочитать OCR-файлы пользователя:', error);
+          });
+        }
+      });
+  }
+
+  function fetchAdminOcrUserDetail(telegramId) {
+    var ocrState = ensureAdminOcrState();
+    var usersState = ocrState.users;
+    var normalizedId = telegramId ? String(telegramId).trim() : String(usersState.selectedId || '').trim();
+    if (!normalizedId) {
+      return Promise.resolve(null);
+    }
+    usersState.selectedId = normalizedId;
+    var requestToken = ++usersState.detailRequestToken;
+    usersState.detailLoading = true;
+    usersState.detailError = '';
+    renderAdminOcrModal();
+    var payload = {
+      action: 'admin_ocr_s3_user_files',
+      organization: state.organization || '',
+      telegramUserId: normalizedId,
+      page: usersState.detailPage,
+      pageSize: usersState.detailPageSize,
+      q: usersState.detailQuery || ''
+    };
+    mergeTelegramUserId(payload);
+    return fetch(buildApiUrl('admin_ocr_s3_user_files'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      cache: 'no-store',
+      body: JSON.stringify(payload)
+    })
+      .then(handleResponse)
+      .then(function(payload) {
+        if (requestToken !== usersState.detailRequestToken || String(usersState.selectedId) !== normalizedId) {
+          return usersState.detail;
+        }
+        usersState.detail = payload && payload.userFiles && typeof payload.userFiles === 'object'
+          ? payload.userFiles
+          : {};
+        var detailSummary = usersState.detail.summary && typeof usersState.detail.summary === 'object'
+          ? usersState.detail.summary
+          : {};
+        var detailUser = usersState.detail.user && typeof usersState.detail.user === 'object'
+          ? usersState.detail.user
+          : {};
+        usersState.items.forEach(function(user) {
+          if (!user || String(user.telegramId || '') !== normalizedId) {
+            return;
+          }
+          Object.keys(detailSummary).forEach(function(key) {
+            user[key] = detailSummary[key];
+          });
+          if (detailUser.name) {
+            user.name = detailUser.name;
+          }
+          user.s3Exists = true;
+        });
+        if (usersState.detail.pagination) {
+          usersState.detailPage = Math.max(1, Number(usersState.detail.pagination.page) || 1);
+        }
+        usersState.detailError = '';
+        return usersState.detail;
+      })
+      .catch(function(error) {
+        if (requestToken === usersState.detailRequestToken) {
+          usersState.detailError = error && error.message ? error.message : 'Не удалось прочитать JSON пользователя из S3.';
+        }
+        throw error;
+      })
+      .finally(function() {
+        if (requestToken === usersState.detailRequestToken) {
+          usersState.detailLoading = false;
+          renderAdminOcrModal();
+        }
+      });
+  }
+
+  function renderAdminOcrTextReader() {
+    if (!adminElements.ocrTextReader) {
+      return;
+    }
+    var usersState = ensureAdminOcrState().users;
+    var result = usersState.textResult && typeof usersState.textResult === 'object'
+      ? usersState.textResult
+      : {};
+    var reader = adminElements.ocrTextReader;
+    var title = reader.querySelector('.documents-s3-reader__title');
+    var meta = reader.querySelector('.documents-s3-reader__meta');
+    var status = reader.querySelector('.documents-s3-reader__status');
+    var text = reader.querySelector('.documents-s3-reader__text');
+    var more = reader.querySelector('[data-ocr-text-more]');
+    if (title) {
+      title.textContent = result.fileName || 'OCR-текст из S3';
+    }
+    if (meta) {
+      meta.textContent = [
+        result.organization || '',
+        result.taskLabel ? 'задача ' + result.taskLabel : '',
+        result.totalLength ? adminOcrNumber(result.totalLength) + ' символов' : '',
+        result.s3Key || ''
+      ].filter(Boolean).join(' · ');
+    }
+    if (text) {
+      text.textContent = typeof result.ocrText === 'string' ? result.ocrText : '';
+    }
+    if (status) {
+      var message = result.error || (usersState.textLoading
+        ? 'Читаем подтверждённый OCR-текст из JSON пользователя в S3…'
+        : (result.hasMore ? 'Показана часть текста. Можно загрузить продолжение.' : ''));
+      status.textContent = message;
+      status.classList.toggle('is-visible', Boolean(message));
+      status.classList.toggle('documents-s3-reader__status--error', Boolean(result.error));
+    }
+    if (more) {
+      more.hidden = !result.hasMore;
+      more.disabled = usersState.textLoading;
+      more.textContent = usersState.textLoading ? 'Загружаем…' : 'Загрузить ещё';
+    }
+  }
+
+  function fetchAdminOcrText(entryToken, offset, append) {
+    var ocrState = ensureAdminOcrState();
+    var usersState = ocrState.users;
+    var current = usersState.textResult && typeof usersState.textResult === 'object'
+      ? usersState.textResult
+      : {};
+    var token = entryToken || current.entryToken || '';
+    var telegramId = current.telegramId || usersState.selectedId || '';
+    if (!token || !telegramId) {
+      return Promise.reject(new Error('OCR-текст не выбран.'));
+    }
+    var requestToken = ++usersState.textRequestToken;
+    usersState.textLoading = true;
+    current.error = '';
+    usersState.textResult = current;
+    renderAdminOcrTextReader();
+    var payload = {
+      action: 'admin_ocr_s3_text',
+      organization: state.organization || '',
+      telegramUserId: telegramId,
+      entryToken: token,
+      offset: Math.max(0, Number(offset) || 0),
+      limit: ADMIN_OCR_TEXT_CHUNK_SIZE
+    };
+    mergeTelegramUserId(payload);
+    return fetch(buildApiUrl('admin_ocr_s3_text'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      cache: 'no-store',
+      body: JSON.stringify(payload)
+    })
+      .then(handleResponse)
+      .then(function(response) {
+        if (requestToken !== usersState.textRequestToken) {
+          return usersState.textResult;
+        }
+        var next = response && response.ocrTextResult && typeof response.ocrTextResult === 'object'
+          ? response.ocrTextResult
+          : {};
+        if (append
+          && current.ocrTextSha256
+          && next.ocrTextSha256
+          && String(current.ocrTextSha256) !== String(next.ocrTextSha256)
+        ) {
+          throw new Error('OCR-текст изменился в S3 во время чтения. Откройте файл заново.');
+        }
+        var previousText = append && typeof current.ocrText === 'string' ? current.ocrText : '';
+        next.ocrText = previousText + (typeof next.ocrText === 'string' ? next.ocrText : '');
+        next.telegramId = telegramId;
+        next.entryToken = token;
+        next.error = '';
+        usersState.textResult = next;
+        return next;
+      })
+      .catch(function(error) {
+        if (requestToken === usersState.textRequestToken) {
+          current.error = error && error.message ? error.message : 'Не удалось прочитать OCR-текст из S3.';
+          usersState.textResult = current;
+        }
+        throw error;
+      })
+      .finally(function() {
+        if (requestToken === usersState.textRequestToken) {
+          usersState.textLoading = false;
+          renderAdminOcrTextReader();
+        }
+      });
+  }
+
+  function openAdminOcrTextReader(telegramId, entryToken) {
+    var ocrState = ensureAdminOcrState();
+    var usersState = ocrState.users;
+    if (!adminElements.ocrTextReader || !adminElements.ocrTextReader.classList.contains('is-visible')) {
+      usersState.textReturnFocusElement = document.activeElement;
+    }
+    usersState.textRequestToken += 1;
+    usersState.textLoading = false;
+    usersState.textResult = {
+      telegramId: telegramId || usersState.selectedId || '',
+      entryToken: entryToken || '',
+      ocrText: '',
+      offset: 0,
+      nextOffset: 0,
+      totalLength: 0,
+      hasMore: false,
+      error: ''
+    };
+    if (adminElements.ocrTextReader) {
+      setAdminOcrElementInert(adminElements.ocrModal, true);
+      adminElements.ocrTextReader.classList.add('is-visible');
+      adminElements.ocrTextReader.setAttribute('aria-hidden', 'false');
+    }
+    renderAdminOcrTextReader();
+    focusAdminOcrElement(adminElements.ocrTextReader
+      ? adminElements.ocrTextReader.querySelector('[data-ocr-text-close]')
+      : null);
+    fetchAdminOcrText(entryToken, 0, false).catch(function(error) {
+      docsLogger.warn('Не удалось открыть OCR-текст S3:', error);
+    });
+  }
+
+  function closeAdminOcrTextReader(options) {
+    var ocrState = ensureAdminOcrState();
+    var usersState = ocrState.users;
+    var returnFocusElement = usersState.textReturnFocusElement;
+    usersState.textReturnFocusElement = null;
+    usersState.textRequestToken += 1;
+    usersState.textLoading = false;
+    usersState.textResult = null;
+    if (adminElements.ocrTextReader) {
+      adminElements.ocrTextReader.classList.remove('is-visible');
+      adminElements.ocrTextReader.setAttribute('aria-hidden', 'true');
+    }
+    setAdminOcrElementInert(adminElements.ocrModal, false);
+    if (!(options && options.skipFocus) && ocrState.visible) {
+      if (!focusAdminOcrElement(returnFocusElement)) {
+        focusAdminOcrDialog();
+      }
+    }
+  }
+
+  function handleAdminOcrTextReaderClick(event) {
+    if (!adminElements.ocrTextReader) {
+      return;
+    }
+    if (event.target === adminElements.ocrTextReader) {
+      closeAdminOcrTextReader();
+      return;
+    }
+    var target = event.target && event.target.closest
+      ? event.target.closest('[data-ocr-text-close], [data-ocr-text-more]')
+      : null;
+    if (!target || !adminElements.ocrTextReader.contains(target)) {
+      return;
+    }
+    if (target.hasAttribute('data-ocr-text-close')) {
+      closeAdminOcrTextReader();
+      return;
+    }
+    var usersState = ensureAdminOcrState().users;
+    var result = usersState.textResult || {};
+    if (result.hasMore && !usersState.textLoading) {
+      fetchAdminOcrText(result.entryToken || '', result.nextOffset || 0, true).catch(function(error) {
+        docsLogger.warn('Не удалось загрузить продолжение OCR-текста:', error);
+      });
+    }
+  }
+
+  function handleAdminOcrClick(event) {
+    if (!adminElements.ocrModal) {
+      return;
+    }
+    var target = event.target && event.target.closest
+      ? event.target.closest('[data-ocr-tab], [data-ocr-action], [data-ocr-page-scope], [data-ocr-user-id], [data-ocr-text-token]')
+      : null;
+    if (!target || !adminElements.ocrModal.contains(target)) {
+      return;
+    }
+    var ocrState = ensureAdminOcrState();
+    if (target.hasAttribute('data-ocr-tab')) {
+      ocrState.activeTab = target.getAttribute('data-ocr-tab') === 'users' ? 'users' : 'backfill';
+      if (ocrState.activeTab === 'users') {
+        stopAdminOcrPoll();
+      }
+      renderAdminOcrModal();
+      if (ocrState.activeTab === 'users') {
+        fetchAdminOcrUsers().catch(function(error) {
+          docsLogger.warn('Не удалось загрузить OCR-пользователей:', error);
+        });
+        if (ocrState.users.selectedId) {
+          fetchAdminOcrUserDetail(ocrState.users.selectedId).catch(function(error) {
+            docsLogger.warn('Не удалось перечитать OCR-файлы пользователя:', error);
+          });
+        }
+      } else {
+        fetchAdminOcrBackfillStatus(false).catch(function(error) {
+          docsLogger.warn('Не удалось загрузить OCR backfill:', error);
+        });
+      }
+      return;
+    }
+    if (target.hasAttribute('data-ocr-page-scope')) {
+      var page = Math.max(1, Number(target.getAttribute('data-ocr-page-number')) || 1);
+      var scope = target.getAttribute('data-ocr-page-scope');
+      if (scope === 'users') {
+        ocrState.users.page = page;
+        fetchAdminOcrUsers().catch(function() {});
+      } else if (scope === 'detail') {
+        ocrState.users.detailPage = page;
+        fetchAdminOcrUserDetail(ocrState.users.selectedId).catch(function() {});
+      } else {
+        ocrState.page = page;
+        fetchAdminOcrBackfillStatus(false).catch(function() {});
+      }
+      return;
+    }
+    if (target.hasAttribute('data-ocr-user-id')) {
+      var selectedId = target.getAttribute('data-ocr-user-id') || '';
+      if (!selectedId) {
+        return;
+      }
+      resetAdminOcrUserDetail(ocrState.users);
+      ocrState.users.selectedId = selectedId;
+      fetchAdminOcrUserDetail(selectedId).catch(function() {});
+      return;
+    }
+    if (target.hasAttribute('data-ocr-text-token')) {
+      var entryToken = target.getAttribute('data-ocr-text-token') || '';
+      var textUserId = target.getAttribute('data-ocr-text-user-id') || ocrState.users.selectedId || '';
+      if (entryToken && textUserId) {
+        openAdminOcrTextReader(textUserId, entryToken);
+      }
+      return;
+    }
+    var operation = target.getAttribute('data-ocr-action') || '';
+    if (operation === 'refresh') {
+      if (ocrState.activeTab === 'users') {
+        fetchAdminOcrUsers().catch(function() {});
+        if (ocrState.users.selectedId) {
+          fetchAdminOcrUserDetail(ocrState.users.selectedId).catch(function() {});
+        }
+      } else {
+        fetchAdminOcrBackfillStatus(false).catch(function() {});
+      }
+    } else if (operation === 'refresh_users') {
+      fetchAdminOcrUsers().catch(function() {});
+    } else if (operation === 'refresh_detail') {
+      fetchAdminOcrUserDetail(ocrState.users.selectedId).catch(function() {});
+    } else if (operation) {
+      runAdminOcrBackfillAction(operation).catch(function() {});
+    }
+  }
+
+  function scheduleAdminOcrSearch(timerOwner, timerKey, callback) {
+    if (timerOwner[timerKey]) {
+      clearTimeout(timerOwner[timerKey]);
+    }
+    timerOwner[timerKey] = setTimeout(function() {
+      timerOwner[timerKey] = null;
+      callback();
+    }, ADMIN_OCR_SEARCH_DELAY_MS);
+  }
+
+  function handleAdminOcrInput(event) {
+    var target = event.target;
+    if (!target || !adminElements.ocrModal || !adminElements.ocrModal.contains(target)) {
+      return;
+    }
+    var ocrState = ensureAdminOcrState();
+    if (target.hasAttribute('data-ocr-backfill-query')) {
+      ocrState.query = target.value || '';
+      ocrState.page = 1;
+      scheduleAdminOcrSearch(ocrState, 'inputTimer', function() {
+        fetchAdminOcrBackfillStatus(false).catch(function() {});
+      });
+    } else if (target.hasAttribute('data-ocr-users-query')) {
+      ocrState.users.query = target.value || '';
+      ocrState.users.page = 1;
+      scheduleAdminOcrSearch(ocrState.users, 'inputTimer', function() {
+        fetchAdminOcrUsers().catch(function() {});
+      });
+    } else if (target.hasAttribute('data-ocr-detail-query')) {
+      ocrState.users.detailQuery = target.value || '';
+      ocrState.users.detailPage = 1;
+      scheduleAdminOcrSearch(ocrState.users, 'detailInputTimer', function() {
+        fetchAdminOcrUserDetail(ocrState.users.selectedId).catch(function() {});
+      });
+    }
+  }
+
+  function handleAdminOcrChange(event) {
+    var target = event.target;
+    if (!target || !adminElements.ocrModal || !adminElements.ocrModal.contains(target)) {
+      return;
+    }
+    var ocrState = ensureAdminOcrState();
+    if (target.hasAttribute('data-ocr-backfill-status')) {
+      ocrState.statusFilter = target.value || '';
+      ocrState.page = 1;
+      fetchAdminOcrBackfillStatus(false).catch(function() {});
+    } else if (target.hasAttribute('data-ocr-users-status')) {
+      ocrState.users.statusFilter = target.value || '';
+      ocrState.users.page = 1;
+      fetchAdminOcrUsers().catch(function() {});
+    }
+  }
+
+  function openAdminOcrModal() {
+    ensureAdminModal();
+    var ocrState = ensureAdminOcrState();
+    if (!canUseGlobalAdminOcr()) {
+      showMessage('error', 'Глобальный OCR доступен только главному администратору. После обновления войдите заново.');
+      return;
+    }
+    if (!state.organization) {
+      setAdminOcrStatus('Сначала выберите организацию.', 'error');
+      return;
+    }
+    closeAdminTemplateModal({ skipFocus: true });
+    closeAdminS3Modal({ skipFocus: true });
+    closeCronManagementModal(false);
+    if (!ocrState.visible) {
+      ocrState.focusReturnElement = document.activeElement;
+    }
+    ocrState.visible = true;
+    ocrState.error = '';
+    if (adminElements.ocrModal) {
+      adminElements.ocrModal.classList.add('is-visible');
+      adminElements.ocrModal.setAttribute('aria-hidden', 'false');
+    }
+    renderAdminOcrModal();
+    focusAdminOcrDialog();
+    if (ocrState.activeTab === 'users') {
+      fetchAdminOcrUsers().catch(function(error) {
+        docsLogger.warn('Не удалось загрузить OCR-пользователей:', error);
+      });
+      if (ocrState.users.selectedId) {
+        fetchAdminOcrUserDetail(ocrState.users.selectedId).catch(function(error) {
+          docsLogger.warn('Не удалось перечитать OCR-файлы пользователя:', error);
+        });
+      }
+    } else {
+      fetchAdminOcrBackfillStatus(false).catch(function(error) {
+        docsLogger.warn('Не удалось открыть OCR-панель:', error);
+      });
+    }
+  }
+
+  function closeAdminOcrModal(options) {
+    var ocrState = ensureAdminOcrState();
+    var returnFocusElement = ocrState.focusReturnElement;
+    ocrState.focusReturnElement = null;
+    ocrState.visible = false;
+    ocrState.requestToken += 1;
+    ocrState.pollInFlight = false;
+    ocrState.loading = false;
+    ocrState.users.requestToken += 1;
+    ocrState.users.detailRequestToken += 1;
+    ocrState.users.loading = false;
+    ocrState.users.detailLoading = false;
+    stopAdminOcrPoll();
+    if (ocrState.inputTimer) {
+      clearTimeout(ocrState.inputTimer);
+      ocrState.inputTimer = null;
+    }
+    if (ocrState.users.inputTimer) {
+      clearTimeout(ocrState.users.inputTimer);
+      ocrState.users.inputTimer = null;
+    }
+    if (ocrState.users.detailInputTimer) {
+      clearTimeout(ocrState.users.detailInputTimer);
+      ocrState.users.detailInputTimer = null;
+    }
+    closeAdminOcrTextReader({ skipFocus: true });
+    if (adminElements.ocrModal) {
+      setAdminOcrElementInert(adminElements.ocrModal, false);
+      adminElements.ocrModal.classList.remove('is-visible');
+      adminElements.ocrModal.setAttribute('aria-hidden', 'true');
+    }
+    var shouldRestoreFocus = !(options && options.skipFocus);
+    if (shouldRestoreFocus && !focusAdminOcrElement(returnFocusElement)) {
+      focusAdminOcrElement(adminElements.ocrButton);
+    }
+  }
+
   function setCronManagementStatus(message, isError) {
     if (!adminElements.cronManagementStatus) {
       return;
@@ -4180,7 +6604,7 @@ function ensureAdminTemplateStyles() {
     } else if (installed) {
       setCronManagementStatus('Найден устаревший OCR-cron. Он больше не нужен и может быть удалён.', true);
     } else {
-      setCronManagementStatus('Старый OCR-cron отсутствует. Автоматические OCR-вычисления выключены.', false);
+      setCronManagementStatus('Старый OCR-cron отсутствует. Новые вложения и одноразовый проход используют отдельные фоновые worker.', false);
     }
 
     if (adminElements.cronManagementSummary) {
@@ -4456,7 +6880,7 @@ function ensureAdminTemplateStyles() {
     }
 
     adminElements.logButton.disabled = !organizationReady;
-    adminElements.logButton.textContent = logState.visible ? 'Скрыть журнал' : 'Журнал мини-приложения';
+    adminElements.logButton.textContent = 'Журнал';
     adminElements.logButton.setAttribute('aria-expanded', logState.visible ? 'true' : 'false');
 
     if (logState.visible && organizationReady) {
@@ -4627,8 +7051,9 @@ function ensureAdminTemplateStyles() {
     }
     logState.visible = false;
     updateAdminLogPanel();
-    if (adminElements.logButton) {
-      adminElements.logButton.focus();
+    showAdminUsersView();
+    if (adminElements.usersButton) {
+      adminElements.usersButton.focus();
     }
   }
 
@@ -4697,16 +7122,26 @@ function ensureAdminTemplateStyles() {
         return;
       }
       ensureAdminModal();
+      if (adminElements.ocrButton) {
+        adminElements.ocrButton.hidden = !canUseGlobalAdminOcr();
+        adminElements.ocrButton.disabled = !canUseGlobalAdminOcr();
+      }
       lastFocusedElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       ensureAdminUserLogState().visible = false;
       ensureAdminTemplateState().visible = false;
       ensureAdminS3State().visible = false;
-      closeAdminTemplateModal({ skipFocus: true });
-      closeAdminS3Modal({ skipFocus: true });
-      closeCronManagementModal(false);
+      ensureAdminOcrState().visible = false;
       updateAdminLogPanel();
       updateAdminTemplatePanel();
       updateAdminS3Panel();
+      adminUiState.query = '';
+      if (adminElements.searchInput) {
+        adminElements.searchInput.value = '';
+      }
+      resetAdminFilters();
+      clearAdminDirtyState();
+      showAdminUsersView();
+      setActiveAdminSection('responsibles');
       adminElements.modal.classList.add('is-visible');
       adminElements.modal.setAttribute('aria-hidden', 'false');
       document.addEventListener('keydown', handleAdminKeydown, true);
@@ -4739,15 +7174,24 @@ function ensureAdminTemplateStyles() {
       return;
     }
     adminRenderTokens = {};
+    closeAdminRowMenus();
+    if (adminElements.filterPanel) {
+      adminElements.filterPanel.hidden = true;
+    }
+    if (adminElements.filterButton) {
+      adminElements.filterButton.setAttribute('aria-expanded', 'false');
+    }
     adminElements.modal.classList.remove('is-visible');
     adminElements.modal.setAttribute('aria-hidden', 'true');
     document.removeEventListener('keydown', handleAdminKeydown, true);
     ensureAdminUserLogState().visible = false;
     ensureAdminTemplateState().visible = false;
     ensureAdminS3State().visible = false;
+    ensureAdminOcrState().visible = false;
     updateAdminLogPanel();
     closeAdminTemplateModal({ skipFocus: true });
     closeAdminS3Modal({ skipFocus: true });
+    closeAdminOcrModal({ skipFocus: true });
     closeCronManagementModal(false);
     if (lastFocusedElement && typeof lastFocusedElement.focus === 'function') {
       lastFocusedElement.focus();
@@ -4755,15 +7199,30 @@ function ensureAdminTemplateStyles() {
   }
 
   function handleAdminKeydown(event) {
+    if (event.key === 'Tab' && trapAdminOcrFocus(event)) {
+      return;
+    }
     if (event.key === 'Escape') {
       event.preventDefault();
       event.stopPropagation();
-      if (adminElements.cronManagementModal && adminElements.cronManagementModal.classList.contains('is-visible')) {
-        closeCronManagementModal(true);
+      var openRowMenu = adminElements.usersCard
+        ? adminElements.usersCard.querySelector('.documents-admin__row-menu:not([hidden])')
+        : null;
+      if (openRowMenu) {
+        closeAdminRowMenus();
+      } else if (adminElements.filterPanel && !adminElements.filterPanel.hidden) {
+        adminElements.filterPanel.hidden = true;
+        adminElements.filterButton.setAttribute('aria-expanded', 'false');
+      } else if (adminElements.ocrTextReader && adminElements.ocrTextReader.classList.contains('is-visible')) {
+        closeAdminOcrTextReader();
+      } else if (ensureAdminOcrState().visible) {
+        showAdminUsersView();
+      } else if (adminElements.cronManagementModal && adminElements.cronManagementModal.classList.contains('is-visible')) {
+        showAdminUsersView();
       } else if (ensureAdminTemplateState().visible) {
-        closeAdminTemplateModal();
+        showAdminUsersView();
       } else if (ensureAdminS3State().visible) {
-        closeAdminS3Modal();
+        showAdminUsersView();
       } else if (ensureAdminUserLogState().visible) {
         closeAdminLogPanel();
       } else {
@@ -4782,6 +7241,7 @@ function ensureAdminTemplateStyles() {
         if (adminElements.aiBriefProviderSelect) {
           adminElements.aiBriefProviderSelect.value = state.admin.settings.aiBriefProvider === 'deepseek' ? 'deepseek' : 'default';
         }
+        clearAdminDirtyState();
         updateAdminMessage(data && data.message ? data.message : 'Настройки загружены.', false);
         return data;
       })
@@ -4844,6 +7304,7 @@ function ensureAdminTemplateStyles() {
         } else {
           applyAdminSettings(payload.settings);
         }
+        clearAdminDirtyState();
         updateAdminMessage(data && data.message ? data.message : 'Настройки сохранены.', false);
         showMessage('success', data && data.message ? data.message : 'Настройки администратора сохранены.');
         closeAdminModal();

@@ -28,8 +28,9 @@
 
 ### Backend
 - Главный API и бизнес-логика: `docs.php`
-- AI генерация/шаблоны: `api-docs.php`
-- VIP/Groq AI: `api-groq-paid.php`
+- OCR для VIP-ответа: `docs.php` → приватный `bimmax-ocr`.
+- AI, VIP-ответ и шаблоны: `api-docs.php` (DeepSeek)
+- Старый audio STT: `api-groq-paid.php` (legacy-путь)
 
 ---
 
@@ -37,8 +38,9 @@
 
 ### Backend
 - `docs.php` — основной backend API для документов, задач, логов, Telegram-сценариев.
-- `api-docs.php` — AI endpoint для анализа/генерации и сборки DOCX/PDF из шаблонов.
-- `api-groq-paid.php` — VIP AI endpoint (Groq), обработка файлов/текста/аудио.
+- `docs.php` — авторизованный consumer существующего приватного OCR.
+- `api-docs.php` — DeepSeek по распознанному тексту и сборка DOCX/PDF из шаблонов.
+- `api-groq-paid.php` — совместимый legacy endpoint; используется старым audio STT.
 
 ### Frontend Web
 - `docs.js` — основной интерфейс таблицы документов и действий.
@@ -108,13 +110,14 @@
 ## 7) Полный путь: от выбора файла до ответа ИИ
 
 1. Пользователь выбирает документ(ы) и пишет задачу.
-2. Клиент собирает `FormData` (в т.ч. `action=ai_response_analyze`, prompt, параметры, вложения).
-3. К prompt добавляются системные директивы (тон, правила формата ответа).
-4. Запрос отправляется в `api-docs.php` (или VIP `api-groq-paid.php`).
-5. Backend получает AI-текст.
-6. Backend подставляет текст в шаблон DOCX/PDF.
-7. Готовый файл сохраняется в `/app/tmp/generated/`.
-8. Клиент получает URL и открывает предпросмотр/скачивание.
+2. Клиент отправляет выбранные файлы через `docs.php` в существующий приватный OCR.
+3. Из результата берутся первые 5 распознанных страниц.
+4. Клиент собирает запрос `action=ai_response_analyze` с OCR-текстом, prompt и выбранным стилем.
+5. `api-docs.php` отправляет OCR-текст в DeepSeek.
+6. Backend получает AI-текст.
+7. Backend подставляет текст в шаблон DOCX/PDF.
+8. Готовый файл сохраняется в `/app/tmp/generated/`.
+9. Клиент получает URL и открывает предпросмотр/скачивание.
 
 ---
 

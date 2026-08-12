@@ -4455,6 +4455,7 @@ function parseTaskIdFromStartParam(value) {
 
   const lower = trimmed.toLowerCase();
   const prefixes = [
+    'taskkey:',
     'task:',
     'task-',
     'task_',
@@ -9041,13 +9042,17 @@ function openTaskSearchModal() {
             throw new Error('Сервер не подтвердил готовность ИИ-поиска.');
           }
           aiSyncHasTasks = Math.max(0, Number.parseInt(syncData.indexedTasks, 10) || 0) > 0;
+          const usesDirectJsonSearch = syncData.localFallback === true
+            || normalizeValue(syncData.searchMode).toLowerCase() === 'local';
           setAiSyncVisualState('success');
           if (!aiSyncHasTasks) {
             useLocalBecauseAiIndexEmpty = true;
             showAiThinkingProgress(
               3,
               'Проверяю документы напрямую',
-              'Перепроверяю актуальные задачи с теми же фильтрами.',
+              usesDirectJsonSearch
+                ? (normalizeValue(syncData.message) || 'Ищу по полному Telegram JSON без обрезки текста.')
+                : 'Перепроверяю актуальные задачи с теми же фильтрами.',
             );
           } else {
             showAiThinkingProgress(
@@ -9057,13 +9062,51 @@ function openTaskSearchModal() {
             );
           }
         }
-        let data = await requestTaskAiSearch(query, {
+        const runCurrentTaskSearch = () => requestTaskAiSearch(query, {
           mode: useLocalBecauseAiIndexEmpty ? 'local' : searchMode,
           folderScope: searchFolderPayload.folderScope,
           organization: searchOrganization,
           readyToken: searchMode === 'ai' && !useLocalBecauseAiIndexEmpty ? taskRagReadyToken : '',
           signal: aiSearchAbortController ? aiSearchAbortController.signal : undefined,
         });
+        let data = null;
+        try {
+          data = await runCurrentTaskSearch();
+        } catch (searchError) {
+          if (!(searchMode === 'ai'
+            && !useLocalBecauseAiIndexEmpty
+            && searchError
+            && searchError.requiresTaskRagSync === true
+          )) {
+            throw searchError;
+          }
+          clearTaskRagReadyState();
+          taskRagReadyToken = '';
+          aiSyncReady = false;
+          aiSyncHasTasks = false;
+          showAiThinkingProgress(
+            1,
+            'Обновляю тексты документов',
+            'Сервер обнаружил более свежий OCR-снимок и пересобирает поиск.',
+          );
+          const refreshedSync = await ensureTaskAiSearchSync({
+            force: true,
+            folderScope: searchFolderPayload.folderScope,
+            organization: searchOrganization,
+          });
+          taskRagReadyToken = normalizeValue(refreshedSync && refreshedSync.readyToken);
+          aiSyncReady = refreshedSync && refreshedSync.ok === true
+            && normalizeValue(refreshedSync.status).toLowerCase() === 'ready'
+            && taskRagReadyToken !== '';
+          aiSyncHasTasks = Math.max(0, Number.parseInt(refreshedSync && refreshedSync.indexedTasks, 10) || 0) > 0;
+          if (!aiSyncReady) {
+            throw new Error('Сервер не подтвердил обновлённый индекс задач.');
+          }
+          if (!aiSyncHasTasks) {
+            useLocalBecauseAiIndexEmpty = true;
+          }
+          data = await runCurrentTaskSearch();
+        }
         if (cleanedUp || requestSeq !== aiSearchRequestSeq) {
           return;
         }
@@ -11172,6 +11215,24 @@ function normalizeTaskIdKey(value) {
   return normalized ? normalized.toLowerCase() : '';
 }
 
+function buildTaskSnapshotKeyForDeepLink(task) {
+  if (!task || typeof task !== 'object') {
+    return '';
+  }
+  const explicitKey = normalizeValue(task.taskKey);
+  if (explicitKey) {
+    return explicitKey;
+  }
+  const folder = normalizeValue(task.documentFolder) || normalizeValue(task.organization);
+  for (const field of ['id', 'entryNumber', 'registryNumber', 'documentNumber']) {
+    const value = normalizeValue(task[field]);
+    if (value) {
+      return `${folder}|${field}:${value}`;
+    }
+  }
+  return '';
+}
+
 function taskMatchesEntryTask(task, targetId) {
   if (!task || typeof task !== 'object') {
     return false;
@@ -11179,6 +11240,9 @@ function taskMatchesEntryTask(task, targetId) {
   const target = normalizeTaskIdKey(targetId);
   if (!target) {
     return false;
+  }
+  if (target.includes('|')) {
+    return normalizeTaskIdKey(buildTaskSnapshotKeyForDeepLink(task)) === target;
   }
   const candidates = [
     task.id,

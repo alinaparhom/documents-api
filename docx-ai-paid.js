@@ -30,6 +30,20 @@
     formData.append('tone', tone);
   }
 
+  function readVipJsonResponse(response) {
+    return response.text().then(function(rawBody) {
+      var body = String(rawBody || '').trim();
+      if (!body) {
+        throw new Error('VIP AI вернул пустой ответ (HTTP ' + String(response && response.status || 0) + '). Проверьте production endpoint и PHP-лог.');
+      }
+      try {
+        return JSON.parse(body);
+      } catch (error) {
+        throw new Error('VIP AI вернул не JSON (HTTP ' + String(response && response.status || 0) + '): ' + body.slice(0, 240));
+      }
+    });
+  }
+
   function escapeHtmlInline(value) {
     return String(value || '')
       .replace(/&/g, '&amp;')
@@ -62,20 +76,577 @@
     }
     var style = document.createElement('style');
     style.id = 'documents-vip-ai-modal-style';
-    style.textContent = '.documents-vip-ai{position:fixed;inset:0;background:linear-gradient(180deg,rgba(226,232,240,.34),rgba(148,163,184,.28));backdrop-filter:blur(10px);z-index:4100;display:flex;align-items:stretch;justify-content:center;padding:4px}.documents-vip-ai__panel{width:100%;height:100%;max-height:none;overflow:auto;border-radius:20px;background:linear-gradient(145deg,rgba(255,255,255,.94),rgba(248,250,252,.9));border:1px solid rgba(255,255,255,.92);box-shadow:0 18px 44px rgba(15,23,42,.16)}.documents-vip-ai__head{padding:14px 16px;display:flex;align-items:flex-start;justify-content:space-between;border-bottom:1px solid rgba(226,232,240,.9);position:sticky;top:0;background:rgba(255,255,255,.78);backdrop-filter:blur(8px);z-index:2;gap:10px}.documents-vip-ai__head-main{min-width:0;display:grid;gap:6px}.documents-vip-ai__head-controls{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;align-items:center}.documents-vip-ai__title{font-size:18px;font-weight:800;color:#0f172a}.documents-vip-ai__sub{font-size:12px;color:#64748b;margin-top:3px}.documents-vip-ai__close{border:none;background:rgba(255,255,255,.95);width:34px;height:34px;border-radius:10px;color:#334155;font-size:20px;flex:none}.documents-vip-ai__body{padding:14px;display:grid;gap:10px}.documents-vip-ai__meta{display:flex;flex-wrap:wrap;gap:8px}.documents-vip-ai__chip{padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.84);border:1px solid rgba(203,213,225,.95);font-size:12px;color:#334155}.documents-vip-ai__block{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.78);border-radius:14px;padding:11px}.documents-vip-ai__label{font-size:12px;color:#64748b;margin-bottom:7px}.documents-vip-ai__files{display:grid;gap:6px;font-size:13px;color:#0f172a;max-height:20dvh;overflow:auto}.documents-vip-ai__chat{height:min(50dvh,520px);overflow:auto;display:flex;flex-direction:column;gap:8px}.documents-vip-ai__msg{padding:9px 10px;border-radius:12px;font-size:13px;line-height:1.58;white-space:pre-wrap}.documents-vip-ai__msg--user{align-self:flex-end;background:#dbeafe;color:#1e3a8a}.documents-vip-ai__msg--assistant{align-self:flex-start;background:#fff;color:#0f172a;border:1px solid rgba(203,213,225,.9)}.documents-vip-ai__msg-content{display:block;line-height:1.62}.documents-vip-ai__msg-content p,.documents-vip-ai__msg-content ul,.documents-vip-ai__msg-content ol,.documents-vip-ai__msg-content h4{margin:0 0 10px}.documents-vip-ai__msg-content p:last-child,.documents-vip-ai__msg-content ul:last-child,.documents-vip-ai__msg-content ol:last-child,.documents-vip-ai__msg-content h4:last-child{margin-bottom:0}.documents-vip-ai__msg-content ul,.documents-vip-ai__msg-content ol{padding-left:18px}.documents-vip-ai__msg-content li{margin:0 0 6px}.documents-vip-ai__msg-content h4{font-size:14px;font-weight:700;line-height:1.4;color:#0b1220}.documents-vip-ai__composer{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;padding:10px;border:1px solid rgba(203,213,225,.9);border-radius:14px;background:rgba(255,255,255,.7)}.documents-vip-ai__select{min-width:0;border:1px solid rgba(203,213,225,.95);border-radius:12px;min-height:44px;padding:0 12px;font-size:13px;background:#fff;color:#0f172a;-webkit-appearance:menulist;appearance:menulist}.documents-vip-ai__template-btn{border:1px solid rgba(148,163,184,.42);background:linear-gradient(135deg,rgba(255,255,255,.98),rgba(241,245,249,.92));color:#0f172a;border-radius:12px;padding:0 14px;min-height:44px;font-size:13px;font-weight:700;white-space:nowrap;box-shadow:0 8px 20px rgba(15,23,42,.11)}.documents-vip-ai__template-btn:active{transform:translateY(1px)}.documents-vip-ai__template-btn[disabled]{opacity:.56;box-shadow:none;cursor:not-allowed}.documents-vip-ai__error{color:#b91c1c}@media (max-width:768px){.documents-vip-ai{padding:0}.documents-vip-ai__panel{border-radius:0}.documents-vip-ai__body{padding:12px}.documents-vip-ai__chat{height:52dvh}.documents-vip-ai__msg{font-size:14px;line-height:1.64}.documents-vip-ai__composer{grid-template-columns:1fr}.documents-vip-ai__template-btn{width:100%;font-size:14px;min-height:46px}.documents-vip-ai__head{padding:10px 12px;display:grid;grid-template-columns:1fr auto}.documents-vip-ai__head-controls{grid-template-columns:1fr}.documents-vip-ai__close{justify-self:end}}';
-    style.textContent += '.documents-vip-ai__loading{display:none;align-items:center;gap:8px;padding:10px 12px;border:1px solid rgba(191,219,254,.95);background:rgba(239,246,255,.75);color:#1e3a8a;border-radius:12px;font-size:12px;font-weight:600}.documents-vip-ai__loading.is-active{display:flex}.documents-vip-ai__loading-spinner{width:14px;height:14px;border-radius:50%;border:2px solid rgba(37,99,235,.25);border-top-color:#2563eb;animation:documents-vip-spin .8s linear infinite;flex:none}@keyframes documents-vip-spin{to{transform:rotate(360deg)}}';
-    style.textContent += '.documents-vip-ai__panel{position:relative}.documents-vip-ai__head::after{content:\"\";position:absolute;left:14px;right:14px;bottom:0;height:1px;background:linear-gradient(90deg,transparent,rgba(148,163,184,.45),transparent)}.documents-vip-ai__files label{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid rgba(226,232,240,.95);border-radius:12px;background:rgba(255,255,255,.8);transition:all .18s ease}.documents-vip-ai__files label:active{transform:scale(.995)}.documents-vip-ai__files input[type=\"checkbox\"]{width:18px;height:18px;accent-color:#2563eb;flex:none}.documents-vip-ai__files span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.documents-vip-ai__block{box-shadow:0 8px 24px rgba(15,23,42,.06)}.documents-vip-ai__msg--assistant{box-shadow:0 6px 18px rgba(15,23,42,.06)}.documents-vip-ai__msg--user{box-shadow:0 6px 16px rgba(37,99,235,.2)}.documents-vip-ai__meta{padding:2px 0}.documents-vip-ai__chip{background:linear-gradient(135deg,rgba(255,255,255,.95),rgba(241,245,249,.9));box-shadow:0 4px 12px rgba(15,23,42,.05)}.documents-vip-ai__template-btn{transition:transform .16s ease,box-shadow .16s ease}.documents-vip-ai__template-btn:hover{transform:translateY(-1px);box-shadow:0 10px 20px rgba(15,23,42,.14)}.documents-vip-ai__select:focus,.documents-vip-ai__template-btn:focus,.documents-vip-ai__close:focus{outline:none;box-shadow:0 0 0 3px rgba(37,99,235,.2)}.documents-vip-ai__startup{position:absolute;inset:0;display:none;place-items:center;padding:18px;background:linear-gradient(180deg,rgba(248,250,252,.92),rgba(241,245,249,.9));backdrop-filter:blur(4px);z-index:4}.documents-vip-ai__startup.is-active{display:grid}.documents-vip-ai__startup-card{width:min(420px,94%);border:1px solid rgba(191,219,254,.95);background:rgba(255,255,255,.9);border-radius:16px;padding:14px;display:grid;gap:8px;box-shadow:0 14px 30px rgba(15,23,42,.14)}.documents-vip-ai__startup-title{font-size:14px;font-weight:800;color:#0f172a}.documents-vip-ai__startup-sub{font-size:12px;color:#475569}.documents-vip-ai__startup-progress{height:7px;border-radius:999px;background:rgba(191,219,254,.45);overflow:hidden}.documents-vip-ai__startup-progress::after{content:\"\";display:block;height:100%;width:36%;border-radius:inherit;background:linear-gradient(90deg,#2563eb,#38bdf8);animation:documents-vip-progress 1.3s ease-in-out infinite}.documents-vip-ai__startup-spinner{width:16px;height:16px;border-radius:50%;border:2px solid rgba(37,99,235,.25);border-top-color:#2563eb;animation:documents-vip-spin .8s linear infinite}@keyframes documents-vip-progress{0%{transform:translateX(-120%)}100%{transform:translateX(320%)}}@media (max-width:768px){.documents-vip-ai__files label{padding:9px 10px}.documents-vip-ai__chip{font-size:11px}.documents-vip-ai__startup-card{padding:13px}}';
-    style.textContent += '.documents-vip-ai__body{gap:8px;padding:12px}.documents-vip-ai__block{padding:10px;border-radius:12px}.documents-vip-ai__label{margin-bottom:6px}.documents-vip-ai__chat{height:min(46dvh,480px)}.documents-vip-ai__msg{padding:8px 10px;font-size:13px;line-height:1.52}.documents-vip-ai__composer{padding:8px;border-radius:12px}.documents-vip-ai__select,.documents-vip-ai__template-btn{min-height:42px;font-size:13px}.documents-vip-ai__head{padding:12px 14px}.documents-vip-ai__title{font-size:17px}@media (max-width:768px){.documents-vip-ai__body{padding:10px;gap:7px}.documents-vip-ai__chat{height:48dvh}.documents-vip-ai__msg{font-size:13px;line-height:1.56}.documents-vip-ai__head{padding:10px 12px}.documents-vip-ai__title{font-size:16px}.documents-vip-ai__template-btn,.documents-vip-ai__select{min-height:44px}}';
-    style.textContent += '.documents-vip-ai__composer{display:grid;grid-template-columns:1fr;gap:8px;padding:10px;background:linear-gradient(145deg,rgba(255,255,255,.88),rgba(248,250,252,.84));border:1px solid rgba(191,219,254,.55)}.documents-vip-ai__voice-status{font-size:12px;color:#475569;padding:8px 10px;border-radius:999px;background:rgba(239,246,255,.85);border:1px solid rgba(191,219,254,.95);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.documents-vip-ai__inputbar{display:grid;grid-template-columns:minmax(0,1fr) 46px 46px;gap:8px;align-items:end}.documents-vip-ai__composer-main{min-width:0}.documents-vip-ai__input{width:100%;max-width:100%;min-height:78px;resize:vertical;border:1px solid rgba(191,219,254,.8);border-radius:14px;padding:11px 12px;background:rgba(255,255,255,.96);font-size:14px;line-height:1.45;color:#0f172a;box-shadow:inset 0 1px 2px rgba(15,23,42,.05)}.documents-vip-ai__input::placeholder{color:#94a3b8}.documents-vip-ai__input:focus{outline:none;box-shadow:0 0 0 3px rgba(56,189,248,.25),inset 0 1px 2px rgba(15,23,42,.04);border-color:rgba(56,189,248,.7)}.documents-vip-ai__action-btn{border:1px solid rgba(148,163,184,.35);background:linear-gradient(135deg,rgba(255,255,255,.98),rgba(248,250,252,.92));color:#0f172a;border-radius:999px;min-height:46px;width:46px;padding:0;font-size:20px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;box-shadow:0 8px 18px rgba(15,23,42,.08);transition:transform .16s ease,box-shadow .16s ease}.documents-vip-ai__action-btn:hover{transform:translateY(-1px);box-shadow:0 10px 22px rgba(15,23,42,.12)}.documents-vip-ai__action-btn--send{background:linear-gradient(135deg,#2563eb,#0ea5e9);color:#fff;border-color:rgba(37,99,235,.4)}.documents-vip-ai__action-btn--voice.is-active{background:linear-gradient(135deg,#ef4444,#f97316);border-color:rgba(239,68,68,.45);color:#fff}.documents-vip-ai__action-btn[disabled]{opacity:.55;cursor:not-allowed;box-shadow:none;transform:none}@media (max-width:768px){.documents-vip-ai__composer{gap:7px;padding:8px}.documents-vip-ai__template-btn{width:100%;min-height:40px}.documents-vip-ai__inputbar{grid-template-columns:minmax(0,1fr) 44px 44px;gap:7px}.documents-vip-ai__action-btn{width:44px;min-height:44px}.documents-vip-ai__input{min-height:92px;font-size:15px}}';
-    style.textContent += '.documents-vip-ai__panel{max-width:1120px;max-height:100dvh;display:flex;flex-direction:column;overflow:hidden}.documents-vip-ai__head{align-items:flex-start}.documents-vip-ai__head-main{flex:1;min-width:0}.documents-vip-ai__head-controls{grid-template-columns:repeat(3,minmax(0,max-content));justify-content:end}.documents-vip-ai__body{flex:1;min-height:0;overflow:auto;padding-bottom:max(10px,env(safe-area-inset-bottom))}.documents-vip-ai__title,.documents-vip-ai__sub,.documents-vip-ai__label,.documents-vip-ai__msg,.documents-vip-ai__chip,.documents-vip-ai__voice-status{overflow-wrap:anywhere;word-break:break-word}.documents-vip-ai__voice-status{white-space:normal;border-radius:12px}.documents-vip-ai__chat{max-height:min(44dvh,430px)}.documents-vip-ai__msg{max-width:min(100%,860px)}@media (max-width:900px){.documents-vip-ai__head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}.documents-vip-ai__head-controls{grid-template-columns:1fr;justify-content:stretch}.documents-vip-ai__select,.documents-vip-ai__template-btn{width:100%}.documents-vip-ai__voice-status{white-space:normal}.documents-vip-ai__chat{max-height:45dvh}}';
-    style.textContent += '.documents-vip-ai{padding:0;background:linear-gradient(180deg,rgba(248,250,252,.9),rgba(226,232,240,.68))}.documents-vip-ai__panel{width:100vw;height:100dvh;max-width:none;max-height:none;border-radius:0;border:none;box-shadow:none;background:linear-gradient(165deg,rgba(255,255,255,.82),rgba(241,245,249,.74));backdrop-filter:blur(12px)}.documents-vip-ai__head{padding:14px 18px}.documents-vip-ai__head-controls{grid-template-columns:repeat(3,minmax(170px,1fr));width:min(700px,100%)}.documents-vip-ai__select,.documents-vip-ai__template-btn,.documents-vip-ai__voice-status{min-height:44px;display:flex;align-items:center;justify-content:center;text-align:center;border-radius:14px}.documents-vip-ai__voice-status{padding:10px 12px}.documents-vip-ai__body{padding:14px 18px 18px;display:grid;grid-template-rows:minmax(0,1fr) minmax(0,1fr) auto;gap:12px;overflow:hidden}.documents-vip-ai__block{height:100%;display:flex;flex-direction:column}.documents-vip-ai__files,.documents-vip-ai__chat{flex:1;min-height:0;max-height:none}.documents-vip-ai__chat{padding-right:2px}.documents-vip-ai__composer{gap:10px}.documents-vip-ai__inputbar{grid-template-columns:minmax(0,1fr) 52px 52px;gap:10px;align-items:stretch}.documents-vip-ai__action-btn{width:52px;min-height:52px;font-size:21px}.documents-vip-ai__input{min-height:96px}.documents-vip-ai__close{width:40px;height:40px;border-radius:12px}@media (max-width:980px){.documents-vip-ai__head{grid-template-columns:minmax(0,1fr) auto;padding:12px 12px 10px}.documents-vip-ai__head-controls{grid-template-columns:1fr 1fr;width:100%}.documents-vip-ai__voice-status{grid-column:1 / -1}.documents-vip-ai__body{padding:10px 12px 12px;grid-template-rows:minmax(140px,1fr) minmax(200px,1.15fr) auto;gap:10px}.documents-vip-ai__inputbar{grid-template-columns:minmax(0,1fr) 48px 48px}.documents-vip-ai__action-btn{width:48px;min-height:48px}.documents-vip-ai__input{min-height:90px}}@media (max-width:640px){.documents-vip-ai__head-controls{grid-template-columns:1fr}.documents-vip-ai__select,.documents-vip-ai__template-btn,.documents-vip-ai__voice-status{width:100%}.documents-vip-ai__body{grid-template-rows:minmax(120px,1fr) minmax(180px,1.2fr) auto}.documents-vip-ai__inputbar{grid-template-columns:minmax(0,1fr) 46px 46px;gap:8px}.documents-vip-ai__action-btn{width:46px;min-height:46px}}';
-    style.textContent += '.documents-vip-ai__panel{background:linear-gradient(160deg,rgba(255,255,255,.94),rgba(248,250,252,.88));backdrop-filter:blur(14px)}.documents-vip-ai__head{padding:14px 16px;border-bottom:1px solid rgba(191,219,254,.62);background:rgba(255,255,255,.72)}.documents-vip-ai__head-controls{gap:10px}.documents-vip-ai__voice-status,.documents-vip-ai__select,.documents-vip-ai__template-btn{min-height:46px;border-radius:16px;border:1px solid rgba(191,219,254,.9);background:linear-gradient(140deg,rgba(255,255,255,.95),rgba(239,246,255,.88));box-shadow:0 10px 24px rgba(59,130,246,.08);color:#1e293b;font-weight:700}.documents-vip-ai__select{padding:0 14px;appearance:none;-webkit-appearance:none;background-image:linear-gradient(140deg,rgba(255,255,255,.95),rgba(239,246,255,.88)),url("data:image/svg+xml,%3Csvg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"%23334155\" stroke-width=\"2.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"%3E%3Cpath d=\"m6 9 6 6 6-6\"/%3E%3C/svg%3E");background-repeat:no-repeat,no-repeat;background-size:auto,16px;background-position:0 0,calc(100% - 14px) 50%;padding-right:38px}.documents-vip-ai__template-btn{padding:0 16px}.documents-vip-ai__template-btn:hover{transform:translateY(-1px);box-shadow:0 12px 24px rgba(37,99,235,.16)}.documents-vip-ai__close{border:1px solid rgba(191,219,254,.9);background:rgba(255,255,255,.92);box-shadow:0 8px 20px rgba(15,23,42,.08)}.documents-vip-ai__body{padding:14px 16px 16px;gap:12px}.documents-vip-ai__block{border-radius:16px;border:1px solid rgba(191,219,254,.55);background:linear-gradient(140deg,rgba(255,255,255,.84),rgba(248,250,252,.78));box-shadow:0 8px 24px rgba(15,23,42,.05)}.documents-vip-ai__label{font-weight:700;color:#64748b}.documents-vip-ai__files label{border-radius:14px;border:1px solid rgba(191,219,254,.68);background:rgba(255,255,255,.9)}.documents-vip-ai__chat{padding:2px 4px 2px 0}.documents-vip-ai__msg{max-width:min(100%,760px);border-radius:16px;padding:11px 12px}.documents-vip-ai__msg--assistant{border:1px solid rgba(191,219,254,.75);background:rgba(255,255,255,.92)}.documents-vip-ai__msg--user{border:1px solid rgba(59,130,246,.35);background:linear-gradient(145deg,#dbeafe,#bfdbfe);color:#1e3a8a}.documents-vip-ai__composer{border-radius:18px;border:1px solid rgba(191,219,254,.65);background:linear-gradient(145deg,rgba(255,255,255,.92),rgba(239,246,255,.78));padding:10px;gap:10px}.documents-vip-ai__composer-main{width:100%}.documents-vip-ai__inputbar{grid-template-columns:minmax(0,1fr) 52px 52px;align-items:stretch}.documents-vip-ai__input{width:100%;min-height:110px;border-radius:18px;border:1px solid rgba(125,211,252,.95);background:rgba(255,255,255,.95);padding:14px 15px;font-size:16px;line-height:1.45}.documents-vip-ai__input:focus{border-color:rgba(56,189,248,.9);box-shadow:0 0 0 4px rgba(56,189,248,.17),inset 0 1px 2px rgba(15,23,42,.04)}.documents-vip-ai__action-btn{width:52px;min-height:52px;border-radius:18px}.documents-vip-ai__action-btn--send{background:linear-gradient(145deg,#38bdf8,#2563eb);box-shadow:0 12px 24px rgba(37,99,235,.3)}.documents-vip-ai__action-btn--send:active{transform:translateY(1px)}.documents-vip-ai__voice-status{justify-content:flex-start;padding:0 12px}@media (max-width:980px){.documents-vip-ai__head{padding:12px}.documents-vip-ai__head-controls{grid-template-columns:1fr 1fr}.documents-vip-ai__voice-status{grid-column:1/-1}.documents-vip-ai__body{padding:10px 12px 12px}.documents-vip-ai__input{min-height:96px;font-size:15px}.documents-vip-ai__action-btn{width:48px;min-height:48px;border-radius:16px}.documents-vip-ai__inputbar{grid-template-columns:minmax(0,1fr) 48px 48px}}@media (max-width:640px){.documents-vip-ai__head-controls{grid-template-columns:1fr}.documents-vip-ai__voice-status,.documents-vip-ai__select,.documents-vip-ai__template-btn{width:100%}.documents-vip-ai__composer{padding:8px;border-radius:14px}.documents-vip-ai__input{min-height:88px;font-size:16px}.documents-vip-ai__action-btn{width:46px;min-height:46px;border-radius:14px}.documents-vip-ai__inputbar{grid-template-columns:minmax(0,1fr) 46px 46px;gap:8px}}';
-
-    style.textContent += '.documents-vip-ai__inputbar{display:grid;grid-template-columns:minmax(0,1fr) 56px 56px;align-items:end;gap:10px}.documents-vip-ai__composer-main{display:block;min-width:0}.documents-vip-ai__input{display:block;width:100%;min-height:120px;max-height:42dvh;resize:vertical;border-radius:20px;padding:14px 16px;line-height:1.5}.documents-vip-ai__action-btn{display:inline-flex;align-items:center;justify-content:center;align-self:end;width:56px;height:56px;min-height:56px;border-radius:18px;font-size:22px;line-height:1}.documents-vip-ai__action-btn--voice{background:linear-gradient(145deg,rgba(255,255,255,.98),rgba(241,245,249,.94));color:#1f2937}.documents-vip-ai__action-btn--send{background:linear-gradient(145deg,#38bdf8,#2563eb);color:#fff}.documents-vip-ai__action-btn:active{transform:translateY(1px)}@media (max-width:980px){.documents-vip-ai__inputbar{grid-template-columns:minmax(0,1fr) 50px 50px;gap:8px}.documents-vip-ai__input{min-height:102px}.documents-vip-ai__action-btn{width:50px;height:50px;min-height:50px;border-radius:16px;font-size:20px}}@media (max-width:640px){.documents-vip-ai__inputbar{grid-template-columns:minmax(0,1fr) 46px 46px;align-items:end;gap:8px}.documents-vip-ai__input{min-height:92px;max-height:38dvh;padding:12px 14px;font-size:16px}.documents-vip-ai__action-btn{width:46px;height:46px;min-height:46px;border-radius:14px;font-size:18px}}';
-
-    style.textContent += '.documents-vip-ai,.documents-vip-ai__panel,.documents-vip-ai__body{width:100%;max-width:none}.documents-vip-ai__body{grid-template-columns:minmax(0,1fr)!important;grid-template-rows:auto minmax(0,1fr) auto!important}.documents-vip-ai__block,.documents-vip-ai__composer{width:100%;max-width:none;justify-self:stretch}.documents-vip-ai__files,.documents-vip-ai__chat{width:100%}.documents-vip-ai__composer{padding:12px 14px}.documents-vip-ai__inputbar{width:100%;max-width:none;justify-self:stretch;grid-template-columns:minmax(0,1fr) 60px 60px;align-items:stretch}.documents-vip-ai__composer-main{width:100%;max-width:none}.documents-vip-ai__input{width:100%;max-width:none;min-height:132px}.documents-vip-ai__action-btn{width:60px;height:60px;min-height:60px}.documents-vip-ai__head-controls{width:100%;grid-template-columns:repeat(3,minmax(0,1fr))}@media (max-width:980px){.documents-vip-ai__body{grid-template-rows:minmax(130px,1fr) minmax(180px,1.2fr) auto!important}.documents-vip-ai__inputbar{grid-template-columns:minmax(0,1fr) 52px 52px}.documents-vip-ai__action-btn{width:52px;height:52px;min-height:52px}}@media (max-width:640px){.documents-vip-ai__body{grid-template-rows:minmax(110px,1fr) minmax(160px,1.2fr) auto!important}.documents-vip-ai__composer{padding:10px}.documents-vip-ai__inputbar{grid-template-columns:minmax(0,1fr) 46px 46px}.documents-vip-ai__input{min-height:98px}.documents-vip-ai__action-btn{width:46px;height:46px;min-height:46px}}';
-    style.textContent += '.documents-vip-ai__composer{overflow:visible}.documents-vip-ai__inputbar{display:flex!important;align-items:flex-end;gap:10px;width:100%;overflow:visible;padding-bottom:2px}.documents-vip-ai__composer-main{flex:1 1 auto;min-width:0}.documents-vip-ai__input{width:100%;box-sizing:border-box;min-height:132px;padding-right:14px}.documents-vip-ai__action-btn{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;width:58px;height:58px;min-width:58px;min-height:58px;max-width:58px;max-height:58px;line-height:1;font-size:20px;padding:0;overflow:visible;transform:none}.documents-vip-ai__action-btn--voice,.documents-vip-ai__action-btn--send{position:relative;z-index:1}.documents-vip-ai__action-btn--voice{margin-right:0}.documents-vip-ai__action-btn--send{margin-right:max(0px,env(safe-area-inset-right,0px))}@media (max-width:980px){.documents-vip-ai__inputbar{gap:8px}.documents-vip-ai__action-btn{width:50px;height:50px;min-width:50px;min-height:50px;max-width:50px;max-height:50px;font-size:18px}.documents-vip-ai__input{min-height:104px}}@media (max-width:640px){.documents-vip-ai__composer{padding-bottom:calc(10px + env(safe-area-inset-bottom,0px))}.documents-vip-ai__inputbar{align-items:flex-end;gap:8px}.documents-vip-ai__action-btn{width:46px;height:46px;min-width:46px;min-height:46px;max-width:46px;max-height:46px;font-size:17px}.documents-vip-ai__input{min-height:94px}}';
-    style.textContent += '.documents-vip-ai__composer{box-sizing:border-box;padding:10px calc(10px + env(safe-area-inset-right,0px)) calc(10px + env(safe-area-inset-bottom,0px)) 10px;overflow:visible}.documents-vip-ai__inputbar{display:grid!important;grid-template-columns:minmax(0,1fr) auto auto;align-items:end;gap:8px;width:100%;max-width:100%}.documents-vip-ai__composer-main{min-width:0;width:100%}.documents-vip-ai__input{width:100%;min-height:96px;max-height:38dvh;resize:none;overflow:auto;padding:12px 14px;box-sizing:border-box}.documents-vip-ai__action-btn{width:48px;height:48px;min-width:48px;min-height:48px;max-width:48px;max-height:48px;border-radius:14px;line-height:1;font-size:18px;margin:0}.documents-vip-ai__action-btn--voice,.documents-vip-ai__action-btn--send{justify-self:end}.documents-vip-ai__action-btn--send{margin-right:0!important}@media (max-width:640px){.documents-vip-ai__composer{padding:8px calc(8px + env(safe-area-inset-right,0px)) calc(8px + env(safe-area-inset-bottom,0px)) 8px}.documents-vip-ai__inputbar{gap:7px;grid-template-columns:minmax(0,1fr) auto auto}.documents-vip-ai__input{min-height:88px;max-height:34dvh}.documents-vip-ai__action-btn{width:44px;height:44px;min-width:44px;min-height:44px;max-width:44px;max-height:44px;border-radius:12px;font-size:16px}}';
+    style.textContent = `
+.documents-vip-ai {
+  --documents-vip-accent: #2563eb;
+  --documents-vip-accent-soft: #eff6ff;
+  --documents-vip-border: #dbe3ef;
+  --documents-vip-muted: #64748b;
+  --documents-vip-text: #172033;
+  position: fixed;
+  inset: 0;
+  z-index: 4100;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(15, 23, 42, .42);
+  backdrop-filter: blur(8px);
+  font-family: inherit;
+}
+.documents-vip-ai *,
+.documents-vip-ai *::before,
+.documents-vip-ai *::after {
+  box-sizing: border-box;
+}
+.documents-vip-ai__panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(1320px, 100%);
+  height: min(920px, calc(100dvh - 32px));
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, .82);
+  border-radius: 22px;
+  background: #f6f8fb;
+  box-shadow: 0 28px 70px rgba(15, 23, 42, .28);
+}
+.documents-vip-ai__head {
+  flex: none;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: start;
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--documents-vip-border);
+  background: rgba(255, 255, 255, .96);
+}
+.documents-vip-ai__head-main {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(480px, 700px);
+  gap: 20px;
+  align-items: center;
+}
+.documents-vip-ai__head-copy {
+  min-width: 0;
+}
+.documents-vip-ai__title {
+  color: var(--documents-vip-text);
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+.documents-vip-ai__sub {
+  margin-top: 4px;
+  color: var(--documents-vip-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.documents-vip-ai__limit {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 7px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: #fff7ed;
+  color: #9a5414;
+  font-size: 11px;
+  font-weight: 700;
+}
+.documents-vip-ai__head-controls {
+  display: grid;
+  grid-template-columns: minmax(190px, 1fr) minmax(180px, 1fr) auto;
+  gap: 8px;
+  min-width: 0;
+}
+.documents-vip-ai__select,
+.documents-vip-ai__template-btn,
+.documents-vip-ai__voice-status {
+  min-width: 0;
+  min-height: 40px;
+  border: 1px solid var(--documents-vip-border);
+  border-radius: 10px;
+  background: #fff;
+  color: #334155;
+  font: inherit;
+  font-size: 12px;
+}
+.documents-vip-ai__select {
+  padding: 0 32px 0 11px;
+}
+.documents-vip-ai__template-btn {
+  padding: 0 14px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.documents-vip-ai__voice-status {
+  display: flex;
+  align-items: center;
+  padding: 8px 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.documents-vip-ai__select:focus,
+.documents-vip-ai__template-btn:focus,
+.documents-vip-ai__close:focus,
+.documents-vip-ai__input:focus,
+.documents-vip-ai__action-btn:focus {
+  outline: none;
+  border-color: var(--documents-vip-accent);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, .14);
+}
+.documents-vip-ai__template-btn:hover,
+.documents-vip-ai__close:hover,
+.documents-vip-ai__action-btn:hover {
+  border-color: #b9c6d8;
+  background: #f8fafc;
+}
+.documents-vip-ai__template-btn[disabled],
+.documents-vip-ai__action-btn[disabled] {
+  opacity: .48;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+.documents-vip-ai__close {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid var(--documents-vip-border);
+  border-radius: 10px;
+  background: #fff;
+  color: #475569;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+.documents-vip-ai__body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(250px, 310px) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 12px;
+  padding: 12px;
+}
+.documents-vip-ai__block {
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--documents-vip-border);
+  border-radius: 16px;
+  background: #fff;
+}
+.documents-vip-ai__block--files {
+  grid-row: 1 / 3;
+  display: flex;
+  flex-direction: column;
+  padding: 14px;
+}
+.documents-vip-ai__block--chat {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+.documents-vip-ai__block--chat > .documents-vip-ai__section-head {
+  flex: none;
+  margin: 0;
+  padding: 14px 16px 0;
+}
+.documents-vip-ai__section-head {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 28px;
+  margin-bottom: 10px;
+}
+.documents-vip-ai__label {
+  color: #334155;
+  font-size: 13px;
+  font-weight: 800;
+}
+.documents-vip-ai__count {
+  flex: none;
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: var(--documents-vip-accent-soft);
+  color: #1d4ed8;
+  font-size: 11px;
+  font-weight: 800;
+}
+.documents-vip-ai__files,
+.documents-vip-ai__chat {
+  min-height: 0;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+.documents-vip-ai__files {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  color: var(--documents-vip-text);
+  font-size: 13px;
+}
+.documents-vip-ai__files label {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #e5eaf1;
+  border-radius: 10px;
+  background: #fbfcfe;
+  cursor: pointer;
+}
+.documents-vip-ai__files label:has(input:checked) {
+  border-color: #bfdbfe;
+  background: var(--documents-vip-accent-soft);
+}
+.documents-vip-ai__files input[type="checkbox"] {
+  flex: none;
+  width: 17px;
+  height: 17px;
+  margin: 0;
+  accent-color: var(--documents-vip-accent);
+}
+.documents-vip-ai__files span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.documents-vip-ai__empty-files {
+  padding: 20px 8px;
+  color: var(--documents-vip-muted);
+  text-align: center;
+}
+.documents-vip-ai__chat {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  background: #f8fafc;
+}
+.documents-vip-ai__chat-empty {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  min-height: 100%;
+  padding: 28px;
+  color: var(--documents-vip-muted);
+  text-align: center;
+}
+.documents-vip-ai__chat-empty-icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  margin-bottom: 12px;
+  border-radius: 14px;
+  background: var(--documents-vip-accent-soft);
+  color: var(--documents-vip-accent);
+  font-size: 22px;
+}
+.documents-vip-ai__chat-empty-title {
+  color: #334155;
+  font-size: 15px;
+  font-weight: 800;
+}
+.documents-vip-ai__chat-empty-text {
+  max-width: 430px;
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.documents-vip-ai__msg {
+  max-width: min(82%, 780px);
+  padding: 11px 13px;
+  border-radius: 14px;
+  color: var(--documents-vip-text);
+  font-size: 14px;
+  line-height: 1.58;
+  overflow-wrap: anywhere;
+}
+.documents-vip-ai__msg--assistant {
+  align-self: flex-start;
+  border: 1px solid #e2e8f0;
+  border-bottom-left-radius: 5px;
+  background: #fff;
+}
+.documents-vip-ai__msg--user {
+  align-self: flex-end;
+  max-width: min(72%, 680px);
+  border: 1px solid #bfdbfe;
+  border-bottom-right-radius: 5px;
+  background: #dbeafe;
+  color: #1e3a8a;
+  white-space: pre-wrap;
+}
+.documents-vip-ai__msg--error {
+  align-self: flex-start;
+  border: 1px solid #fecaca;
+  border-bottom-left-radius: 5px;
+  background: #fff1f2;
+  color: #9f1239;
+}
+.documents-vip-ai__msg-content p,
+.documents-vip-ai__msg-content ul,
+.documents-vip-ai__msg-content ol,
+.documents-vip-ai__msg-content h4 {
+  margin: 0 0 10px;
+}
+.documents-vip-ai__msg-content p:last-child,
+.documents-vip-ai__msg-content ul:last-child,
+.documents-vip-ai__msg-content ol:last-child,
+.documents-vip-ai__msg-content h4:last-child {
+  margin-bottom: 0;
+}
+.documents-vip-ai__msg-content ul,
+.documents-vip-ai__msg-content ol {
+  padding-left: 20px;
+}
+.documents-vip-ai__msg-content li {
+  margin-bottom: 5px;
+}
+.documents-vip-ai__msg-content h4 {
+  color: #1e293b;
+  font-size: 14px;
+  line-height: 1.4;
+}
+.documents-vip-ai__composer {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  background: #fff;
+}
+.documents-vip-ai__inputbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 46px 46px;
+  gap: 8px;
+  align-items: end;
+}
+.documents-vip-ai__composer-main {
+  min-width: 0;
+}
+.documents-vip-ai__input {
+  display: block;
+  width: 100%;
+  min-height: 74px;
+  max-height: 28dvh;
+  resize: none;
+  overflow: auto;
+  padding: 11px 13px;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  background: #fff;
+  color: var(--documents-vip-text);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.documents-vip-ai__input::placeholder {
+  color: #94a3b8;
+}
+.documents-vip-ai__action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  padding: 0;
+  border: 1px solid var(--documents-vip-border);
+  border-radius: 12px;
+  background: #fff;
+  color: #334155;
+  font-size: 18px;
+  cursor: pointer;
+}
+.documents-vip-ai__action-btn--send {
+  border-color: var(--documents-vip-accent);
+  background: var(--documents-vip-accent);
+  color: #fff;
+}
+.documents-vip-ai__action-btn--send:hover {
+  border-color: #1d4ed8;
+  background: #1d4ed8;
+}
+.documents-vip-ai__action-btn--voice.is-active {
+  border-color: #ef4444;
+  background: #ef4444;
+  color: #fff;
+}
+.documents-vip-ai__loading {
+  display: none;
+  gap: 8px;
+  align-items: center;
+  min-height: 30px;
+  color: #1e40af;
+  font-size: 12px;
+  font-weight: 700;
+}
+.documents-vip-ai__loading.is-active {
+  display: flex;
+}
+.documents-vip-ai__loading-spinner,
+.documents-vip-ai__startup-spinner {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(37, 99, 235, .22);
+  border-top-color: var(--documents-vip-accent);
+  border-radius: 50%;
+  animation: documents-vip-spin .8s linear infinite;
+}
+.documents-vip-ai__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 0;
+}
+.documents-vip-ai__meta:empty {
+  display: none;
+}
+.documents-vip-ai__chip {
+  padding: 4px 7px;
+  border: 1px solid #e2e8f0;
+  border-radius: 7px;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 11px;
+}
+.documents-vip-ai__chip--error {
+  border-color: #fecaca;
+  background: #fff1f2;
+  color: #9f1239;
+}
+.documents-vip-ai__startup {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: none;
+  place-items: center;
+  padding: 18px;
+  background: rgba(248, 250, 252, .92);
+}
+.documents-vip-ai__startup.is-active {
+  display: grid;
+}
+.documents-vip-ai__startup-card {
+  width: min(390px, 94%);
+  padding: 16px;
+  border: 1px solid #bfdbfe;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 18px 44px rgba(15, 23, 42, .14);
+}
+.documents-vip-ai__startup-row {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+}
+.documents-vip-ai__startup-title {
+  color: var(--documents-vip-text);
+  font-size: 14px;
+  font-weight: 800;
+}
+.documents-vip-ai__startup-sub {
+  margin-top: 8px;
+  color: var(--documents-vip-muted);
+  font-size: 12px;
+}
+.documents-vip-ai__startup-progress {
+  height: 5px;
+  margin-top: 12px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #dbeafe;
+}
+.documents-vip-ai__startup-progress::after {
+  content: "";
+  display: block;
+  width: 35%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--documents-vip-accent);
+  animation: documents-vip-progress 1.3s ease-in-out infinite;
+}
+@keyframes documents-vip-spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes documents-vip-progress {
+  from { transform: translateX(-110%); }
+  to { transform: translateX(320%); }
+}
+@media (max-width: 980px) {
+  .documents-vip-ai {
+    padding: 0;
+  }
+  .documents-vip-ai__panel {
+    width: 100%;
+    height: 100dvh;
+    border: 0;
+    border-radius: 0;
+  }
+  .documents-vip-ai__head {
+    gap: 10px;
+    padding: 12px;
+  }
+  .documents-vip-ai__head-main {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+  .documents-vip-ai__head-controls {
+    grid-template-columns: 1fr 1fr;
+  }
+  .documents-vip-ai__voice-status {
+    grid-column: 1 / -1;
+  }
+  .documents-vip-ai__body {
+    grid-template-columns: minmax(210px, 260px) minmax(0, 1fr);
+    padding: 10px;
+  }
+}
+@media (max-width: 700px) {
+  .documents-vip-ai__head-controls {
+    grid-template-columns: 1fr;
+  }
+  .documents-vip-ai__voice-status {
+    grid-column: auto;
+  }
+  .documents-vip-ai__body {
+    overflow: auto;
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(280px, 1fr) auto;
+  }
+  .documents-vip-ai__block--files {
+    grid-row: auto;
+    max-height: 180px;
+  }
+  .documents-vip-ai__msg,
+  .documents-vip-ai__msg--user {
+    max-width: 92%;
+  }
+  .documents-vip-ai__composer {
+    position: sticky;
+    bottom: 0;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+  }
+  .documents-vip-ai__input {
+    min-height: 82px;
+    font-size: 16px;
+  }
+  .documents-vip-ai__inputbar {
+    grid-template-columns: minmax(0, 1fr) 44px 44px;
+  }
+  .documents-vip-ai__action-btn {
+    width: 44px;
+    height: 44px;
+  }
+}
+`;
     document.head.appendChild(style);
   }
 
@@ -300,254 +871,251 @@
       .then(function(blob) { return new File([blob], fileName, { type: blob.type || 'application/octet-stream' }); });
   }
 
-  function requestVipVisionResponse(promptText, selectedEntries, selectedStyle, updateStatus) {
+  function requestVipVisionResponse(promptText, selectedEntries, selectedStyle, updateStatus, organization, taskId) {
     var entries = Array.isArray(selectedEntries) ? selectedEntries : [];
     var styleMeta = resolveVipStyle(selectedStyle);
-    var preparedPrompt = [promptText, 'Верни готовый ответ на письмо. Не пиши анализ.']
+    var preparedPrompt = [promptText, 'Верни только готовый текст ответа для вставки в документ. Не пиши анализ и служебные пояснения.']
       .filter(Boolean)
       .join('\n\n');
-    var images = [];
     var extractedTexts = [];
-    var paidEndpoints = ['/js/documents/api-groq-paid.php', '/api-groq-paid.php'];
+    var skippedFiles = [];
 
-    function postWithFallback(createFormData, endpointIndex) {
-      if (endpointIndex >= paidEndpoints.length) return Promise.reject(new Error('Не удалось подключиться к VIP API.'));
-      return fetch(paidEndpoints[endpointIndex], { method: 'POST', body: createFormData(), credentials: 'same-origin' })
-        .then(function(response) {
-          if ((response.status === 404 || response.status === 405) && endpointIndex < paidEndpoints.length - 1) {
-            return postWithFallback(createFormData, endpointIndex + 1);
-          }
-          return response.json().then(function(payload) { return { response: response, payload: payload }; });
-        });
+    function resolveApiStyle() {
+      var value = String(styleMeta && styleMeta.value || 'neutral').toLowerCase();
+      if (value.indexOf('aggressive') === 0) return 'aggressive';
+      if (value.indexOf('calm') === 0) return 'informational';
+      return 'neutral';
     }
 
-    return entries.reduce(function(chain, entry, index) {
-      return chain.then(function() {
-        if (updateStatus) updateStatus('Vision: готовлю файл ' + (index + 1) + '/' + entries.length + '...');
-        return loadEntryAsFile(entry).then(function(file) {
-          return buildVisionPayloadFromFile(file, updateStatus).then(function(prepared) {
-            if (prepared.kind === 'multimodal') {
-              images = images.concat(prepared.images || []);
-            } else if (prepared.kind === 'text' && prepared.extractedText) {
-              extractedTexts.push({ name: prepared.fileName || file.name, type: file.type || 'text/plain', text: String(prepared.extractedText).slice(0, 60000) });
-            }
-          });
-        });
-      });
-    }, Promise.resolve()).then(function() {
-      if (!images.length) {
-        if (!extractedTexts.length) {
-          throw new Error('Vision режим поддерживает изображения, PDF, DOCX, XLSX и текстовые документы.');
-        }
-        if (updateStatus) updateStatus('Vision: отправляю извлечённый текст в ИИ...');
-        return postWithFallback(function() {
-          var formData = new FormData();
-          formData.append('action', 'generate_response');
-          formData.append('mode', 'paid');
-          formData.append('vision_mode', '1');
-          formData.append('prompt', preparedPrompt);
-          appendPromptSelection(formData, (styleMeta && styleMeta.value));
-          formData.append('extractedTexts', JSON.stringify(extractedTexts));
-          return formData;
-        }, 0).then(function(result) {
-          if (!result.response || !result.response.ok || !result.payload || result.payload.ok !== true) {
-            throw new Error((result.payload && result.payload.error) || 'Не удалось обработать текстовые документы через Vision pipeline.');
-          }
-          var textOnlyAnswer = String(result.payload.response || result.payload.summary || '').trim();
-          if (!textOnlyAnswer) {
-            throw new Error('ИИ не вернул ответ для текстовых документов.');
-          }
-          return { ok: true, response: textOnlyAnswer, mode: 'vision-text', model: result.payload.model || '' };
-        });
+    function supportsPrivateOcr(file) {
+      var name = String(file && file.name || '').toLowerCase();
+      return /\.(pdf|doc|docx|png|jpe?g|tiff?|bmp|gif|webp)$/i.test(name);
+    }
+
+    function postToDocumentsApi(createFormData, endpointIndex) {
+      var endpoints = getDocsGenerateEndpoints();
+      if (endpointIndex >= endpoints.length) {
+        return Promise.reject(new Error('Backend документооборота недоступен.'));
       }
-      var batches = chunkItems(images, VISION_BATCH_SIZE);
-      var partialAnswers = [];
-
-      return batches.reduce(function(chain, batch, batchIndex) {
-        return chain.then(function() {
-          if (updateStatus) updateStatus('Vision: анализ блока ' + (batchIndex + 1) + '/' + batches.length + '...');
-          return postWithFallback(function() {
-            var formData = new FormData();
-            formData.append('action', 'analyze_paid');
-            formData.append('mode', 'paid');
-            formData.append('vision_mode', '1');
-            formData.append('prompt', preparedPrompt);
-            appendPromptSelection(formData, (styleMeta && styleMeta.value));
-            if (extractedTexts.length && batchIndex === 0) {
-              formData.append('extractedTexts', JSON.stringify(extractedTexts));
-            }
-            formData.append('vision_payload', JSON.stringify({
-              model: 'meta-llama/llama-4-scout-17b-16e-instruct',
-              max_tokens: 1200,
-              temperature: 0.6,
-              messages: [{
-                role: 'system',
-                content: ''
-              }, {
-                role: 'user',
-                content: [{ type: 'text', text: preparedPrompt + '\n\nБлок ' + (batchIndex + 1) + '/' + batches.length + '.' }]
-                  .concat(batch.map(function(item) { return { type: 'image_url', image_url: { url: item.dataUrl } }; }))
-              }]
-            }));
-            batch.forEach(function(item, idx) {
-              var raw = String(item.dataUrl || '');
-              var base64 = raw.indexOf(',') >= 0 ? raw.split(',')[1] : '';
-              if (!base64) return;
-              var binary = atob(base64);
-              var bytes = Uint8Array.from(binary, function(ch) { return ch.charCodeAt(0); });
-              formData.append('files', new Blob([bytes], { type: item.mime || 'image/jpeg' }), item.fileName || ('vision-' + (batchIndex + 1) + '-' + (idx + 1) + '.jpg'));
-            });
-            return formData;
-          }, 0).then(function(result) {
-            if (!result.response.ok || !result.payload || result.payload.ok !== true) {
-              throw new Error((result.payload && result.payload.error) || 'Ошибка Vision.');
-            }
-            partialAnswers.push(String(result.payload.response || result.payload.summary || '').trim());
-          });
-        });
-      }, Promise.resolve()).then(function() {
-        var finalText = partialAnswers.join('\n\n').trim();
-        if (partialAnswers.length <= 1) return { ok: true, response: finalText, mode: 'vision' };
-        if (updateStatus) updateStatus('Vision: объединяю результаты...');
-        return postWithFallback(function() {
-          var formData = new FormData();
-          formData.append('action', 'generate_response');
-          formData.append('mode', 'paid');
-          formData.append('vision_mode', '1');
-          formData.append('prompt', [preparedPrompt, 'Ниже ответы по блокам. Собери один цельный финальный ответ без пересказа блоков.'].filter(Boolean).join('\n\n'));
-          appendPromptSelection(formData, (styleMeta && styleMeta.value));
-          formData.append('extractedTexts', JSON.stringify([{
-            name: 'vision-batches.txt',
-            type: 'text/plain',
-            text: partialAnswers.map(function(item, idx) { return 'Блок ' + (idx + 1) + ':\n' + item; }).join('\n\n')
-          }]));
-          return formData;
-        }, 0).then(function(result) {
-          if (result.response.ok && result.payload && result.payload.ok === true) {
-            finalText = String(result.payload.response || result.payload.summary || '').trim() || finalText;
-          }
-          return { ok: true, response: finalText, mode: 'vision', model: result.payload && result.payload.model ? result.payload.model : '' };
-        });
-      });
-    });
-  }
-
-  async function tryExtractOcrTextForVip(options, fileOrBlob, fileName, remoteUrl) {
-    var ocrApiUrl = (options && options.apiUrl) || '/js/documents/api-docs.php';
-    var ocrFormData = new FormData();
-    ocrFormData.append('action', 'ocr_extract');
-    ocrFormData.append('language', 'rus');
-    var localFile = fileOrBlob || null;
-    if (!localFile && remoteUrl) {
-      try {
-        var remoteResponse = await fetch(String(remoteUrl), { credentials: 'same-origin' });
-        if (!remoteResponse.ok) {
-          return '';
+      return fetch(endpoints[endpointIndex], {
+        method: 'POST',
+        body: createFormData(),
+        credentials: 'same-origin'
+      }).then(function(response) {
+        if ((response.status === 404 || response.status === 405) && endpointIndex < endpoints.length - 1) {
+          return postToDocumentsApi(createFormData, endpointIndex + 1);
         }
-        var remoteBlob = await remoteResponse.blob();
-        localFile = new File([remoteBlob], fileName || 'document', { type: remoteBlob.type || 'application/octet-stream' });
-      } catch (_) {
-        return '';
+        return readVipJsonResponse(response)
+          .then(function(payload) {
+            return { response: response, payload: payload };
+          })
+          .catch(function(error) {
+            if (endpointIndex < endpoints.length - 1) {
+              return postToDocumentsApi(createFormData, endpointIndex + 1);
+            }
+            throw error;
+          });
+      });
+    }
+
+    function fileIdentityKeys(file) {
+      var source = file && typeof file === 'object' ? file : {};
+      var values = [source.id, source.storedName, source.originalName, source.name];
+      var url = String(source.url || '').split(/[?#]/)[0];
+      if (url) {
+        values.push(url.slice(url.lastIndexOf('/') + 1));
       }
+      return values.map(function(value) {
+        return String(value || '').trim().toLowerCase();
+      }).filter(Boolean);
     }
-    if (!localFile) {
-      return '';
-    }
-    ocrFormData.append('file', localFile, fileName || 'document');
-    try {
-      var response = await fetch(ocrApiUrl + '?action=ocr_extract', {
+
+    function applyStoredOcrTexts() {
+      var normalizedTaskId = String(taskId || '').trim();
+      var normalizedOrganization = String(organization || '').trim();
+      var needsStoredText = entries.some(function(entry) {
+        return entry && entry.source === 'linked'
+          && !String(entry.file && entry.file.ocrText || '').trim();
+      });
+      if (!normalizedTaskId || !normalizedOrganization || !needsStoredText) {
+        return Promise.resolve();
+      }
+
+      var formData = new FormData();
+      formData.append('action', 'ai_response_ocr_texts');
+      formData.append('organization', normalizedOrganization);
+      formData.append('taskId', normalizedTaskId);
+      return fetch('/docs.php?action=ai_response_ocr_texts', {
         method: 'POST',
         credentials: 'same-origin',
-        body: ocrFormData
-      });
-      var data = await response.json().catch(function() { return null; });
-      if (!response.ok || !data || data.ok !== true) {
-        return '';
-      }
-      return String(data.text || '').trim();
-    } catch (_) {
-      return '';
-    }
-  }
-
-  async function appendSourceFilesToFormData(options, formData, linkedFiles, pendingFiles) {
-    var appendedCount = 0;
-    var ocrContexts = [];
-    for (var p = 0; p < pendingFiles.length; p += 1) {
-      var file = pendingFiles[p];
-      if (!file) continue;
-      var pendingName = file.name || ('file-' + (p + 1));
-      formData.append('files', file, pendingName);
-      appendedCount += 1;
-      // eslint-disable-next-line no-await-in-loop
-      var pendingOcrText = await tryExtractOcrTextForVip(options, file, pendingName, '');
-      if (pendingOcrText) {
-        ocrContexts.push({
-          name: pendingName,
-          source: 'pending',
-          type: file.type || '',
-          size: file.size || 0,
-          ocrText: pendingOcrText.slice(0, 12000)
-        });
-      }
-    }
-    for (var i = 0; i < linkedFiles.length; i += 1) {
-      var linkedFile = linkedFiles[i];
-      var fileUrl = resolveLinkedFileUrl(linkedFile);
-      if (!fileUrl) {
-        continue;
-      }
-      try {
-        // eslint-disable-next-line no-await-in-loop
-        var fileResponse = await fetch(fileUrl, { credentials: 'same-origin' });
-        if (!fileResponse.ok) {
-          continue;
-        }
-        // eslint-disable-next-line no-await-in-loop
-        var fileBlob = await fileResponse.blob();
-        var fileName = linkedFile && linkedFile.name ? String(linkedFile.name) : ('file-' + (i + 1));
-        formData.append('files', fileBlob, fileName);
-        appendedCount += 1;
-        // eslint-disable-next-line no-await-in-loop
-        var linkedOcrText = await tryExtractOcrTextForVip(options, null, fileName, fileUrl);
-        if (linkedOcrText) {
-          ocrContexts.push({
-            name: fileName,
-            source: 'linked',
-            type: fileBlob.type || '',
-            size: fileBlob.size || 0,
-            ocrText: linkedOcrText.slice(0, 12000)
+        body: formData
+      }).then(function(response) {
+        return readVipJsonResponse(response).then(function(payload) {
+          if (!response.ok || !payload || payload.success !== true) {
+            throw new Error(payload && (payload.error || payload.message)
+              ? String(payload.error || payload.message)
+              : 'Сохранённый OCR-текст недоступен.');
+          }
+          var storedFiles = Array.isArray(payload.files) ? payload.files : [];
+          entries.forEach(function(entry) {
+            if (!entry || entry.source !== 'linked' || String(entry.file && entry.file.ocrText || '').trim()) {
+              return;
+            }
+            var entryKeys = fileIdentityKeys(entry.file);
+            var match = storedFiles.find(function(storedFile) {
+              var storedKeys = fileIdentityKeys(storedFile);
+              return entryKeys.some(function(key) { return storedKeys.indexOf(key) !== -1; });
+            });
+            var storedText = String(match && match.ocrText || '').trim();
+            if (storedText) {
+              entry.file.ocrText = storedText;
+              entry.file.ocrTextLength = storedText.length;
+            }
           });
+        });
+      }).catch(function(error) {
+        if (window.console && typeof window.console.warn === 'function') {
+          window.console.warn('[Documents VIP AI] Не удалось получить сохранённый OCR-текст:', error);
         }
-      } catch (_) {}
+      });
     }
-    return { appendedCount: appendedCount, ocrContexts: ocrContexts };
-  }
 
-  async function buildVipRequestFormData(options, promptText, selectedLinked, selectedPending, requestContext, responseStyle) {
-    var styleMeta = resolveVipStyle(responseStyle);
+    return applyStoredOcrTexts().then(function() {
+      return entries.reduce(function(chain, entry, index) {
+        return chain.then(function() {
+          var storedOcrText = entry && entry.file && typeof entry.file.ocrText === 'string'
+            ? entry.file.ocrText.trim()
+            : '';
+          if (storedOcrText) {
+            if (updateStatus) updateStatus('Используем готовый OCR-текст файла ' + (index + 1) + ' из ' + entries.length + '…');
+            extractedTexts.push({
+              name: entry.file.name || 'Документ',
+              type: entry.file.type || 'text/plain',
+              text: storedOcrText.slice(0, 60000)
+            });
+            return;
+          }
+          if (updateStatus) updateStatus('Подготавливаем файл ' + (index + 1) + ' из ' + entries.length + '…');
+          return loadEntryAsFile(entry).then(function(file) {
+            if (supportsPrivateOcr(file)) {
+              if (updateStatus) updateStatus('Распознаём «' + String(file.name || 'документ') + '» через системный OCR…');
+              return tryExtractOcrTextForVip({
+                organization: organization,
+                pageLimit: AI_PDF_PAGE_LIMIT
+              }, file, file.name || 'document', '').then(function(ocrText) {
+                extractedTexts.push({
+                  name: file.name || 'Документ',
+                  type: file.type || 'application/octet-stream',
+                  text: String(ocrText).slice(0, 60000)
+                });
+              });
+            }
+            return buildVisionPayloadFromFile(file, updateStatus).then(function(prepared) {
+              if (prepared.kind !== 'text' || !prepared.extractedText) {
+                throw new Error('Формат файла «' + String(file.name || 'документ') + '» не поддерживается для извлечения текста.');
+              }
+              extractedTexts.push({
+                name: prepared.fileName || file.name,
+                type: file.type || 'text/plain',
+                text: String(prepared.extractedText).slice(0, 60000)
+              });
+            });
+          }).catch(function(error) {
+            skippedFiles.push({
+              name: entry && entry.file && entry.file.name ? String(entry.file.name) : 'Документ',
+              error: String(error && error.message ? error.message : 'Не удалось извлечь текст')
+            });
+          });
+        });
+      }, Promise.resolve());
+    }).then(function() {
+      if (!extractedTexts.length) {
+        var failureDetails = skippedFiles.map(function(item) {
+          return item.name + ': ' + item.error;
+        }).join('; ');
+        throw new Error('Не удалось получить текст ни из одного выбранного файла.' + (failureDetails ? ' ' + failureDetails : ''));
+      }
+      if (updateStatus) {
+        updateStatus(skippedFiles.length
+          ? 'Отправляем распознанный текст в DeepSeek; пропущено файлов: ' + skippedFiles.length + '…'
+          : 'Отправляем распознанный текст в DeepSeek…');
+      }
+      return postToDocumentsApi(function() {
+        var formData = new FormData();
+        formData.append('action', 'ai_response_analyze');
+        formData.append('documentTitle', 'Ответ ИИ по документам');
+        formData.append('prompt', preparedPrompt);
+        formData.append('responseStyle', resolveApiStyle());
+        formData.append('aiBehavior', String(styleMeta && styleMeta.prompt || ''));
+        formData.append('extractedTexts', JSON.stringify(extractedTexts));
+        formData.append('context', JSON.stringify({
+          source: 'documents-vip-ai',
+          selectedTone: String(styleMeta && styleMeta.value || 'neutral'),
+          ocrEngine: 'private',
+          files: extractedTexts.map(function(item) {
+            return { name: item.name, type: item.type };
+          })
+        }));
+        return formData;
+      }, 0);
+    }).then(function(result) {
+      if (!result.response || !result.response.ok || !result.payload || result.payload.ok !== true) {
+        throw new Error((result.payload && result.payload.error) || 'Не удалось получить ответ ИИ.');
+      }
+      var answer = String(result.payload.response || '').trim();
+      if (!answer) {
+        throw new Error('DeepSeek не вернул текст ответа.');
+      }
+      return {
+        ok: true,
+        response: answer,
+        mode: 'private-ocr-deepseek',
+        model: String(result.payload.model || ''),
+        tokensUsed: result.payload.tokensUsed || '',
+        skippedFiles: skippedFiles
+      };
+    });
+  }
+  async function tryExtractOcrTextForVip(options, fileOrBlob, fileName, remoteUrl) {
+    var localFile = fileOrBlob || null;
+    if (!localFile && remoteUrl) {
+      var remoteResponse = await fetch(String(remoteUrl), { credentials: 'same-origin' });
+      if (!remoteResponse.ok) {
+        throw new Error('Не удалось загрузить файл для системного OCR (' + remoteResponse.status + ').');
+      }
+      var remoteBlob = await remoteResponse.blob();
+      localFile = new File([remoteBlob], fileName || 'document', {
+        type: remoteBlob.type || 'application/octet-stream'
+      });
+    }
+    if (!localFile) {
+      throw new Error('Файл для системного OCR не подготовлен.');
+    }
+
     var formData = new FormData();
-    formData.append('responseStyle', styleMeta.value);
-    var appendResult = await appendSourceFilesToFormData(options, formData, selectedLinked, selectedPending);
-    var appendedCount = appendResult && appendResult.appendedCount ? appendResult.appendedCount : 0;
-    if (!appendedCount) {
-      throw new Error('Выберите хотя бы один файл для VIP чата.');
-    }
-    var payloadContext = requestContext && typeof requestContext === 'object' ? requestContext : {};
-    payloadContext.ocrFiles = appendResult && Array.isArray(appendResult.ocrContexts) ? appendResult.ocrContexts : [];
-    payloadContext.ocrSummary = (payloadContext.ocrFiles || []).map(function(item) {
-      return 'Файл: ' + (item.name || 'Без имени') + '\nOCR:\n' + (item.ocrText || '');
-    }).join('\n\n---\n\n').slice(0, 50000);
-    var finalPrompt = String(promptText || '');
-    if (payloadContext.ocrSummary) {
-      finalPrompt += '\n\nOCR контекст по каждому файлу:\n' + payloadContext.ocrSummary;
-    }
-    formData.append('prompt', finalPrompt.slice(0, 70000));
-    appendPromptSelection(formData, (styleMeta && styleMeta.value));
-    formData.append('context', JSON.stringify(payloadContext));
-    return formData;
-  }
+    formData.append('action', 'ai_brief_generate');
+    formData.append('mode', 'ocr_only');
+    formData.append('organization', String(options && options.organization || ''));
+    formData.append('pageLimit', String(options && options.pageLimit || AI_PDF_PAGE_LIMIT));
+    formData.append('file', localFile, fileName || localFile.name || 'document');
 
+    var response = await fetch('/docs.php?action=ai_brief_generate', {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: formData
+    });
+    var payload = await readVipJsonResponse(response);
+    if (!response.ok || !payload || payload.success !== true) {
+      throw new Error(payload && (payload.error || payload.message)
+        ? String(payload.error || payload.message)
+        : 'Системный OCR вернул ошибку (' + response.status + ').');
+    }
+    var text = String(payload.text || '').trim();
+    if (!text) {
+      throw new Error('Системный OCR завершился без распознанного текста.');
+    }
+    return text;
+  }
   function resolveOrganizationSlugFromPath(pathname) {
     var pathValue = String(pathname || '');
     var match = pathValue.match(/\/js\/documents\/([^/?#]+)/i);
@@ -746,12 +1314,77 @@
 
     var payload = options.payload || {};
     var organizationSlug = resolveOrganizationSlug(payload);
+    var vipTaskContext = resolveTaskContext({
+      payload: payload,
+      organization: organizationSlug
+    }) || {};
     var organizationCaption = organizationSlug
       ? '<div class="documents-vip-ai__sub">🏢 Организация: ' + escapeHtmlText(organizationSlug) + '</div>'
       : '';
     var overlay = createElement('div', 'documents-vip-ai');
     var panel = createElement('div', 'documents-vip-ai__panel');
-    panel.innerHTML = '<div class="documents-vip-ai__head"><div class="documents-vip-ai__head-main"><div><div class="documents-vip-ai__title">VIP AI Ассистент</div><div class="documents-vip-ai__sub">Отдельный чат по приложенным файлам</div>' + organizationCaption + '<div class="documents-vip-ai__sub">⚠️ Важно: ИИ анализирует только первые 5 страниц каждого PDF-документа.</div></div><div class="documents-vip-ai__head-controls"><span class="documents-vip-ai__voice-status" data-voice-status>🎙️ Голосовой ввод: выключен</span><select class="documents-vip-ai__select" data-style aria-label="Стиль ответа"></select><button class="documents-vip-ai__template-btn" data-template-open type="button">Шаблон</button></div></div><button class="documents-vip-ai__close" aria-label="Закрыть">×</button></div><div class="documents-vip-ai__body"><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">1) Файлы для анализа</div><div class="documents-vip-ai__files"></div></div><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">2) Чат с VIP ИИ</div><div class="documents-vip-ai__chat"></div></div><div class="documents-vip-ai__block documents-vip-ai__composer"><div class="documents-vip-ai__label">3) Запрос к ИИ</div><div class="documents-vip-ai__inputbar"><div class="documents-vip-ai__composer-main"><textarea class="documents-vip-ai__input" data-chat-input placeholder="Введите вопрос или запишите голосовое сообщение…"></textarea></div><button class="documents-vip-ai__action-btn documents-vip-ai__action-btn--voice" data-voice-toggle type="button" aria-label="Голосовой ввод">🎤</button><button class="documents-vip-ai__action-btn documents-vip-ai__action-btn--send" data-send type="button" aria-label="Отправить">➤</button></div><div class="documents-vip-ai__loading" data-vip-loading><span class="documents-vip-ai__loading-spinner" aria-hidden="true"></span><span data-vip-loading-text>Готовим ответ с помощью ИИ…</span></div><div class="documents-vip-ai__meta"></div></div></div><div class="documents-vip-ai__startup is-active" data-vip-startup><div class="documents-vip-ai__startup-card"><div style="display:flex;align-items:center;gap:8px"><span class="documents-vip-ai__startup-spinner" aria-hidden="true"></span><div class="documents-vip-ai__startup-title">Открываем AI-модуль</div></div><div class="documents-vip-ai__startup-sub">Подготавливаем интерфейс и список файлов…</div><div class="documents-vip-ai__startup-progress" aria-hidden="true"></div></div></div>';
+    panel.innerHTML = [
+      '<div class="documents-vip-ai__head">',
+        '<div class="documents-vip-ai__head-main">',
+          '<div class="documents-vip-ai__head-copy">',
+            '<div class="documents-vip-ai__title">Ответ ИИ по документам</div>',
+            '<div class="documents-vip-ai__sub">Отдельный диалог по выбранным вложениям</div>',
+            organizationCaption,
+            '<div class="documents-vip-ai__limit">Используется системный OCR; для нового PDF обрабатываются первые 5 страниц</div>',
+          '</div>',
+          '<div class="documents-vip-ai__head-controls">',
+            '<span class="documents-vip-ai__voice-status" data-voice-status>Голосовой ввод выключен</span>',
+            '<select class="documents-vip-ai__select" data-style aria-label="Стиль ответа"></select>',
+            '<button class="documents-vip-ai__template-btn" data-template-open type="button">Шаблон ответа</button>',
+          '</div>',
+        '</div>',
+        '<button class="documents-vip-ai__close" type="button" aria-label="Закрыть" title="Закрыть">×</button>',
+      '</div>',
+      '<div class="documents-vip-ai__body">',
+        '<section class="documents-vip-ai__block documents-vip-ai__block--files">',
+          '<div class="documents-vip-ai__section-head">',
+            '<div class="documents-vip-ai__label">Вложения</div>',
+            '<span class="documents-vip-ai__count" data-file-count>0 выбрано</span>',
+          '</div>',
+          '<div class="documents-vip-ai__files"></div>',
+        '</section>',
+        '<section class="documents-vip-ai__block documents-vip-ai__block--chat">',
+          '<div class="documents-vip-ai__section-head"><div class="documents-vip-ai__label">Диалог</div></div>',
+          '<div class="documents-vip-ai__chat" aria-live="polite">',
+            '<div class="documents-vip-ai__chat-empty" data-chat-empty>',
+              '<div>',
+                '<div class="documents-vip-ai__chat-empty-icon" aria-hidden="true">AI</div>',
+                '<div class="documents-vip-ai__chat-empty-title">Задайте вопрос по выбранным файлам</div>',
+                '<div class="documents-vip-ai__chat-empty-text">Выберите вложения слева, уточните стиль ответа и напишите, что нужно подготовить.</div>',
+              '</div>',
+            '</div>',
+          '</div>',
+        '</section>',
+        '<section class="documents-vip-ai__block documents-vip-ai__composer">',
+          '<div class="documents-vip-ai__label">Ваш вопрос</div>',
+          '<div class="documents-vip-ai__inputbar">',
+            '<div class="documents-vip-ai__composer-main"><textarea class="documents-vip-ai__input" data-chat-input placeholder="Например: подготовь ответ как сотрудник организации"></textarea></div>',
+            '<button class="documents-vip-ai__action-btn documents-vip-ai__action-btn--voice" data-voice-toggle type="button" aria-label="Записать голосом" title="Записать голосом">🎤</button>',
+            '<button class="documents-vip-ai__action-btn documents-vip-ai__action-btn--send" data-send type="button" aria-label="Отправить" title="Отправить">➤</button>',
+          '</div>',
+          '<div class="documents-vip-ai__loading" data-vip-loading role="status">',
+            '<span class="documents-vip-ai__loading-spinner" aria-hidden="true"></span>',
+            '<span data-vip-loading-text>Готовим ответ с помощью ИИ…</span>',
+          '</div>',
+          '<div class="documents-vip-ai__meta" aria-live="polite"></div>',
+        '</section>',
+      '</div>',
+      '<div class="documents-vip-ai__startup is-active" data-vip-startup>',
+        '<div class="documents-vip-ai__startup-card">',
+          '<div class="documents-vip-ai__startup-row">',
+            '<span class="documents-vip-ai__startup-spinner" aria-hidden="true"></span>',
+            '<div class="documents-vip-ai__startup-title">Открываем AI-модуль</div>',
+          '</div>',
+          '<div class="documents-vip-ai__startup-sub">Подготавливаем интерфейс и список файлов…</div>',
+          '<div class="documents-vip-ai__startup-progress" aria-hidden="true"></div>',
+        '</div>',
+      '</div>'
+    ].join('');
     overlay.appendChild(panel);
     document.body.appendChild(overlay);
 
@@ -767,6 +1400,8 @@
     var sendButton = panel.querySelector('[data-send]');
     var voiceButton = panel.querySelector('[data-voice-toggle]');
     var voiceStatusNode = panel.querySelector('[data-voice-status]');
+    var fileCountNode = panel.querySelector('[data-file-count]');
+    var chatEmptyNode = panel.querySelector('[data-chat-empty]');
     var closeButtonVip = panel.querySelector('.documents-vip-ai__close');
     var linked = Array.isArray(payload.linkedFiles) ? payload.linkedFiles : [];
     var pending = Array.isArray(payload.pendingFiles) ? payload.pendingFiles : [];
@@ -777,31 +1412,67 @@
     fileEntries.forEach(function(entry) {
       selectedFiles[entry.key] = true;
     });
+    function updateSelectedFileCount() {
+      if (!fileCountNode) return;
+      var selectedCount = fileEntries.filter(function(entry) {
+        return Boolean(selectedFiles[entry.key]);
+      }).length;
+      fileCountNode.textContent = selectedCount + ' из ' + fileEntries.length;
+    }
     if (templateButton) {
-      templateButton.disabled = !String(typeof window.DOCUMENTS_LAST_AI_ANSWER === 'string' ? window.DOCUMENTS_LAST_AI_ANSWER : '').trim();
+      var hasStoredAiAnswer = Boolean(String(typeof window.DOCUMENTS_LAST_AI_ANSWER === 'string' ? window.DOCUMENTS_LAST_AI_ANSWER : '').trim());
+      templateButton.disabled = !hasStoredAiAnswer;
+      templateButton.textContent = hasStoredAiAnswer ? 'Вставить в шаблон' : 'Шаблон ответа';
     }
     if (styleNode) {
-      styleNode.innerHTML = '<option value="" selected>Выберите режим</option>' + VIP_RESPONSE_STYLE_OPTIONS.map(function(item) {
-        return '<option value="' + escapeHtmlText(item.value) + '">' + escapeHtmlText('Стиль: ' + item.label) + '</option>';
+      var preferredStyle = String(DEFAULT_PROMPT_KEYS.tone || 'neutral');
+      var hasPreferredStyle = VIP_RESPONSE_STYLE_OPTIONS.some(function(item) {
+        return item && String(item.value) === preferredStyle;
+      });
+      if (!hasPreferredStyle && VIP_RESPONSE_STYLE_OPTIONS.length) {
+        preferredStyle = String(VIP_RESPONSE_STYLE_OPTIONS[0].value || 'neutral');
+      }
+      styleNode.innerHTML = VIP_RESPONSE_STYLE_OPTIONS.map(function(item) {
+        var selectedAttribute = String(item.value) === preferredStyle ? ' selected' : '';
+        return '<option value="' + escapeHtmlText(item.value) + '"' + selectedAttribute + '>' + escapeHtmlText('Стиль: ' + item.label) + '</option>';
       }).join('');
     }
     if (!fileEntries.length) {
-      filesNode.innerHTML = '<em>Нет вложений</em>';
+      filesNode.innerHTML = '<div class="documents-vip-ai__empty-files">В задаче нет вложений</div>';
     } else {
-      filesNode.innerHTML = fileEntries.slice(0, 20).map(function(entry) {
+      filesNode.innerHTML = fileEntries.map(function(entry) {
         var name = entry && entry.file && entry.file.name ? entry.file.name : 'Файл';
-        return '<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" data-file-key="' + escapeHtmlText(entry.key) + '" checked> <span>📎 ' + escapeHtmlText(name) + '</span></label>';
+        return '<label><input type="checkbox" data-file-key="' + escapeHtmlText(entry.key) + '" checked><span>📎 ' + escapeHtmlText(name) + '</span></label>';
       }).join('');
       Array.from(filesNode.querySelectorAll('input[type="checkbox"][data-file-key]')).forEach(function(checkbox) {
         checkbox.addEventListener('change', function() {
           var key = checkbox.getAttribute('data-file-key');
           if (!key) return;
           selectedFiles[key] = checkbox.checked;
+          updateSelectedFileCount();
         });
       });
     }
+    updateSelectedFileCount();
 
-    closeButtonVip.addEventListener('click', function() { closeModal(overlay); });
+    function closeVipAiModal() {
+      document.removeEventListener('keydown', handleVipEscape);
+      if (mediaRecorder && mediaRecorder.state && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.onstop = null;
+        mediaRecorder.onerror = null;
+        try { mediaRecorder.stop(); } catch (error) {}
+      }
+      stopVoiceStream();
+      closeModal(overlay);
+    }
+    function handleVipEscape(event) {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      closeVipAiModal();
+    }
+    closeButtonVip.addEventListener('click', closeVipAiModal);
+    document.addEventListener('keydown', handleVipEscape);
     if (templateButton) {
       templateButton.addEventListener('click', function() {
         var taskContext = resolveTaskContext({
@@ -822,7 +1493,6 @@
       }
     }, 260);
 
-    var chatHistory = [];
     function setVipLoading(active, text) {
       if (loadingNode) {
         loadingNode.classList.toggle('is-active', Boolean(active));
@@ -830,6 +1500,22 @@
       if (loadingTextNode && text) {
         loadingTextNode.textContent = String(text);
       }
+    }
+    function setVipNotice(text, isError) {
+      if (!metaNode) return;
+      if (!text) {
+        metaNode.innerHTML = '';
+        return;
+      }
+      metaNode.innerHTML = '<span class="documents-vip-ai__chip' + (isError ? ' documents-vip-ai__chip--error' : '') + '">' + escapeHtmlText(text) + '</span>';
+    }
+    function getVipErrorMessage(error) {
+      var detail = String(error && error.message ? error.message : 'Неизвестная ошибка').trim();
+      if (/пустой ответ|не JSON/i.test(detail)) {
+        var statusMatch = detail.match(/HTTP\s+(\d+)/i);
+        return 'Сервис ИИ не вернул корректный ответ' + (statusMatch ? ' (HTTP ' + statusMatch[1] + ')' : '') + '. Повторите запрос или сообщите администратору.';
+      }
+      return detail || 'Не удалось получить ответ ИИ. Повторите запрос.';
     }
     function sanitizeWhitelistedHtml(html) {
       var template = document.createElement('template');
@@ -903,6 +1589,9 @@
     }
 
     function pushChat(role, text) {
+      if (chatEmptyNode && chatEmptyNode.parentNode) {
+        chatEmptyNode.parentNode.removeChild(chatEmptyNode);
+      }
       var message = createElement('div', 'documents-vip-ai__msg documents-vip-ai__msg--' + role);
       message.setAttribute('data-raw-text', String(text || ''));
       if (role === 'assistant') {
@@ -910,18 +1599,20 @@
         content.innerHTML = formatAiTextToHtml(text);
         message.appendChild(content);
         var normalizedAssistant = sanitizeAssistantFinalText(text) || String(text || '').trim();
-        if (normalizedAssistant && normalizedAssistant !== '⏳ Обрабатываю запрос...') {
+        if (normalizedAssistant) {
           window.DOCUMENTS_LAST_AI_ANSWER = normalizedAssistant;
-          if (templateButton) templateButton.disabled = false;
+          if (templateButton) {
+            templateButton.disabled = false;
+            templateButton.textContent = 'Вставить в шаблон';
+          }
         }
       } else {
         message.textContent = String(text || '');
       }
       chatNode.appendChild(message);
       chatNode.scrollTop = chatNode.scrollHeight;
+      return message;
     }
-
-    pushChat('assistant', 'Готово 👌 Выберите стиль, введите текст или нажмите 🎤 (как в Telegram), затем отправьте кнопкой ➤.');
 
     var isSending = false;
     var isVoiceRecording = false;
@@ -977,9 +1668,16 @@
             if ((response.status === 404 || response.status === 405) && endpointIndex < paidEndpoints.length - 1) {
               return postWithFallback(endpointIndex + 1);
             }
-            return response.json().then(function(payload) {
-              return { response: response, payload: payload };
-            });
+            return readVipJsonResponse(response)
+              .then(function(payload) {
+                return { response: response, payload: payload };
+              })
+              .catch(function(error) {
+                if (endpointIndex < paidEndpoints.length - 1) {
+                  return postWithFallback(endpointIndex + 1);
+                }
+                throw error;
+              });
           });
       }
       return postWithFallback(0).then(function(result) {
@@ -999,50 +1697,56 @@
 
     function sendByCurrentStyle(promptText) {
       if (isSending) {
-        return;
+        return false;
       }
       if (!styleNode || !String(styleNode.value || '').trim()) {
-        pushChat('assistant', 'Пожалуйста, выберите режим.');
-        return;
+        setVipNotice('Выберите стиль ответа.', true);
+        return false;
       }
       var normalizedPrompt = String(promptText || '').trim();
       if (!normalizedPrompt) {
-        pushChat('assistant', 'Введите текст вопроса или надиктуйте его кнопкой «🎤 Запись».');
-        return;
+        setVipNotice('Введите вопрос или запишите голосовое сообщение.', true);
+        return false;
       }
       var selectedStyle = styleNode && styleNode.value ? String(styleNode.value) : 'neutral';
+      var selectedEntryObjects = linkedEntries.filter(function(entry) { return selectedFiles[entry.key]; })
+        .concat(pendingEntries.filter(function(entry) { return selectedFiles[entry.key]; }));
+      if (fileEntries.length && !selectedEntryObjects.length) {
+        setVipNotice('Выберите хотя бы одно вложение для анализа.', true);
+        return false;
+      }
       isSending = true;
       if (sendButton) sendButton.disabled = true;
       if (voiceButton) voiceButton.disabled = true;
       pushChat('user', normalizedPrompt);
-      pushChat('assistant', '⏳ Обрабатываю запрос...');
       setVipLoading(true, 'Готовим ответ с помощью ИИ…');
-      metaNode.innerHTML = '<span class="documents-vip-ai__chip">Стиль: ' + escapeHtmlText(resolveVipStyle(selectedStyle).label || 'Нейтральный') + '</span><span class="documents-vip-ai__chip">⏳ Запрос отправлен, ждём ответ…</span>';
+      setVipNotice('Запрос отправлен · ' + (resolveVipStyle(selectedStyle).label || 'Нейтральный'), false);
       var startedAt = Date.now();
-      var selectedEntryObjects = linkedEntries.filter(function(entry) { return selectedFiles[entry.key]; })
-        .concat(pendingEntries.filter(function(entry) { return selectedFiles[entry.key]; }));
-      chatHistory.push({ role: 'user', text: normalizedPrompt, ts: Date.now() });
-
       Promise.resolve()
         .then(function() {
           return requestVipVisionResponse(normalizedPrompt, selectedEntryObjects, selectedStyle, function(message) {
             setVipLoading(true, message || 'Обрабатываем файлы…');
-            metaNode.innerHTML = '<span class="documents-vip-ai__chip">' + escapeHtmlText(message) + '</span>';
-          });
+          }, organizationSlug, String(vipTaskContext.id || ''));
         })
         .then(function(data) {
-          var aiText = sanitizeAssistantFinalText((data && data.response) || (data && data.answer) || '') || 'Пустой ответ.';
-          window.DOCUMENTS_LAST_AI_ANSWER = aiText;
-          if (templateButton) templateButton.disabled = false;
+          var aiText = sanitizeAssistantFinalText((data && data.response) || (data && data.answer) || '');
+          if (!aiText) {
+            throw new Error('ИИ вернул пустой ответ.');
+          }
           pushChat('assistant', aiText);
-          chatHistory.push({ role: 'assistant', text: aiText, ts: Date.now() });
           var elapsed = Date.now() - startedAt;
           var tokens = data && data.tokensUsed ? data.tokensUsed : '—';
           var mode = data && data.mode ? String(data.mode) : 'vision';
-          metaNode.innerHTML = '<span class="documents-vip-ai__chip">Режим: ' + escapeHtmlText(mode) + '</span><span class="documents-vip-ai__chip">Модель: ' + escapeHtmlText(data && data.model ? data.model : '—') + '</span><span class="documents-vip-ai__chip">Время: ' + elapsed + ' мс</span><span class="documents-vip-ai__chip">Токены: ' + escapeHtmlText(String(tokens)) + '</span>';
+          var skippedCount = data && Array.isArray(data.skippedFiles) ? data.skippedFiles.length : 0;
+          metaNode.innerHTML = '<span class="documents-vip-ai__chip">Режим: ' + escapeHtmlText(mode) + '</span><span class="documents-vip-ai__chip">Модель: ' + escapeHtmlText(data && data.model ? data.model : '—') + '</span><span class="documents-vip-ai__chip">Время: ' + elapsed + ' мс</span><span class="documents-vip-ai__chip">Токены: ' + escapeHtmlText(String(tokens)) + '</span>' + (skippedCount ? '<span class="documents-vip-ai__chip documents-vip-ai__chip--error">Пропущено файлов: ' + skippedCount + '</span>' : '');
         })
         .catch(function(error) {
-          pushChat('assistant', 'Ошибка: ' + (error && error.message ? error.message : 'Неизвестная ошибка'));
+          if (window.console && typeof window.console.error === 'function') {
+            window.console.error('[Documents VIP AI]', error);
+          }
+          var errorMessage = getVipErrorMessage(error);
+          pushChat('error', errorMessage);
+          setVipNotice(errorMessage, true);
         })
         .finally(function() {
           isSending = false;
@@ -1050,12 +1754,13 @@
           if (voiceButton) voiceButton.disabled = false;
           setVipLoading(false);
         });
+      return true;
     }
 
     if (sendButton) {
       sendButton.addEventListener('click', function() {
-        sendByCurrentStyle(chatInput && chatInput.value ? chatInput.value : '');
-        if (chatInput) {
+        var sent = sendByCurrentStyle(chatInput && chatInput.value ? chatInput.value : '');
+        if (sent && chatInput) {
           chatInput.value = '';
           chatInput.focus();
         }
@@ -1070,8 +1775,8 @@
           if (sendButton) {
             sendButton.click();
           } else {
-            sendByCurrentStyle(chatInput.value || '');
-            chatInput.value = '';
+            var sent = sendByCurrentStyle(chatInput.value || '');
+            if (sent) chatInput.value = '';
           }
         }
       });
@@ -1138,9 +1843,9 @@
               postVoiceTranscription(recordedBlob, 'voice-message.webm')
                 .then(function(result) {
                   if (chatInput) chatInput.value = result.text;
-                  pushChat('assistant', '🎙️ Текст из голоса: ' + result.text);
                   updateVoiceStatus('✅ Текст распознан. Отправляем запрос в ИИ…', false);
-                  sendByCurrentStyle(result.text);
+                  var sent = sendByCurrentStyle(result.text);
+                  if (sent && chatInput) chatInput.value = '';
                 })
                 .catch(function(error) {
                   updateVoiceStatus('⚠️ Не удалось распознать голос: ' + (error && error.message ? error.message : 'неизвестная ошибка'), false);
@@ -1160,13 +1865,9 @@
     }
 
     if (styleNode) {
-      styleNode.addEventListener('change', refreshSendButtonState);
       styleNode.addEventListener('change', function() {
-        if (!String(styleNode.value || '').trim()) {
-          pushChat('assistant', 'Выберите режим.');
-          return;
-        }
-        pushChat('assistant', 'Стиль: ' + (resolveVipStyle(styleNode.value).label || 'Нейтральный') + ' ✅ Теперь задайте вопрос.');
+        setVipNotice('', false);
+        refreshSendButtonState();
       });
     }
     refreshSendButtonState();
@@ -1298,11 +1999,11 @@
     var messages = document.querySelectorAll('.documents-vip-ai__msg--assistant');
     for (var i = messages.length - 1; i >= 0; i -= 1) {
       var raw = String(messages[i].getAttribute('data-raw-text') || '').trim();
-      if (raw && raw !== '⏳ Обрабатываю запрос...' && raw !== 'Пожалуйста, выберите режим.' && raw !== 'Выберите режим.') {
+      if (raw) {
         return raw;
       }
       var text = String(messages[i].textContent || '').trim();
-      if (text && text !== '⏳ Обрабатываю запрос...' && text !== 'Пожалуйста, выберите режим.' && text !== 'Выберите режим.') {
+      if (text) {
         return text;
       }
     }

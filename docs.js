@@ -3,7 +3,7 @@
   var DOCUMENTS_SCRIPT_SOURCE = document.currentScript && document.currentScript.src
     ? document.currentScript.src
     : '';
-  var DOCUMENTS_FEATURES_MODULE_VERSION = 'cron-management-20260808'; // Обновляет клиент после удаления автоматического OCR и добавления управления старым cron.
+  var DOCUMENTS_FEATURES_MODULE_VERSION = 'admin-inline-scroll-20260811'; // Обновляет прокрутку и компоновку вкладок администратора.
   var DATE_FORMATTER = new Intl.DateTimeFormat('ru-RU');
   var DATE_TIME_FORMATTER;
   var docsLogger = {
@@ -677,6 +677,19 @@
     backdrop: null,
     dialog: null,
     sections: {},
+    navigation: null,
+    usersButton: null,
+    usersView: null,
+    groups: null,
+    usersCard: null,
+    sectionHeading: null,
+    searchInput: null,
+    filterButton: null,
+    filterPanel: null,
+    addRowButton: null,
+    emptySearch: null,
+    footer: null,
+    footerStatus: null,
     message: null,
     saveButton: null,
     closeButton: null,
@@ -693,14 +706,19 @@
     s3Summary: null,
     s3RefreshButton: null,
     s3TestButton: null,
-    s3CloseButton: null,
+    ocrButton: null,
+    ocrModal: null,
+    ocrStatus: null,
+    ocrSummary: null,
+    ocrTabs: null,
+    ocrActions: null,
+    ocrTextReader: null,
     cronManagementButton: null,
     cronManagementModal: null,
     cronManagementStatus: null,
     cronManagementSummary: null,
     cronManagementRefreshButton: null,
     cronManagementRemoveButton: null,
-    cronManagementCloseButton: null,
     templateButton: null,
     templateModal: null,
     templateStatus: null,
@@ -709,8 +727,7 @@
     templateOpenButton: null,
     templateDownloadButton: null,
     templateUploadButton: null,
-    templateUploadInput: null,
-    templateCloseButton: null
+    templateUploadInput: null
   };
   var clockState = {
     container: null,
@@ -1456,6 +1473,40 @@
         listingLoadedAt: 0,
         listingPromise: null,
         promise: null
+      },
+      ocr: {
+        visible: false,
+        activeTab: 'backfill',
+        loading: false,
+        action: '',
+        error: '',
+        backfill: null,
+        query: '',
+        statusFilter: '',
+        page: 1,
+        pageSize: 25,
+        pollTimer: null,
+        pollInFlight: false,
+        requestToken: 0,
+        users: {
+          loading: false,
+          error: '',
+          items: [],
+          pagination: null,
+          query: '',
+          statusFilter: '',
+          page: 1,
+          pageSize: 12,
+          selectedId: '',
+          detailLoading: false,
+          detailError: '',
+          detail: null,
+          detailQuery: '',
+          detailPage: 1,
+          detailPageSize: 20,
+          textLoading: false,
+          textResult: null
+        }
       }
     },
     resizeTimer: null,
@@ -2469,6 +2520,11 @@
       '.documents-message--info{border-color:rgba(125,211,252,.6);background:rgba(239,246,255,.92);color:#1e3a8a;}' +
       '.documents-message--warning{border-color:rgba(251,191,36,.56);background:rgba(255,251,235,.94);color:#92400e;}' +
       '.documents-message--error{border-color:rgba(248,113,113,.48);background:rgba(254,242,242,.92);color:#991b1b;}' +
+      '.documents-message__text{font:inherit;}' +
+      '.documents-message__actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;}' +
+      '.documents-message__developer-button{appearance:none;border:1px solid currentColor;border-radius:10px;background:transparent;color:inherit;padding:7px 10px;font:700 12px/1.2 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;cursor:pointer;}' +
+      '.documents-message__developer-button:hover{background:rgba(255,255,255,.2);}' +
+      '.documents-message__developer-details{box-sizing:border-box;width:100%;max-height:min(48vh,360px);margin:10px 0 0;padding:10px;border-radius:10px;background:rgba(15,23,42,.92);color:#e2e8f0;overflow:auto;white-space:pre-wrap;word-break:break-word;font:500 11px/1.45 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;user-select:text;}' +
       '@media (prefers-color-scheme:dark){' +
       '.documents-message{background:rgba(15,23,42,.9);border-color:rgba(100,116,139,.58);color:#e2e8f0;box-shadow:0 18px 40px rgba(2,6,23,.38);}' +
       '.documents-message--success{background:rgba(20,83,45,.9);color:#dcfce7;}' +
@@ -8795,6 +8851,75 @@
     messageTimerId = window.setTimeout(function() {
       clearMessage();
     }, duration);
+  }
+
+  function buildDeveloperErrorText(error, context) {
+    var rawResponse = error && typeof error.rawResponse === 'string' ? error.rawResponse.trim() : '';
+    if (rawResponse.length > 12000) {
+      rawResponse = rawResponse.slice(0, 12000) + '\n…ответ обрезан…';
+    }
+    var details = {
+      occurredAt: new Date().toISOString(),
+      action: context && context.action ? context.action : '',
+      organization: context && context.organization ? context.organization : '',
+      documentId: context && context.documentId ? context.documentId : '',
+      httpStatus: error && typeof error.status === 'number' ? error.status : 0,
+      reason: error && error.reason ? error.reason : '',
+      message: error && error.message ? error.message : String(error || 'unknown_error'),
+      responseContentType: error && error.responseContentType ? error.responseContentType : '',
+      response: error && error.responseData && typeof error.responseData === 'object'
+        ? error.responseData
+        : null,
+      rawResponse: rawResponse
+    };
+
+    try {
+      return JSON.stringify(details, null, 2);
+    } catch (serializationError) {
+      return 'Не удалось собрать технические детали: ' + String(serializationError);
+    }
+  }
+
+  function showDeveloperErrorMessage(text, error, context) {
+    showMessage('error', text, 60000);
+    var message = elements.message;
+    if (!message) {
+      return;
+    }
+
+    message.textContent = '';
+    var messageText = createElement('div', 'documents-message__text', text);
+    var actions = createElement('div', 'documents-message__actions');
+    var developerButton = createElement(
+      'button',
+      'documents-message__developer-button',
+      'Показать ошибку программисту'
+    );
+    developerButton.type = 'button';
+    var closeButton = createElement('button', 'documents-message__developer-button', 'Закрыть');
+    closeButton.type = 'button';
+    var details = createElement('pre', 'documents-message__developer-details');
+    details.hidden = true;
+    details.textContent = buildDeveloperErrorText(error, context || {});
+
+    developerButton.addEventListener('click', function() {
+      var willShow = details.hidden;
+      details.hidden = !willShow;
+      developerButton.textContent = willShow
+        ? 'Скрыть техническую ошибку'
+        : 'Показать ошибку программисту';
+      if (willShow && messageTimerId) {
+        window.clearTimeout(messageTimerId);
+        messageTimerId = null;
+      }
+    });
+    closeButton.addEventListener('click', clearMessage);
+
+    actions.appendChild(developerButton);
+    actions.appendChild(closeButton);
+    message.appendChild(messageText);
+    message.appendChild(actions);
+    message.appendChild(details);
   }
 
   function clearMessage() {
@@ -18676,15 +18801,24 @@
       }
 
       xhr.onerror = function() {
-        reject(new Error('Не удалось связаться с сервером. Проверьте интернет и повторите загрузку.'));
+        var networkError = new Error('Не удалось связаться с сервером. Проверьте интернет и повторите загрузку.');
+        networkError.status = Number(xhr.status) || 0;
+        networkError.rawResponse = xhr.responseText || '';
+        reject(networkError);
       };
 
       xhr.ontimeout = function() {
-        reject(new Error('Сервер слишком долго не отвечает. Повторите загрузку чуть позже.'));
+        var timeoutError = new Error('Сервер слишком долго не отвечает. Повторите загрузку чуть позже.');
+        timeoutError.status = Number(xhr.status) || 0;
+        timeoutError.rawResponse = xhr.responseText || '';
+        reject(timeoutError);
       };
 
       xhr.onabort = function() {
-        reject(new Error('Загрузка была прервана. Повторите сохранение.'));
+        var abortError = new Error('Загрузка была прервана. Повторите сохранение.');
+        abortError.status = Number(xhr.status) || 0;
+        abortError.rawResponse = xhr.responseText || '';
+        reject(abortError);
       };
 
       xhr.onload = function() {
@@ -18697,7 +18831,11 @@
           try {
             data = JSON.parse(payload);
           } catch (parseError) {
-            reject(new Error('Сервер вернул некорректный JSON.'));
+            var invalidJsonError = new Error('Сервер вернул некорректный JSON.');
+            invalidJsonError.status = xhr.status;
+            invalidJsonError.rawResponse = payload;
+            invalidJsonError.responseContentType = contentType;
+            reject(invalidJsonError);
             return;
           }
         }
@@ -18708,6 +18846,8 @@
             : '';
           var statusError = new Error(message || ('Статус ответа: ' + xhr.status));
           statusError.status = xhr.status;
+          statusError.rawResponse = payload;
+          statusError.responseContentType = contentType;
           if (isJson && data && typeof data === 'object') {
             statusError.responseData = data;
             statusError.reason = data.reason || '';
@@ -18721,6 +18861,8 @@
           responseError.status = xhr.status;
           responseError.responseData = data;
           responseError.reason = data.reason || '';
+          responseError.rawResponse = payload;
+          responseError.responseContentType = contentType;
           reject(responseError);
           return;
         }
@@ -25179,10 +25321,15 @@
       if (currentDoc && Array.isArray(currentDoc.files)) {
         linkedFiles = currentDoc.files.map(function(file) {
           return {
+            id: file && file.id ? String(file.id) : '',
             name: getAttachmentName(file),
+            originalName: file && file.originalName ? String(file.originalName) : '',
+            storedName: file && file.storedName ? String(file.storedName) : '',
             url: resolveAttachmentUrl(file, { bustCache: true }) || '',
             size: file && file.size ? file.size : 0,
-            type: file && file.type ? String(file.type) : ''
+            type: file && file.type ? String(file.type) : '',
+            ocrText: file && typeof file.ocrText === 'string' ? file.ocrText : '',
+            ocrTextLength: file && file.ocrTextLength ? Number(file.ocrTextLength) : 0
           };
         }).filter(function(file) {
           return Boolean(file && file.url);
@@ -26812,7 +26959,15 @@
                 message: errorMessage
               });
             }
-            showMessage('error', 'Не удалось сохранить документ: ' + errorMessage);
+            showDeveloperErrorMessage(
+              'Не удалось сохранить документ: ' + errorMessage,
+              error,
+              {
+                action: isEditMode ? 'update' : 'create',
+                organization: state.organization,
+                documentId: isEditMode && doc && doc.id ? doc.id : ''
+              }
+            );
           });
       });
 

@@ -16,9 +16,9 @@
 ## 2) Ключевые точки входа
 
 ### Backend
-- `docs.php` — главный API (документы, задачи, логи, доступы).
-- `api-docs.php` — AI + сборка итогового DOCX/PDF.
-- `api-groq-paid.php` — VIP AI (Groq).
+- `docs.php` — главный API и авторизованный доступ к существующему приватному OCR через `ai_brief_generate&mode=ocr_only`.
+- `api-docs.php` — DeepSeek по готовому OCR-тексту и сборка итогового DOCX/PDF.
+- `api-groq-paid.php` — legacy-совместимость и старый audio STT; новый текстовый VIP-чат его не использует.
 
 ### Frontend (Web)
 - `docs.js` — основной интерфейс.
@@ -85,8 +85,8 @@
 ### Не работает AI
 - `docs-ai-response-modal.js` (Web)
 - `app/telegram-ai-response-dialog.js` (Telegram)
-- `api-docs.php`, `api-groq-paid.php` (backend)
-- проверь API ключи/модели в env
+- `docs.php` (приватный OCR), `api-docs.php` (DeepSeek и шаблоны), `api-groq-paid.php` нужен только старому audio STT
+- проверь `DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL` и `DEEPSEEK_BASE_URL` в env
 
 ### Не собирается DOCX
 - проверь наличие `[ОТВЕТ ИИ]` в шаблоне

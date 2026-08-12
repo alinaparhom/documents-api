@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace DocumentsGroqPaid;
 
 /**
- * Гибкий API-обработчик для Groq (paid).
- * Поддерживает маршрутизацию по методам и action.
+ * Совместимый API-обработчик платного ИИ.
+ * Путь и action сохранены для старых Web/Telegram-клиентов.
  * PHP 8.1+
  */
 
@@ -18,9 +18,9 @@ const MAX_TEXT_CHARS_PER_CHUNK = 12000;
 const MAX_TEXT_CHUNKS_TOTAL = 30;
 const MAX_TEXT_PAYLOAD_CHARS = 90000;
 const OCR_MAX_PAGES = 0; // 0 = все страницы PDF
-const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const DEEPSEEK_API_URL = 'https://api.deepseek.com/chat/completions';
 const GROQ_API_TRANSCRIBE_URL = 'https://api.groq.com/openai/v1/audio/transcriptions';
-const MODEL_TEXT_DEFAULT = 'openai/gpt-oss-20b';
+const MODEL_TEXT_DEFAULT = 'deepseek-v4-flash';
 
 function getServerAiPromptsCatalog(): array
 {
@@ -663,9 +663,25 @@ function extractImageTextWithOcr(string $path): string
     return cleanExtractedText((string)$output);
 }
 
+function getDeepSeekKey(array $env): string
+{
+    foreach (['DEEPSEEK_API_KEY'] as $key) {
+        $envValue = getenv($key);
+        if (is_string($envValue) && trim($envValue) !== '') {
+            return trim($envValue);
+        }
+
+        if (isset($env[$key]) && trim((string)$env[$key]) !== '') {
+            return trim((string)$env[$key]);
+        }
+    }
+
+    return '';
+}
+
 function getGroqKey(array $env): string
 {
-    foreach (['GROQ_API_KEY', 'AI_API_KEY_PAID', 'AI_API_KEY', 'OPENAI_API_KEY'] as $key) {
+    foreach (['GROQ_API_KEY'] as $key) {
         $envValue = getenv($key);
         if (is_string($envValue) && trim($envValue) !== '') {
             return trim($envValue);
@@ -681,13 +697,24 @@ function getGroqKey(array $env): string
 
 function resolveModel(array $env): string
 {
-    $model = trim((string)(getenv('AI_MODEL') ?: ($env['AI_MODEL'] ?? MODEL_TEXT_DEFAULT)));
+    $model = trim((string)(getenv('DEEPSEEK_MODEL') ?: ($env['DEEPSEEK_MODEL'] ?? MODEL_TEXT_DEFAULT)));
     return $model !== '' ? $model : MODEL_TEXT_DEFAULT;
 }
 
-function callGroqChat(array $requestPayload, string $apiKey): array
+function deepSeekApiUrl(): string
 {
-    $ch = curl_init(GROQ_API_URL);
+    $base = trim((string)(getenv('DEEPSEEK_BASE_URL') ?: ''));
+    if ($base === '') {
+        $base = DEEPSEEK_API_URL;
+    }
+    return str_ends_with($base, '/chat/completions')
+        ? $base
+        : rtrim($base, '/') . '/chat/completions';
+}
+
+function callDeepSeekChat(array $requestPayload, string $apiKey): array
+{
+    $ch = curl_init(deepSeekApiUrl());
     if ($ch === false) {
         return ['ok' => false, 'status' => 500, 'error' => 'Не удалось инициализировать cURL'];
     }
@@ -711,12 +738,12 @@ function callGroqChat(array $requestPayload, string $apiKey): array
     }
 
     if ($rawResponse === false) {
-        return ['ok' => false, 'status' => 502, 'error' => 'Ошибка запроса к Groq: ' . $curlErr];
+        return ['ok' => false, 'status' => 502, 'error' => 'Ошибка запроса к DeepSeek: ' . $curlErr];
     }
 
     $decoded = json_decode((string)$rawResponse, true);
     if (!is_array($decoded)) {
-        return ['ok' => false, 'status' => 502, 'error' => 'Groq вернул невалидный JSON'];
+        return ['ok' => false, 'status' => 502, 'error' => 'DeepSeek вернул невалидный JSON'];
     }
 
     if ($httpCode >= 400) {
@@ -1010,9 +1037,9 @@ function handleAnalyzePaidAction(array $env): void
         respond(413, ['ok' => false, 'error' => 'Общий размер файлов превышает лимит.']);
     }
 
-    $apiKey = getGroqKey($env);
+    $apiKey = getDeepSeekKey($env);
     if ($apiKey === '') {
-        respond(500, ['ok' => false, 'error' => 'Не найден GROQ_API_KEY в окружении или .env']);
+        respond(500, ['ok' => false, 'error' => 'Не найден DEEPSEEK_API_KEY в окружении или .env']);
     }
 
     $userPrompt = requestStringField('prompt');
@@ -1052,6 +1079,18 @@ function handleAnalyzePaidAction(array $env): void
             $providedText .= ($providedText !== '' ? "\n\n" : '') . '[' . ($name !== '' ? $name : 'Документ') . "]\n" . $chunk;
         }
 
+        $serverOcrText = '';
+        if ($files) {
+            foreach (buildExtractedTextsFromFiles($files) as $entry) {
+                $chunk = trim((string)($entry['text'] ?? ''));
+                if ($chunk === '') {
+                    continue;
+                }
+                $name = trim((string)($entry['name'] ?? 'Документ')) ?: 'Документ';
+                $serverOcrText .= ($serverOcrText !== '' ? "\n\n" : '') . '[' . $name . "]\n" . $chunk;
+            }
+        }
+
         // Читаем system prompt из входящего payload (если клиент его прислал).
         $systemPrompt = '';
         foreach ($messages as $message) {
@@ -1066,7 +1105,8 @@ function handleAnalyzePaidAction(array $env): void
             $systemPrompt = getResponseAiSystemPrompt($responseMode, $tone, $assistantMode);
         }
 
-        // 1) Vision-этап: извлекаем сырой текст из изображений/PDF «как есть».
+        // 1) Извлекаем текст существующим OCR-контуром. DeepSeek API принимает
+        // текстовые сообщения, поэтому изображения не отправляются внешнему AI.
         $visionContent = [[
             'type' => 'text',
             'text' => "Извлеки весь текст из изображений/страниц строго как есть.\n"
@@ -1094,27 +1134,15 @@ function handleAnalyzePaidAction(array $env): void
         }
 
         $startedAt = microtime(true);
-        $visionExtractPayload = [
-            'model' => (string)($visionPayload['model'] ?? 'qwen/qwen3.6-27b'),
-            'max_tokens' => min(2600, max(900, (int)($visionPayload['max_tokens'] ?? 1800))),
-            'messages' => [
-                ['role' => 'system', 'content' => 'Ты модуль чтения документа. Возвращай только текст без анализа.'],
-                ['role' => 'user', 'content' => $visionContent],
-            ],
-            'temperature' => (float)(getServerAiPromptsCatalog()['DEFAULT_RESPONSE_FORMAT_LIMITS']['vision_extract']['temperature'] ?? 0.0),
-        ];
-        $visionExtractResult = callGroqChat($visionExtractPayload, $apiKey);
-        if (($visionExtractResult['ok'] ?? false) !== true) {
-            $visionError = trim(str_ireplace(['Groq', 'Vision OCR', 'OCR'], ['сервис ИИ', 'чтение изображения', 'распознавание текста'], (string)($visionExtractResult['error'] ?? '')));
-            respond((int)($visionExtractResult['status'] ?? 502), ['ok' => false, 'error' => $visionError !== '' ? $visionError : 'Не удалось прочитать изображение документа']);
-        }
-        $visionDecoded = (array)($visionExtractResult['raw'] ?? []);
-        $visionRawText = trim((string)($visionDecoded['choices'][0]['message']['content'] ?? ''));
+        $visionRawText = trim($serverOcrText !== '' ? $serverOcrText : $providedText);
         if ($visionRawText === '') {
-            respond(502, ['ok' => false, 'error' => 'Не удалось прочитать текст с изображения документа']);
+            respond(422, ['ok' => false, 'error' => 'OCR не вернул текст изображения документа.']);
         }
 
-        $combinedDocText = trim($visionRawText . ($providedText !== '' ? ("\n\n" . $providedText) : ''));
+        $combinedDocText = trim(
+            $visionRawText
+            . ($serverOcrText !== '' && $providedText !== '' ? ("\n\n" . $providedText) : '')
+        );
         if ($combinedDocText === '') {
             respond(422, ['ok' => false, 'error' => 'Не удалось собрать текст документов для анализа.']);
         }
@@ -1128,9 +1156,9 @@ function handleAnalyzePaidAction(array $env): void
             ],
             'temperature' => (float)(getServerAiPromptsCatalog()['DEFAULT_RESPONSE_FORMAT_LIMITS']['response_extended']['temperature'] ?? 0.2),
         ];
-        $analysisResult = callGroqChat($analysisPayload, $apiKey);
+        $analysisResult = callDeepSeekChat($analysisPayload, $apiKey);
         if (($analysisResult['ok'] ?? false) !== true) {
-            $analysisError = trim(str_ireplace(['Groq', 'Vision OCR', 'OCR'], ['сервис ИИ', 'чтение изображения', 'распознавание текста'], (string)($analysisResult['error'] ?? '')));
+            $analysisError = trim(str_ireplace(['DeepSeek', 'Vision OCR', 'OCR'], ['сервис ИИ', 'чтение изображения', 'распознавание текста'], (string)($analysisResult['error'] ?? '')));
             respond((int)($analysisResult['status'] ?? 502), ['ok' => false, 'error' => $analysisError !== '' ? $analysisError : 'Ошибка формирования ответа']);
         }
         $analysisDecoded = (array)($analysisResult['raw'] ?? []);
@@ -1315,10 +1343,10 @@ function handleAnalyzePaidAction(array $env): void
         ],
     ];
 
-    $groqResult = callGroqChat($requestPayload, $apiKey);
+    $groqResult = callDeepSeekChat($requestPayload, $apiKey);
     if (($groqResult['ok'] ?? false) !== true) {
         $errorMessage = str_ireplace(
-            ['Groq API', 'Groq'],
+            ['DeepSeek API', 'DeepSeek'],
             ['сервиса ИИ', 'сервис ИИ'],
             (string)($groqResult['error'] ?? 'Ошибка сервиса ИИ')
         );
@@ -1348,7 +1376,7 @@ function handleAnalyzePaidAction(array $env): void
 
 function handleGenerateSummaryAction(array $env): void
 {
-    $apiKey = getGroqKey($env);
+    $apiKey = getDeepSeekKey($env);
     $promptSelection = resolvePromptSelectionFromRequest();
     $responseMode = (string)$promptSelection['response_mode'];
     $visionQualityMode = (string)$promptSelection['vision_quality_mode'];
@@ -1356,7 +1384,7 @@ function handleGenerateSummaryAction(array $env): void
     $assistantMode = (string)$promptSelection['assistant_mode'];
     $promptVersion = (string)$promptSelection['promptVersion'];
     if ($apiKey === '') {
-        respond(500, ['ok' => false, 'error' => 'Не найден GROQ_API_KEY в окружении или .env']);
+        respond(500, ['ok' => false, 'error' => 'Не найден DEEPSEEK_API_KEY в окружении или .env']);
     }
 
     $rawExtractedTexts = (string)($_POST['extractedTexts'] ?? '');
@@ -1407,10 +1435,10 @@ function handleGenerateSummaryAction(array $env): void
     ];
 
     $startedAt = microtime(true);
-    $groqResult = callGroqChat($requestPayload, $apiKey);
+    $groqResult = callDeepSeekChat($requestPayload, $apiKey);
     if (($groqResult['ok'] ?? false) !== true) {
         $errorMessage = str_ireplace(
-            ['Groq API', 'Groq'],
+            ['DeepSeek API', 'DeepSeek'],
             ['сервиса ИИ', 'сервис ИИ'],
             (string)($groqResult['error'] ?? 'Ошибка сервиса ИИ')
         );
@@ -1420,7 +1448,7 @@ function handleGenerateSummaryAction(array $env): void
     $decoded = (array)($groqResult['raw'] ?? []);
     $summary = normalizeAiOutputText((string)($decoded['choices'][0]['message']['content'] ?? ''));
     if ($summary === '') {
-        respond(502, ['ok' => false, 'error' => 'Пустой summary от Groq']);
+        respond(502, ['ok' => false, 'error' => 'Пустой summary от DeepSeek']);
     }
 
     respond(200, [
@@ -1441,9 +1469,9 @@ function handleGenerateSummaryAction(array $env): void
 
 function handleGenerateResponseAction(array $env): void
 {
-    $apiKey = getGroqKey($env);
+    $apiKey = getDeepSeekKey($env);
     if ($apiKey === '') {
-        respond(500, ['ok' => false, 'error' => 'Не найден GROQ_API_KEY в окружении или .env']);
+        respond(500, ['ok' => false, 'error' => 'Не найден DEEPSEEK_API_KEY в окружении или .env']);
     }
 
     $rawExtractedTexts = (string)($_POST['extractedTexts'] ?? '');
@@ -1534,10 +1562,10 @@ function handleGenerateResponseAction(array $env): void
     ];
 
     $startedAt = microtime(true);
-    $groqResult = callGroqChat($requestPayload, $apiKey);
+    $groqResult = callDeepSeekChat($requestPayload, $apiKey);
     if (($groqResult['ok'] ?? false) !== true) {
         $errorMessage = str_ireplace(
-            ['Groq API', 'Groq'],
+            ['DeepSeek API', 'DeepSeek'],
             ['сервиса ИИ', 'сервис ИИ'],
             (string)($groqResult['error'] ?? 'Ошибка сервиса ИИ')
         );
@@ -1620,7 +1648,8 @@ function handleGetRequest(array $env): void
         respond(200, [
             'ok' => true,
             'message' => 'pong',
-            'apiKeyConfigured' => getGroqKey($env) !== '',
+            'apiKeyConfigured' => getDeepSeekKey($env) !== '',
+            'transcriptionApiKeyConfigured' => getGroqKey($env) !== '',
             'model' => resolveModel($env),
             'actions' => ['analyze_paid', 'generate_summary', 'generate_response', 'transcribe_audio'],
         ]);

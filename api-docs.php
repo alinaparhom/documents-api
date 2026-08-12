@@ -39,8 +39,8 @@ if ($method === 'GET') {
     $action = isset($_GET['action']) ? trim((string)$_GET['action']) : '';
     if ($action === 'ai_models') {
         $env = loadEnv(getEnvPaths());
-        $rawModels = trim((string)($env['AI_MODELS'] ?? $env['OPENAI_MODELS'] ?? ''));
-        $defaultModel = trim((string)($env['AI_MODEL'] ?? $env['OPENAI_MODEL'] ?? 'gpt-4o-mini'));
+        $rawModels = trim((string)($env['DEEPSEEK_MODELS'] ?? ''));
+        $defaultModel = trim((string)($env['DEEPSEEK_MODEL'] ?? 'deepseek-v4-flash'));
         $models = [];
         if ($rawModels !== '') {
             $parts = preg_split('/[,\\n]+/u', $rawModels);
@@ -72,8 +72,8 @@ if ($method === 'GET') {
     if ($isDebug) {
         $debugEnv = loadEnv(getEnvPaths());
         $debugKey = resolveAiApiKey($debugEnv);
-        $debugModel = trim((string)($debugEnv['AI_MODEL'] ?? $debugEnv['OPENAI_MODEL'] ?? ''));
-        $debugBase = trim((string)($debugEnv['AI_BASE_URL'] ?? $debugEnv['OPENAI_BASE_URL'] ?? 'https://api.openai.com/v1'));
+        $debugModel = trim((string)($debugEnv['DEEPSEEK_MODEL'] ?? 'deepseek-v4-flash'));
+        $debugBase = trim((string)($debugEnv['DEEPSEEK_BASE_URL'] ?? 'https://api.deepseek.com'));
         $payload['debug'] = [
             'key_present' => $debugKey !== '',
             'key_prefix' => $debugKey !== '' ? substr($debugKey, 0, 4) : '',
@@ -146,7 +146,7 @@ function getEnvPaths(): array
 
 function resolveAiApiKey(array $env): string
 {
-    foreach (['AI_API_KEY_PAID', 'AI_API_KEY', 'OPENAI_API_KEY'] as $key) {
+    foreach (['DEEPSEEK_API_KEY'] as $key) {
         $envValue = getenv($key);
         if (is_string($envValue) && trim($envValue) !== '') {
             return trim($envValue);
@@ -2558,17 +2558,12 @@ if ($action === 'ocr_extract') {
 }
 
 $apiKey = resolveAiApiKey($env);
-$model = trim((string)($env['AI_MODEL'] ?? $env['OPENAI_MODEL'] ?? 'gpt-4o-mini'));
-$baseUrl = trim((string)($env['AI_BASE_URL'] ?? $env['OPENAI_BASE_URL'] ?? 'https://api.openai.com/v1'));
-$isGroqKey = str_starts_with($apiKey, 'gsk_');
-if ($baseUrl === 'https://api.openai.com/v1' && $isGroqKey) {
-    $baseUrl = 'https://api.groq.com/openai/v1';
-}
-$isGroq = stripos($baseUrl, 'groq.com') !== false;
+$model = trim((string)($env['DEEPSEEK_MODEL'] ?? 'deepseek-v4-flash'));
+$baseUrl = trim((string)($env['DEEPSEEK_BASE_URL'] ?? 'https://api.deepseek.com'));
 $isGoogleOpenAiCompat = stripos($baseUrl, 'generativelanguage.googleapis.com') !== false;
 
 if ($apiKey === '') {
-    jsonResponse(500, ['ok' => false, 'error' => 'AI API key не найден в .env']);
+    jsonResponse(500, ['ok' => false, 'error' => 'DEEPSEEK_API_KEY не найден в .env']);
 }
 
 $filesSummary = buildFilesSummary($files);
@@ -2665,7 +2660,7 @@ $behaviorInstruction = $effectiveBehavior !== ''
     : '';
 
 $effectiveModel = $requestedModel !== '' ? $requestedModel : $model;
-$allowedModelsRaw = trim((string)($env['AI_MODELS'] ?? $env['OPENAI_MODELS'] ?? ''));
+$allowedModelsRaw = trim((string)($env['DEEPSEEK_MODELS'] ?? ''));
 if ($allowedModelsRaw !== '') {
     $allowedModels = [];
     $allowedParts = preg_split('/[,\\n]+/u', $allowedModelsRaw);
@@ -2713,11 +2708,14 @@ $body = [
         ['role' => 'user', 'content' => json_encode($userPayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)],
     ],
 ];
-if (!$isGroq && !$isGoogleOpenAiCompat) {
+if (!$isGoogleOpenAiCompat) {
     $body['response_format'] = ['type' => 'json_object'];
 }
 
-$endpoint = rtrim($baseUrl, '/') . '/chat/completions';
+$normalizedBaseUrl = rtrim($baseUrl, '/');
+$endpoint = str_ends_with($normalizedBaseUrl, '/chat/completions')
+    ? $normalizedBaseUrl
+    : $normalizedBaseUrl . '/chat/completions';
 function performAiRequest(string $endpoint, string $apiKey, array $body): array
 {
     $ch = curl_init($endpoint);
@@ -2887,6 +2885,8 @@ if (mb_strlen($response) > 8000) {
 
 jsonResponse(200, [
     'ok' => true,
+    'model' => $effectiveModel,
+    'tokensUsed' => (int)($responseJson['usage']['total_tokens'] ?? 0),
     'analysis' => $analysis,
     'response' => $response,
     'neutral' => $neutral,
