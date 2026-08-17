@@ -13,10 +13,16 @@
     <script>
       (function preloadVersionedModules() {
         // Меняется только при публикации нового согласованного комплекта Mini App.
-        const assetReleaseVersion = '20260817-viewer-task-identity-1';
+        const assetReleaseVersion = '20260817-external-browser-print-17';
+        window.__MINI_APP_RELEASE_VERSION__ = assetReleaseVersion;
         const requestedVersion = new URLSearchParams(window.location.search).get('v') || '';
         const linkVersion = /^[a-z0-9._-]{1,80}$/i.test(requestedVersion) ? requestedVersion : '';
-        const runtimeVersion = window.__ASSET_VERSION__ || linkVersion || assetReleaseVersion;
+        // Серверные ссылки могут долго хранить старый ?v=. Текущая версия HTML
+        // всегда входит в ключ, поэтому устаревший URL не возвращает старый JS.
+        const runtimeVersion = [window.__ASSET_VERSION__, assetReleaseVersion, linkVersion]
+          .filter(Boolean)
+          .map(String)
+          .join('.');
         window.__RUNTIME_ASSET_VERSION__ = runtimeVersion;
         ['./telegram-appdosc.js', './apppdf.js'].forEach(function(source) {
           const preload = document.createElement('link');
@@ -155,6 +161,10 @@
         height: 20px;
       }
 
+      .appdosc-viewer__control--print {
+        color: var(--tg-theme-text-color, #1f2937);
+      }
+
       .appdosc-viewer__control--fit {
         display: inline-flex;
         align-items: center;
@@ -267,6 +277,41 @@
         background: #ffffff;
         transform-origin: 0 0;
         touch-action: pan-x pan-y;
+      }
+
+      .appdosc-viewer__image,
+      .appdosc-viewer__video {
+        display: block;
+        width: auto;
+        height: auto;
+        max-width: 100%;
+        max-height: 100%;
+        margin: auto;
+        object-fit: contain;
+      }
+
+      .appdosc-viewer[data-viewer-mode='image'] .appdosc-viewer__zoom {
+        box-sizing: border-box;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 12px;
+        background: #eef2f7;
+      }
+
+      .appdosc-viewer__image {
+        flex: 0 0 auto;
+        transform-origin: center center;
+      }
+
+      :root[data-theme='dark'] .appdosc-viewer[data-viewer-mode='image'] .appdosc-viewer__zoom {
+        background: #0f172a;
+      }
+
+      @media (pointer: coarse) {
+        .appdosc-viewer[data-viewer-mode='image'] .appdosc-viewer__zoom {
+          padding: 8px;
+        }
       }
 
       .appdosc-viewer--pdf .appdosc-viewer__content,
@@ -1682,7 +1727,8 @@
       .appdosc-ai-brief-modal__overlay {
         position: fixed;
         inset: 0;
-        z-index: 4000;
+        /* Окно результата должно открываться поверх просмотрщика с z-index 150000. */
+        z-index: 160000;
         background: rgba(15, 23, 42, 0.42);
         backdrop-filter: blur(10px);
         -webkit-backdrop-filter: blur(10px);
@@ -1843,7 +1889,7 @@
       }
 
       .appdosc-card.task-card + .appdosc-card.task-card {
-        margin-top: 2px !important;
+        margin-top: 8px !important;
       }
       .appdosc {
         width: 100% !important;
@@ -7972,7 +8018,7 @@
         --appdosc-expanded-file-border:rgba(51,65,85,.82);
       }
       @media (max-width:430px){
-        .appdosc-card.task-card{padding:12px!important}
+        .appdosc-card.task-card{padding:6px 6px 4px!important}
         .appdosc-card.task-card[data-expanded='true']{padding:0!important}
         .appdosc-card[data-expanded='true'] .appdosc-card__header,
         .appdosc-card[data-expanded='true'] .appdosc-card__details,
@@ -8563,8 +8609,8 @@
         .appdosc-card[data-expanded='false'] .appdosc-card__header{
           grid-template-columns:minmax(0,1fr) 22px!important;
           gap:7px!important;
-          min-height:58px!important;
-          padding:8px 9px!important;
+          min-height:0!important;
+          padding:8px 9px 3px!important;
         }
         .appdosc-card[data-expanded='false'] .task-meta{
           gap:3px!important;
@@ -9301,6 +9347,99 @@
         }
       }
 
+      .appdosc-card.task-card.appdosc-card--unviewed{
+        --appdosc-task-card-bg:linear-gradient(145deg,rgba(239,246,255,.98),rgba(219,234,254,.84) 56%,rgba(248,250,252,.96));
+        --appdosc-task-card-border:rgba(96,165,250,.42);
+        --appdosc-task-card-shadow:0 10px 24px rgba(37,99,235,.12),inset 0 1px 0 rgba(255,255,255,.82);
+      }
+      .appdosc-card.task-card.appdosc-card--viewed{
+        --appdosc-task-card-bg:linear-gradient(145deg,rgba(255,255,255,.96),rgba(248,250,252,.92) 62%,rgba(241,245,249,.88));
+        --appdosc-task-card-border:rgba(148,163,184,.26);
+        --appdosc-task-card-shadow:0 8px 20px rgba(71,85,105,.09),inset 0 1px 0 rgba(255,255,255,.7);
+      }
+      :root[data-theme='dark'] .appdosc-card.task-card.appdosc-card--unviewed{
+        --appdosc-task-card-bg:linear-gradient(145deg,rgba(30,64,175,.38),rgba(15,23,42,.94) 58%,rgba(15,23,42,.88));
+        --appdosc-task-card-border:rgba(96,165,250,.4);
+        --appdosc-task-card-shadow:0 12px 26px rgba(2,6,23,.32),inset 0 1px 0 rgba(147,197,253,.1);
+      }
+      :root[data-theme='dark'] .appdosc-card.task-card.appdosc-card--viewed{
+        --appdosc-task-card-bg:linear-gradient(145deg,rgba(30,41,59,.9),rgba(15,23,42,.92) 64%,rgba(15,23,42,.86));
+        --appdosc-task-card-border:rgba(100,116,139,.3);
+        --appdosc-task-card-shadow:0 9px 22px rgba(2,6,23,.26),inset 0 1px 0 rgba(148,163,184,.06);
+      }
+
+      .appdosc-card__view-state{
+        display:inline-flex;
+        align-items:center;
+        justify-content:flex-start;
+        gap:3px;
+        width:fit-content;
+        min-height:0;
+        margin:0 8px 2px;
+        padding:0;
+        border:0;
+        border-radius:0;
+        background:transparent;
+        color:#64748b;
+        font:700 9px/1 Inter,system-ui,sans-serif;
+        white-space:nowrap;
+      }
+      .appdosc-card__view-state::before{
+        content:'\2713';
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        width:auto;
+        height:auto;
+        border-radius:0;
+        background:transparent;
+        font-size:8px;
+        font-weight:900;
+        line-height:1;
+      }
+      .appdosc-card--unviewed .appdosc-card__view-state{
+        color:#1d4ed8;
+        box-shadow:none;
+      }
+      .appdosc-card--unviewed .appdosc-card__view-state::before{
+        content:'';
+        width:5px;
+        height:5px;
+        border-radius:50%;
+        background:#2563eb;
+        box-shadow:none;
+      }
+      .appdosc-card.task-card[data-expanded='false'].appdosc-card--unviewed .appdosc-card__header{
+        background:linear-gradient(135deg,rgba(239,246,255,.9),rgba(219,234,254,.46) 58%,rgba(255,255,255,.18));
+      }
+      .appdosc-card.task-card[data-expanded='false'].appdosc-card--viewed .appdosc-card__header{
+        background:linear-gradient(135deg,rgba(248,250,252,.32),rgba(255,255,255,.08));
+      }
+      .appdosc-card.task-card[data-expanded='true'] .appdosc-card__header{
+        box-shadow:inset 0 -1px 0 rgba(59,130,246,.16);
+      }
+      :root[data-theme='dark'] .appdosc-card__view-state{
+        border-color:transparent;
+        background:transparent;
+        color:#94a3b8;
+      }
+      :root[data-theme='dark'] .appdosc-card--unviewed .appdosc-card__view-state{
+        border-color:transparent;
+        background:transparent;
+        color:#dbeafe;
+        box-shadow:none;
+      }
+      :root[data-theme='dark'] .appdosc-card--unviewed .appdosc-card__view-state::before{
+        background:#60a5fa;
+        box-shadow:none;
+      }
+      :root[data-theme='dark'] .appdosc-card.task-card[data-expanded='false'].appdosc-card--unviewed .appdosc-card__header{
+        background:linear-gradient(135deg,rgba(30,64,175,.32),rgba(15,23,42,.18) 64%);
+      }
+      :root[data-theme='dark'] .appdosc-card.task-card[data-expanded='false'].appdosc-card--viewed .appdosc-card__header{
+        background:rgba(15,23,42,.12);
+      }
+
     </style>
   </head>
   <body>
@@ -9649,6 +9788,19 @@
               title="Кратко ИИ"
             >
               🤖 AI
+            </button>
+            <button
+              type="button"
+              class="appdosc-viewer__control appdosc-viewer__control--print"
+              data-viewer-print
+              aria-label="Печать оригинала"
+              title="Печать оригинала"
+            >
+              <svg class="appdosc-viewer__control-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M7 8V3h10v5M7 17H5a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+                <path d="M7 14h10v7H7z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"></path>
+                <circle cx="18" cy="12" r="1" fill="currentColor"></circle>
+              </svg>
             </button>
             <button
               type="button"

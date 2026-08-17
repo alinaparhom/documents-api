@@ -9,6 +9,8 @@ const PDFJS_SOURCES = [
 const PDF_DIAGNOSTIC_EVENT = 'appdosc:pdf-log';
 const PDFJS_SCRIPT_LOAD_TIMEOUT_MS = 8000;
 const PDF_FRAME_FALLBACK_TIMEOUT_MS = 62000;
+// Blob уже загружен; таймаут нужен только на случай зависшего декодирования изображения WebView.
+const IMAGE_LOAD_TIMEOUT_MS = 15000;
 // Если PDF.js не получил структуру документа за это время, нативный iframe
 // даст пользователю более быстрый шанс открыть файл без повторной загрузки PDF.js.
 const PDF_DOCUMENT_OPEN_TIMEOUT_MS = 12000;
@@ -315,6 +317,9 @@ export function createPdfViewer(root = document) {
   }
 
   let viewerMode = 'frame';
+  let imageLoadPromise = null;
+  let resolveImageLoad = null;
+  let cleanupImageLoadListeners = null;
   const ZOOM_MIN = 1;
   const FRAME_ZOOM_MIN = 0.5;
   const ZOOM_MAX = 4;
@@ -868,6 +873,21 @@ export function createPdfViewer(root = document) {
       if (elements.frame) {
         elements.frame.style.transform = 'none';
       }
+      if (elements.image) {
+        elements.image.style.transform = 'none';
+      }
+      return;
+    }
+    if (viewerMode === 'image' && elements.image) {
+      if (elements.zoom) {
+        elements.zoom.style.transform = 'none';
+        elements.zoom.style.removeProperty('--appdosc-zoom-scale');
+      }
+      elements.image.style.transform = `translate(${zoomState.translateX}px, ${zoomState.translateY}px) scale(${zoomState.scale})`;
+      if (elements.frame) {
+        elements.frame.style.transform = 'none';
+      }
+      updateZoomLayout();
       return;
     }
     if (viewerMode === 'frame' && isWordOfficeFrameActive()) {
@@ -1225,6 +1245,15 @@ export function createPdfViewer(root = document) {
   }
 
   function resetViewerContent() {
+    if (typeof cleanupImageLoadListeners === 'function') {
+      cleanupImageLoadListeners();
+    }
+    if (typeof resolveImageLoad === 'function') {
+      resolveImageLoad(false);
+    }
+    imageLoadPromise = null;
+    resolveImageLoad = null;
+    cleanupImageLoadListeners = null;
     cancelActivePdfLoad('viewer_replaced');
     pdfRenderState.lastUrl = '';
     pdfRenderState.renderedZoom = 100;
@@ -2307,6 +2336,15 @@ export function createPdfViewer(root = document) {
     cancelActivePdfLoad('viewer_closed');
     clearPdfCanvas();
     if (elements.image) {
+      if (typeof cleanupImageLoadListeners === 'function') {
+        cleanupImageLoadListeners();
+      }
+      if (typeof resolveImageLoad === 'function') {
+        resolveImageLoad(false);
+      }
+      imageLoadPromise = null;
+      resolveImageLoad = null;
+      cleanupImageLoadListeners = null;
       elements.image.removeAttribute('src');
       elements.image.removeAttribute('alt');
       elements.image.hidden = true;
@@ -2439,6 +2477,29 @@ export function createPdfViewer(root = document) {
     };
 
     if (kind === 'image' && elements.image) {
+      imageLoadPromise = new Promise((resolve) => {
+        resolveImageLoad = resolve;
+      });
+      const finishImageLoad = (loaded) => {
+        if (typeof cleanupImageLoadListeners === 'function') {
+          cleanupImageLoadListeners();
+        }
+        cleanupImageLoadListeners = null;
+        if (typeof resolveImageLoad === 'function') {
+          resolveImageLoad(Boolean(loaded));
+        }
+        resolveImageLoad = null;
+      };
+      const handleImageLoad = () => finishImageLoad(true);
+      const handleImageError = () => finishImageLoad(false);
+      const imageLoadTimeoutId = window.setTimeout(() => finishImageLoad(false), IMAGE_LOAD_TIMEOUT_MS);
+      cleanupImageLoadListeners = () => {
+        window.clearTimeout(imageLoadTimeoutId);
+        elements.image.removeEventListener('load', handleImageLoad);
+        elements.image.removeEventListener('error', handleImageError);
+      };
+      elements.image.addEventListener('load', handleImageLoad, { once: true });
+      elements.image.addEventListener('error', handleImageError, { once: true });
       elements.image.setAttribute('src', resolvedUrl);
       elements.image.setAttribute('alt', title ? `Просмотр: ${title}` : 'Просмотр документа');
       elements.image.setAttribute('draggable', 'false');
@@ -3279,6 +3340,9 @@ export function createPdfViewer(root = document) {
     },
     isReady() {
       return Boolean(elements.container && elements.frame);
+    },
+    getImageLoadPromise() {
+      return imageLoadPromise;
     },
     preload() {
       return ensurePdfjs().catch(() => {});

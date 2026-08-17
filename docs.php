@@ -33852,14 +33852,6 @@ switch ($action) {
                 ]);
             }
         }
-        $createdOcrQueue = docs_enqueue_live_ocr_uploads($folder, $documentId, $createdFileStorageUploads);
-        if (empty($createdOcrQueue['ok'])) {
-            docs_write_response_log('Новые файлы задачи не поставлены в OCR-очередь', [
-                'folder' => $folder,
-                'documentId' => $documentId,
-                'error' => (string) ($createdOcrQueue['error'] ?? ''),
-            ]);
-        }
         $permissions = docs_build_permissions_summary(
             $organization,
             docs_build_request_user_context(),
@@ -33870,11 +33862,6 @@ switch ($action) {
         $createdDocument = !empty($createdDocumentPrepared) && is_array($createdDocumentPrepared[0])
             ? $createdDocumentPrepared[0]
             : $record;
-        $createdTaskParticipation = docs_collect_record_telegram_participation(
-            $createdDocument,
-            $folder
-        );
-        $shouldSyncCreatedParticipantSnapshots = !empty($createdTaskParticipation);
         $responsePayload = [
             'message' => 'Документ добавлен в реестр.',
             'organization' => $organization,
@@ -33887,40 +33874,45 @@ switch ($action) {
             'permissions' => $permissions,
             'canManageInstructions' => $permissions['canManageInstructions'],
         ];
-        if (!empty($createdFileStorageUploads)
-            || !empty($assignedForNotification)
-            || $shouldSyncCreatedParticipantSnapshots
-        ) {
-            $backgroundTask = function () use (
-                $createdFileStorageUploads,
-                $folder,
-                $assignedForNotification,
-                $createdDocument,
-                $organization,
-                $shouldSyncCreatedParticipantSnapshots,
-                $createdTaskParticipation
-            ): void {
-                if (!empty($createdFileStorageUploads)) {
-                    docs_sync_uploaded_files_to_cold_storage($folder, $createdFileStorageUploads);
+        $backgroundTask = function () use (
+            $createdFileStorageUploads,
+            $folder,
+            $documentId,
+            $assignedForNotification,
+            $createdDocument,
+            $organization
+        ): void {
+            $shouldActivateCreatedOcr = false;
+            if (!empty($createdFileStorageUploads)) {
+                $createdOcrQueue = docs_enqueue_live_ocr_uploads($folder, $documentId, $createdFileStorageUploads);
+                if (empty($createdOcrQueue['ok'])) {
+                    docs_write_response_log('Новые файлы задачи не поставлены в OCR-очередь', [
+                        'folder' => $folder,
+                        'documentId' => $documentId,
+                        'error' => (string) ($createdOcrQueue['error'] ?? ''),
+                    ]);
+                } else {
+                    $shouldActivateCreatedOcr = true;
                 }
-                if (!empty($assignedForNotification)) {
-                    docs_send_task_assignment_notifications($assignedForNotification, $createdDocument, $organization);
-                }
-                if ($shouldSyncCreatedParticipantSnapshots) {
-                    docs_sync_task_snapshots_after_participation_change(
-                        $createdDocument,
-                        $folder,
-                        [],
-                        $createdTaskParticipation
-                    );
-                }
-                if (!empty($createdFileStorageUploads)) {
-                    docs_activate_live_ocr_worker($folder);
-                }
-            };
-            respond_success_with_background_fallback($responsePayload, $backgroundTask);
-        }
-        respond_success($responsePayload);
+                docs_sync_uploaded_files_to_cold_storage($folder, $createdFileStorageUploads);
+            }
+            if (!empty($assignedForNotification)) {
+                docs_send_task_assignment_notifications($assignedForNotification, $createdDocument, $organization);
+            }
+            $createdTaskParticipation = docs_collect_record_telegram_participation($createdDocument, $folder);
+            if (!empty($createdTaskParticipation)) {
+                docs_sync_task_snapshots_after_participation_change(
+                    $createdDocument,
+                    $folder,
+                    [],
+                    $createdTaskParticipation
+                );
+            }
+            if ($shouldActivateCreatedOcr) {
+                docs_activate_live_ocr_worker($folder);
+            }
+        };
+        respond_success_with_background_fallback($responsePayload, $backgroundTask);
         break;
     case 'resend_assignment_notification':
         if ($method !== 'POST') {
@@ -35510,14 +35502,6 @@ switch ($action) {
         } else {
             save_registry($folder, $records);
         }
-        $updatedOcrQueue = docs_enqueue_live_ocr_uploads($folder, $documentId, $updatedFileStorageUploads);
-        if (empty($updatedOcrQueue['ok'])) {
-            docs_write_response_log('Новые файлы изменённой задачи не поставлены в OCR-очередь', [
-                'folder' => $folder,
-                'documentId' => $documentId,
-                'error' => (string) ($updatedOcrQueue['error'] ?? ''),
-            ]);
-        }
         foreach ($documentFilesPendingDeletion as $filePendingDeletion) {
             if (is_array($filePendingDeletion)) {
                 docs_delete_document_file_from_storage($folder, $filePendingDeletion);
@@ -35568,6 +35552,7 @@ switch ($action) {
             $backgroundTask = function () use (
                 $updatedFileStorageUploads,
                 $folder,
+                $documentId,
                 $shouldNotifyAssignments,
                 $assignmentNotifications,
                 $notificationRecord,
@@ -35577,7 +35562,18 @@ switch ($action) {
                 $previousTaskParticipation,
                 $updatedTaskParticipation
             ): void {
+                $shouldActivateUpdatedOcr = false;
                 if (!empty($updatedFileStorageUploads)) {
+                    $updatedOcrQueue = docs_enqueue_live_ocr_uploads($folder, $documentId, $updatedFileStorageUploads);
+                    if (empty($updatedOcrQueue['ok'])) {
+                        docs_write_response_log('Новые файлы изменённой задачи не поставлены в OCR-очередь', [
+                            'folder' => $folder,
+                            'documentId' => $documentId,
+                            'error' => (string) ($updatedOcrQueue['error'] ?? ''),
+                        ]);
+                    } else {
+                        $shouldActivateUpdatedOcr = true;
+                    }
                     docs_sync_uploaded_files_to_cold_storage($folder, $updatedFileStorageUploads);
                 }
                 if ($shouldNotifyAssignments && $notificationRecord !== null) {
@@ -35591,7 +35587,7 @@ switch ($action) {
                         $updatedTaskParticipation
                     );
                 }
-                if (!empty($updatedFileStorageUploads)) {
+                if ($shouldActivateUpdatedOcr) {
                     docs_activate_live_ocr_worker($folder);
                 }
             };

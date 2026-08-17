@@ -2776,14 +2776,22 @@ function readAssetVersionInfo() {
   let version = '';
   let updatedAt = '';
 
+  if (window.__MINI_APP_RELEASE_VERSION__ !== undefined && window.__MINI_APP_RELEASE_VERSION__ !== null) {
+    version = String(window.__MINI_APP_RELEASE_VERSION__).trim();
+  }
+
   const info = window.__ASSET_VERSION_INFO__;
   if (info && typeof info === 'object') {
-    if (info.version !== undefined && info.version !== null) {
+    if (!version && info.version !== undefined && info.version !== null) {
       version = String(info.version).trim();
     }
     if (typeof info.updated_at === 'string' && info.updated_at.trim() !== '') {
       updatedAt = info.updated_at.trim();
     }
+  }
+
+  if (!version && window.__RUNTIME_ASSET_VERSION__ !== undefined && window.__RUNTIME_ASSET_VERSION__ !== null) {
+    version = String(window.__RUNTIME_ASSET_VERSION__).trim();
   }
 
   if (!version && window.__ASSET_VERSION__ !== undefined && window.__ASSET_VERSION__ !== null) {
@@ -3661,6 +3669,7 @@ function initElements() {
   elements.viewerDownload = document.querySelector('[data-viewer-download]');
   renderViewerSendActionIcon(elements.viewerDownload);
   elements.viewerBrief = document.querySelector('[data-viewer-brief]');
+  elements.viewerPrint = document.querySelector('[data-viewer-print]');
   elements.viewerDeleteResponse = document.querySelector('[data-viewer-delete-response]');
   renderViewerDeleteActionIcon(elements.viewerDeleteResponse);
   setTaskFilterPanelExpanded(false);
@@ -7274,9 +7283,9 @@ function normalizeTaskAiSearchResult(result) {
   const source = result.source && typeof result.source === 'object'
     ? result.source
     : {};
-  const sourceType = normalizeValue(source.type);
-  const sourceLabel = normalizeValue(source.label || display.sourceLabel);
-  const sourceFileName = normalizeValue(source.fileName || display.fileName);
+  const sourceType = normalizeValue(source.type || result.sourceType);
+  const sourceLabel = normalizeValue(source.label || display.sourceLabel || result.sourceLabel);
+  const sourceFileName = normalizeValue(source.fileName || display.fileName || result.sourceFileName);
   if (sourceType) {
     normalized.sourceType = sourceType;
   }
@@ -8052,13 +8061,40 @@ function findTaskAiSearchMatchedViewerFile(files, sourceFileName) {
   if (!expectedName || !Array.isArray(files)) {
     return null;
   }
-  return files.find((file) => {
-    if (!file || file.isSummary === true || file.kind === 'summary') {
-      return false;
-    }
-    return [file.name, file.originalName, file.storedName, file.sourceUrl]
-      .some((candidate) => normalizeTaskAiSearchFileName(candidate) === expectedName);
-  }) || null;
+  const attachmentFiles = files.filter((file) => (
+    file && file.isSummary !== true && file.kind !== 'summary'
+  ));
+  const exactMatch = attachmentFiles.find((file) => {
+    return [
+      file.name,
+      file.originalName,
+      file.storedName,
+      file.sourceUrl,
+      file.url,
+      file.resolvedUrl,
+      file.previewUrl,
+    ].some((candidate) => normalizeTaskAiSearchFileName(candidate) === expectedName);
+  });
+  if (exactMatch) {
+    return exactMatch;
+  }
+
+  const getFileStem = (value) => normalizeTaskAiSearchFileName(value)
+    .replace(/\.[^.]+$/u, '')
+    .replace(/[\s_-]+/gu, ' ')
+    .trim();
+  const expectedStem = getFileStem(expectedName);
+  const stemMatches = expectedStem
+    ? attachmentFiles.filter((file) => {
+      return [file.name, file.originalName, file.storedName, file.sourceUrl]
+        .some((candidate) => getFileStem(candidate) === expectedStem);
+    })
+    : [];
+  if (stemMatches.length === 1) {
+    return stemMatches[0];
+  }
+
+  return attachmentFiles.length === 1 ? attachmentFiles[0] : null;
 }
 
 function setTaskAiSearchActionStatus(element, message = '', tone = '') {
@@ -8086,14 +8122,22 @@ async function openTaskAiSearchMatchedFile(button, result, statusElement) {
   button.disabled = true;
   button.setAttribute('aria-busy', 'true');
   setTaskAiSearchActionStatus(statusElement, `Открываю файл «${truncateText(sourceFileName, 48)}»…`, 'loading');
+  setStatus('info', `Открываю файл «${truncateText(sourceFileName, 48)}»…`);
 
   try {
     const detailsReady = await ensureTaskDetails(matchedTask);
     if (!detailsReady) {
       throw new Error('task_details_unavailable');
     }
-    const viewerFiles = resolveTaskViewerFiles(matchedTask);
-    const matchedFile = findTaskAiSearchMatchedViewerFile(viewerFiles, sourceFileName);
+    let viewerFiles = resolveTaskViewerFiles(matchedTask);
+    let matchedFile = findTaskAiSearchMatchedViewerFile(viewerFiles, sourceFileName);
+    if (!matchedFile) {
+      const refreshed = await ensureTaskDetails(matchedTask, { force: true });
+      if (refreshed) {
+        viewerFiles = resolveTaskViewerFiles(matchedTask);
+        matchedFile = findTaskAiSearchMatchedViewerFile(viewerFiles, sourceFileName);
+      }
+    }
     if (!matchedFile) {
       throw new Error('matched_file_unavailable');
     }
@@ -8106,11 +8150,7 @@ async function openTaskAiSearchMatchedFile(button, result, statusElement) {
     });
     setTaskAiSearchActionStatus(statusElement);
   } catch (error) {
-    setTaskAiSearchActionStatus(
-      statusElement,
-      'Файл сейчас недоступен. Откройте задачу и выберите его во вложениях.',
-      'error',
-    );
+    setStatus('error', 'Файл сейчас недоступен. Откройте задачу и выберите его во вложениях.');
   } finally {
     button.dataset.loading = 'false';
     button.disabled = false;
@@ -8254,8 +8294,7 @@ function createTaskAiSearchResultCard(result) {
   actionStatus.hidden = true;
 
   const canOpenMatchedFile = Boolean(
-    matchedTask
-    && sourceFileNameRaw
+    sourceFileNameRaw
     && TASK_AI_SEARCH_FILE_SOURCE_TYPES.has(sourceType.toLowerCase()),
   );
   if (canOpenMatchedFile) {
@@ -8279,7 +8318,10 @@ function createTaskAiSearchResultCard(result) {
       </svg>
     `;
     fileAction.append(fileActionText, fileActionIcon);
-    fileAction.addEventListener('click', () => {
+    fileAction.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      closeBottomSheet();
       void openTaskAiSearchMatchedFile(fileAction, result, actionStatus);
     });
     actions.appendChild(fileAction);
@@ -15200,7 +15242,11 @@ function buildStoredDocumentPublicUrl(file, task = null) {
     || normalizeValue(file.folder);
   const organization = folder || getTaskOrganization(task);
   const encodedFolder = encodeDocumentsRelativePath(organization);
-  const encodedStoredName = encodeDocumentsRelativePath(storedName);
+  const taskId = normalizeValue(task && task.id);
+  const storedRelativePath = file.isResponse === true && taskId
+    ? `Ответы/${taskId}/${storedName}`
+    : storedName;
+  const encodedStoredName = encodeDocumentsRelativePath(storedRelativePath);
   if (!encodedFolder || !encodedStoredName) {
     return '';
   }
@@ -15313,6 +15359,12 @@ function resolveTaskViewerFiles(task) {
       storedName: normalizeValue(file.storedName),
       originalName: normalizeValue(file.originalName),
       sourceUrl: normalizeValue(file.url),
+      documentFolder: normalizeValue(file.documentFolder),
+      storageFolder: normalizeValue(file.storageFolder),
+      folder: normalizeValue(file.folder),
+      path: normalizeValue(file.path),
+      downloadUrl: normalizeValue(file.downloadUrl),
+      fileUrl: normalizeValue(file.fileUrl),
       aiBrief: normalizeBriefText(file.aiBrief),
     });
   });
@@ -15519,13 +15571,36 @@ function buildPreviewUrl(resolvedUrl, fileName = '') {
 }
 
 function updateCardViewInfo(card, task) {
-  const container = card instanceof HTMLElement ? card.querySelector('[data-card-view-info]') : null;
-  if (!container) {
+  if (!(card instanceof HTMLElement)) {
     return;
   }
 
   const entry = getTaskViewEntryForCurrentUser(task);
-  if (entry && entry.viewedAt) {
+  const viewed = Boolean(entry && entry.viewedAt);
+  card.classList.toggle('appdosc-card--viewed', viewed);
+  card.classList.toggle('appdosc-card--unviewed', !viewed);
+  card.dataset.viewState = viewed ? 'viewed' : 'unviewed';
+
+  let indicator = card.querySelector('[data-card-view-state]');
+  if (!indicator) {
+    indicator = document.createElement('span');
+    indicator.className = 'appdosc-card__view-state';
+    indicator.dataset.cardViewState = 'true';
+  }
+
+  if (indicator instanceof HTMLElement) {
+    indicator.textContent = viewed ? 'Прочитано' : 'Новая задача';
+    indicator.title = viewed ? 'Вы уже открывали эту задачу' : 'Вы ещё не открывали эту задачу';
+    indicator.setAttribute('aria-label', indicator.title);
+    card.appendChild(indicator);
+  }
+
+  const container = card.querySelector('[data-card-view-info]');
+  if (!(container instanceof HTMLElement)) {
+    return;
+  }
+
+  if (viewed) {
     const formatted = formatDateTime(entry.viewedAt);
     if (formatted && formatted !== '—') {
       container.textContent = `Просмотрено: ${formatted}`;
@@ -16389,6 +16464,14 @@ async function openInlineBlob(previewUrl, fileName, baseDetails, viewerOptions, 
       });
       const mode = viewer.open(blobUrl, fileName || 'Документ', effectiveViewerOptions);
       if (mode) {
+        if (effectiveViewerOptions && effectiveViewerOptions.kind === 'image'
+          && typeof viewer.getImageLoadPromise === 'function') {
+          const imageLoaded = await viewer.getImageLoadPromise();
+          if (!imageLoaded) {
+            URL.revokeObjectURL(blobUrl);
+            throw new Error('image_decode_failed');
+          }
+        }
         endTaskViewTracePhase(task, traceContext, 'viewer.open', {
           strategy: 'blob',
           mode,
@@ -16707,6 +16790,19 @@ function updateViewerDownloadState(file) {
   elements.viewerDownload.title = hasFile ? getDownloadActionTitle(getAttachmentName(file)) : 'Файл недоступен';
   elements.viewerDownload.setAttribute('aria-label', hasFile ? getDownloadActionTitle(getAttachmentName(file)) : 'Файл недоступен');
   updateViewerBriefState(file);
+  updateViewerPrintState(file);
+}
+
+function updateViewerPrintState(file) {
+  if (!elements.viewerPrint) {
+    return;
+  }
+  const printUrl = resolveViewerOriginalPrintUrl(file, viewerTabsState.task);
+  const canPrint = Boolean(printUrl);
+  elements.viewerPrint.disabled = !canPrint;
+  elements.viewerPrint.setAttribute('aria-disabled', canPrint ? 'false' : 'true');
+  elements.viewerPrint.title = canPrint ? 'Печать оригинала' : 'Оригинал файла недоступен';
+  elements.viewerPrint.setAttribute('aria-label', elements.viewerPrint.title);
 }
 
 function updateViewerBriefState(file) {
@@ -16963,14 +17059,119 @@ function handleViewerBriefClick() {
   void generateViewerFileAiBrief(file, fileName);
 }
 
+function resolveViewerOriginalPrintUrl(file, task = null) {
+  if (!file || typeof file !== 'object' || file.isSummary) {
+    return '';
+  }
+
+  const taskFile = findTaskFileByViewerFile(task, file);
+  const candidates = [
+    file.sourceUrl,
+    file.url,
+    taskFile && taskFile.url,
+    taskFile && taskFile.downloadUrl,
+    taskFile && taskFile.fileUrl,
+    taskFile && taskFile.path,
+  ];
+
+  for (let index = 0; index < candidates.length; index += 1) {
+    const source = normalizeValue(candidates[index]);
+    if (!source || source.startsWith('blob:') || source.startsWith('data:') || isBareFileReference(source)) {
+      continue;
+    }
+    const resolved = resolveDocumentUrl(source);
+    if (resolved) {
+      return createDownloadFileAccessUrl(
+        toAbsoluteUrl(resolved),
+        getAttachmentName(file) || getAttachmentName(taskFile),
+        'inline',
+      );
+    }
+  }
+
+  const storedUrl = buildStoredDocumentPublicUrl(taskFile || file, task);
+  if (!storedUrl) {
+    return '';
+  }
+  return createDownloadFileAccessUrl(
+    toAbsoluteUrl(storedUrl),
+    getAttachmentName(file) || getAttachmentName(taskFile),
+    'inline',
+  );
+}
+
+function buildViewerBrowserPrintPageUrl(file, originalUrl) {
+  try {
+    const printPageUrl = new URL('./telegram-print.html', import.meta.url);
+    printPageUrl.searchParams.set('source', originalUrl);
+    printPageUrl.searchParams.set('name', getAttachmentName(file) || 'Документ');
+    printPageUrl.searchParams.set('kind', file && file.kind === 'image'
+      ? 'image'
+      : (isPdfFile(file) ? 'pdf' : 'document'));
+    if (_moduleV) {
+      printPageUrl.searchParams.set('v', _moduleV);
+    }
+    return printPageUrl.toString();
+  } catch (_error) {
+    return '';
+  }
+}
+
+function openViewerExternalBrowserUrl(url) {
+  const webApp = window.Telegram && window.Telegram.WebApp;
+  if (webApp && typeof webApp.openLink === 'function') {
+    try {
+      webApp.openLink(url);
+      return true;
+    } catch (_error) {
+      // Ниже остаётся штатное открытие браузером.
+    }
+  }
+  if (typeof window.open !== 'function') {
+    return false;
+  }
+  const openedWindow = window.open(url, '_blank');
+  if (!openedWindow) {
+    return false;
+  }
+  try {
+    openedWindow.opener = null;
+  } catch (_error) {
+    // Окно уже открыто, ограничение браузера не влияет на страницу печати.
+  }
+  return true;
+}
+
+function handleViewerPrintClick() {
+  const file = getViewerFileToDownload();
+  const printUrl = resolveViewerOriginalPrintUrl(file, viewerTabsState.task);
+  if (!printUrl) {
+    setStatus('warning', 'Оригинал файла для печати недоступен.');
+    return;
+  }
+
+  const printPageUrl = buildViewerBrowserPrintPageUrl(file, printUrl);
+  if (!printPageUrl || !openViewerExternalBrowserUrl(printPageUrl)) {
+    setStatus('warning', 'Не удалось открыть страницу печати в браузере.');
+    return;
+  }
+  setStatus('success', 'Страница печати открыта во внешнем браузере.');
+}
+
 function findTaskFileByViewerFile(task, file) {
-  if (!task || !Array.isArray(task.files) || !file) {
+  if (!task || !file) {
+    return null;
+  }
+  const taskFiles = Array.isArray(task.files) ? task.files : [];
+  const responseFiles = Array.isArray(task.responses) ? task.responses : [];
+  const candidates = taskFiles.concat(responseFiles);
+  if (!candidates.length) {
     return null;
   }
   const storedName = normalizeValue(file.storedName);
   const originalName = normalizeValue(file.originalName);
   const url = normalizeValue(file.url);
-  return task.files.find((candidate) => {
+  return candidates.find((candidate) => {
     if (!candidate || typeof candidate !== 'object') {
       return false;
     }
@@ -17691,7 +17892,10 @@ async function openDocumentLink(rawUrl, fileName, task, preferredPreviewUrl, vie
     }, 'error');
   }
 
-  if (!isPdf && !shouldForceFrame && (extension && (IMAGE_EXTENSIONS.has(extension) || VIDEO_EXTENSIONS.has(extension)))) {
+  // Изображения проходят ниже через openInlineBlob(): так авторизация выполняется
+  // fetch-запросом, а в img устанавливается уже локальный Blob URL. Прямая
+  // установка защищённого URL в img даёт пустой экран в части Telegram WebView.
+  if (!isPdf && !shouldForceFrame && extension && VIDEO_EXTENSIONS.has(extension)) {
     const viewer = pdfViewerInstance;
     if (viewer && typeof viewer.open === 'function') {
       updateViewerLoaderStep('Открытие файла...', 70);
@@ -18034,13 +18238,7 @@ async function openViewerFile(file, task, options = {}) {
     traceContext.previewUrl = rawUrl || traceContext.previewUrl || '';
   }
 
-  const desktopImageExternalUrl = file && file.kind === 'image' && isTelegramDesktopPlatform() && preview
-    ? preview.remoteUrl
-    : '';
-  const shouldForceFrame = Boolean(
-    (file && file.kind === 'image' && isTelegramDesktopPlatform())
-    || isOfficePreview,
-  );
+  const shouldForceFrame = Boolean(isOfficePreview);
   const metricKey = buildViewerOpenMetricKey(task, file, rawUrl);
   const openAttempt = metricKey ? ((viewerOpenMetrics.fileAttempts.get(metricKey) || 0) + 1) : 1;
   const memoryBefore = getJsMemorySnapshot();
@@ -18179,35 +18377,6 @@ async function openViewerFile(file, task, options = {}) {
     }
 
     return { mode };
-  }
-
-  if (!mode && desktopImageExternalUrl) {
-    const externalMode = openExternalDocument(desktopImageExternalUrl);
-    if (externalMode) {
-      docLoadSetMeta({
-        openMode: externalMode,
-        openTotalMs: Math.round(performance.now() - openStartedAt),
-      });
-      viewerTabsState.activeFile = file;
-      updateViewerDownloadState(file);
-      logClientEvent('task_view_open', {
-        ...buildTaskViewLogDetails(task),
-        fileName: file.name,
-        fileUrl: file.url,
-        resolvedUrl: file.resolvedUrl || file.url,
-        mode: externalMode,
-      });
-      if (notify) {
-        setStatus('info', 'Файл открыт в Telegram.');
-      }
-      logTaskViewStage(task, 'open_viewer_profile_done', {
-        openSessionId,
-        openAttempt,
-        mode: externalMode,
-        totalMs: Math.round(performance.now() - openStartedAt),
-      });
-      return { mode: externalMode };
-    }
   }
 
   if (isOffice) {
@@ -25649,6 +25818,9 @@ function attachEvents() {
   if (elements.viewerBrief) {
     elements.viewerBrief.addEventListener('click', handleViewerBriefClick);
   }
+  if (elements.viewerPrint) {
+    elements.viewerPrint.addEventListener('click', handleViewerPrintClick);
+  }
   if (elements.viewerDeleteResponse) {
     elements.viewerDeleteResponse.addEventListener('click', handleViewerDeleteResponseClick);
   }
@@ -26533,7 +26705,8 @@ function resolveResponseViewerFilesForEntry(task, entry, fallbackValue = '') {
       return;
     }
 
-    const preview = resolveFilePreviewSource(file, task);
+    const responseFile = { ...file, isResponse: true };
+    const preview = resolveFilePreviewSource(responseFile, task);
     if (!preview) {
       return;
     }
@@ -26560,6 +26733,14 @@ function resolveResponseViewerFilesForEntry(task, entry, fallbackValue = '') {
       kind,
       isResponse: true,
       storedName: normalizeValue(file.storedName),
+      originalName: normalizeValue(file.originalName),
+      sourceUrl: normalizeValue(file.url),
+      documentFolder: normalizeValue(file.documentFolder),
+      storageFolder: normalizeValue(file.storageFolder),
+      folder: normalizeValue(file.folder),
+      path: normalizeValue(file.path),
+      downloadUrl: normalizeValue(file.downloadUrl),
+      fileUrl: normalizeValue(file.fileUrl),
       uploadedAt: normalizeValue(file.uploadedAt),
       uploadedByKey: normalizeValue(file.uploadedByKey),
       uploadedBy: findResponsibleNameInAccessByFile(file) || normalizeValue(file.uploadedBy),
@@ -26822,11 +27003,12 @@ function refreshCardLazyDetails(card, task) {
   }
 }
 
-async function ensureTaskDetails(task) {
+async function ensureTaskDetails(task, options = {}) {
   if (!task || typeof task !== 'object') {
     return false;
   }
-  if (task.detailsLoaded !== false) {
+  const force = options && options.force === true;
+  if (task.detailsLoaded !== false && !force) {
     return true;
   }
 
