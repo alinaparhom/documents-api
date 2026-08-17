@@ -10,6 +10,23 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <title>Документы • Telegram Mini App</title>
+    <script>
+      (function preloadVersionedModules() {
+        // Меняется только при публикации нового согласованного комплекта Mini App.
+        const assetReleaseVersion = '20260817-viewer-task-identity-1';
+        const requestedVersion = new URLSearchParams(window.location.search).get('v') || '';
+        const linkVersion = /^[a-z0-9._-]{1,80}$/i.test(requestedVersion) ? requestedVersion : '';
+        const runtimeVersion = window.__ASSET_VERSION__ || linkVersion || assetReleaseVersion;
+        window.__RUNTIME_ASSET_VERSION__ = runtimeVersion;
+        ['./telegram-appdosc.js', './apppdf.js'].forEach(function(source) {
+          const preload = document.createElement('link');
+          preload.rel = 'modulepreload';
+          preload.href = source + '?v=' + encodeURIComponent(runtimeVersion);
+          document.head.appendChild(preload);
+        });
+      })();
+    </script>
+    <script src="https://telegram.org/js/telegram-web-app.js" defer></script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -19,92 +36,9 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
     <script>
       (function bootstrapVersionedAssets() {
-        const inTelegram = Boolean(window.Telegram && window.Telegram.WebApp);
-
-        const forceFreshLoad = function() {
-          if (!inTelegram) {
-            return null;
-          }
-
-          const tg = window.Telegram.WebApp;
-          let currentUrl;
-          try {
-            currentUrl = new URL(window.location.href);
-          } catch (_) {
-            window.location.reload();
-            return null;
-          }
-
-          let launchVersion = currentUrl.searchParams.get('_tg_open_ts');
-          if (!launchVersion) {
-            launchVersion = String(Date.now());
-            currentUrl.searchParams.set('_tg_open_ts', launchVersion);
-            try {
-              sessionStorage.clear();
-            } catch (_) {
-              // ignore storage restrictions
-            }
-            window.location.replace(currentUrl.toString());
-            return null;
-          }
-
-          try {
-            const lastVersion = sessionStorage.getItem('app_version');
-            if (lastVersion && lastVersion !== launchVersion) {
-              sessionStorage.clear();
-            }
-            sessionStorage.setItem('app_version', launchVersion);
-          } catch (_) {
-            // ignore storage restrictions
-          }
-
-          tg.expand?.();
-
-          const softRefreshTasks = function(reason) {
-            if (window.__APPDOSC_TASK_SEARCH_LOCKED__ === true) {
-              return;
-            }
-            try {
-              const appHooks = window.__APPDOSC_PUBLIC_HOOKS__;
-              if (appHooks && typeof appHooks.isTaskSearchLocked === 'function' && appHooks.isTaskSearchLocked()) {
-                return;
-              }
-              if (appHooks && typeof appHooks.loadTasks === 'function') {
-                appHooks.loadTasks(true);
-              }
-            } catch (_) {
-              // ignore hook errors
-            }
-            document.dispatchEvent(new CustomEvent('appdosc:soft-refresh', {
-              detail: {
-                reason: reason || 'resume',
-                launchVersion,
-              },
-            }));
-          };
-
-          document.addEventListener('visibilitychange', function() {
-            if (document.visibilityState === 'visible') {
-              softRefreshTasks('visibilitychange');
-            }
-          });
-
-          window.addEventListener('pageshow', function(event) {
-            if (event && event.persisted) {
-              softRefreshTasks('pageshow_persisted');
-            }
-          });
-
-          return launchVersion;
-        };
-
-        const launchVersion = forceFreshLoad();
-        if (inTelegram && !launchVersion) {
-          return;
-        }
-
-        const runtimeNonce = launchVersion || Date.now().toString(36);
-        window.__RUNTIME_ASSET_VERSION__ = runtimeNonce;
+        // Стабильная версия позволяет Telegram WebView использовать общий кэш
+        // главного модуля, просмотрщика и PDF.js между открытиями приложения.
+        const runtimeNonce = window.__RUNTIME_ASSET_VERSION__;
 
         const appendStylesheet = function() {
           const version = (window.__RUNTIME_ASSET_VERSION__ || window.__ASSET_VERSION__ || runtimeNonce).toString();
@@ -134,12 +68,6 @@
           const moduleScript = document.createElement('script');
           moduleScript.type = 'module';
           moduleScript.src = './telegram-appdosc.js?v=' + encodeURIComponent(version);
-          moduleScript.onerror = function() {
-            const fallbackScript = document.createElement('script');
-            fallbackScript.type = 'module';
-            fallbackScript.src = '/js/documents/app/telegram-appdosc.js?v=' + encodeURIComponent(version);
-            document.body.appendChild(fallbackScript);
-          };
           document.body.appendChild(moduleScript);
         };
 
@@ -159,6 +87,11 @@
       <link rel="stylesheet" href="/css/telegram-appdosc.css" />
     </noscript>
     <style>
+      .appdosc-viewer {
+        /* Просмотрщик должен быть выше полноэкранного ИИ-поиска и остальных модальных слоёв. */
+        z-index: 150000;
+      }
+
       .appdosc-viewer__header {
         display: flex;
         align-items: center;
@@ -192,7 +125,9 @@
         overflow-x: auto;
         overflow-y: hidden;
         -webkit-overflow-scrolling: touch;
+        overscroll-behavior-x: contain;
         scrollbar-width: none;
+        touch-action: pan-x;
         white-space: nowrap;
       }
 
@@ -254,6 +189,41 @@
 
       .appdosc-viewer__body {
         flex: 1 1 auto;
+      }
+
+      .appdosc-viewer__tabs {
+        flex: 0 0 auto;
+        min-width: 0;
+        max-width: 100%;
+        overflow-x: auto;
+        overflow-y: hidden;
+        padding: 8px 10px;
+        border-bottom: 1px solid var(--appdosc-surface-glass-border, rgba(148, 163, 184, .22));
+        -webkit-overflow-scrolling: touch;
+        overscroll-behavior-x: contain;
+        scrollbar-width: none;
+        touch-action: pan-x;
+      }
+
+      .appdosc-viewer__tabs::-webkit-scrollbar {
+        display: none;
+      }
+
+      .appdosc-viewer__tabs-track {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: max-content;
+        min-width: 100%;
+      }
+
+      .appdosc-viewer__tab {
+        flex: 0 0 auto;
+        max-width: min(72vw, 340px);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        touch-action: manipulation;
       }
 
       .appdosc-viewer__body,
@@ -1946,6 +1916,49 @@
         line-height: 1;
       }
 
+      .appdosc-impersonation-banner {
+        margin: 0 0 10px;
+        padding: 10px 12px;
+        border: 1px solid rgba(245, 158, 11, 0.48);
+        border-radius: 14px;
+        background: rgba(245, 158, 11, 0.14);
+        color: var(--appdosc-text-primary);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        font-size: 13px;
+      }
+
+      .appdosc-impersonation-banner[hidden] {
+        display: none;
+      }
+
+      .appdosc-impersonation-banner__copy {
+        min-width: 0;
+      }
+
+      .appdosc-impersonation-banner__name {
+        display: block;
+        margin-top: 2px;
+        font-weight: 700;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .appdosc-impersonation-banner__exit {
+        flex: 0 0 auto;
+        min-height: 34px;
+        padding: 0 12px;
+        border: 1px solid rgba(245, 158, 11, 0.58);
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.58);
+        color: var(--appdosc-text-primary);
+        font: inherit;
+        font-weight: 700;
+      }
+
       .appdosc-settings-sheet[hidden] {
         display: none !important;
       }
@@ -2097,6 +2110,72 @@
         margin: 14px 0 8px;
         font-size: 14px;
         color: var(--appdosc-text-muted);
+      }
+
+      .appdosc-settings-sheet__impersonation[hidden] {
+        display: none;
+      }
+
+      .appdosc-settings-sheet__impersonation {
+        padding: 12px;
+        border: 1px solid rgba(245, 158, 11, 0.42);
+        border-radius: 14px;
+        background: rgba(245, 158, 11, 0.1);
+      }
+
+      .appdosc-settings-sheet__impersonation-hint {
+        margin: 0 0 9px;
+        color: var(--appdosc-text-muted);
+        font-size: 12px;
+        line-height: 1.4;
+      }
+
+      .appdosc-settings-sheet__impersonation-select {
+        width: 100%;
+        min-height: 42px;
+        padding: 0 10px;
+        border: 1px solid rgba(148, 163, 184, 0.48);
+        border-radius: 11px;
+        background: var(--appdosc-surface-glass);
+        color: var(--appdosc-text-primary);
+        font: inherit;
+        font-size: 14px;
+      }
+
+      .appdosc-settings-sheet__impersonation-actions {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+        margin-top: 9px;
+      }
+
+      .appdosc-settings-sheet__impersonation-action {
+        min-height: 40px;
+        padding: 0 10px;
+        border: 1px solid rgba(37, 99, 235, 0.42);
+        border-radius: 11px;
+        background: rgba(37, 99, 235, 0.14);
+        color: var(--appdosc-text-primary);
+        font: inherit;
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      .appdosc-settings-sheet__impersonation-action:disabled {
+        cursor: default;
+        opacity: 0.55;
+      }
+
+      .appdosc-settings-sheet__impersonation-action--exit {
+        border-color: rgba(245, 158, 11, 0.48);
+        background: rgba(245, 158, 11, 0.14);
+      }
+
+      .appdosc-settings-sheet__impersonation-status {
+        margin-top: 8px;
+        color: var(--appdosc-text-muted);
+        font-size: 12px;
+        line-height: 1.35;
       }
 
       .appdosc-settings-sheet__theme-grid {
@@ -3005,6 +3084,89 @@
       .appdosc__cards.tasks-list {
         display: grid;
         gap: 4px;
+      }
+
+      .appdosc-pagination {
+        display: grid;
+        grid-template-columns: minmax(88px, 1fr) minmax(0, 1.4fr) minmax(88px, 1fr);
+        align-items: center;
+        gap: 8px;
+        margin-top: 10px;
+        padding: 10px;
+        border: 1px solid var(--appdosc-task-card-border);
+        border-radius: 16px;
+        background: var(--appdosc-task-card-bg);
+        box-shadow: var(--appdosc-task-card-shadow);
+      }
+
+      .appdosc-pagination__button {
+        min-height: 42px;
+        padding: 9px 12px;
+        border: 1px solid var(--appdosc-task-refresh-border);
+        border-radius: 10px;
+        background: var(--appdosc-task-refresh-bg);
+        color: var(--appdosc-task-refresh-text);
+        font: inherit;
+        font-size: 13px;
+        font-weight: 700;
+        touch-action: manipulation;
+      }
+
+      .appdosc-pagination__button:disabled {
+        cursor: default;
+        opacity: .48;
+      }
+
+      .appdosc-pagination__summary {
+        grid-column: 1 / -1;
+        color: var(--appdosc-task-updated-text);
+        font-size: 12px;
+        font-weight: 650;
+        line-height: 1.3;
+        text-align: center;
+      }
+
+      .appdosc-pagination__pages {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        min-width: 0;
+        overflow-x: auto;
+        overscroll-behavior-x: contain;
+        scrollbar-width: thin;
+        scrollbar-gutter: stable;
+        -webkit-overflow-scrolling: touch;
+      }
+
+      .appdosc-pagination__page {
+        flex: 0 0 38px;
+        min-height: 38px;
+        padding: 6px;
+        border: 1px solid var(--appdosc-task-refresh-border);
+        border-radius: 10px;
+        background: var(--appdosc-task-refresh-bg);
+        color: var(--appdosc-task-refresh-text);
+        font: inherit;
+        font-size: 13px;
+        font-weight: 700;
+        touch-action: manipulation;
+      }
+
+      .appdosc-pagination__page[aria-current='page'] {
+        border-color: var(--appdosc-accent, #4d91ff);
+        background: var(--appdosc-accent, #4d91ff);
+        color: #fff;
+      }
+
+      @media (max-width: 420px) {
+        .appdosc-pagination {
+          grid-template-columns: 1fr 1fr;
+        }
+
+        .appdosc-pagination__pages {
+          grid-column: 1 / -1;
+          grid-row: 2;
+        }
       }
 
       .appdosc-card.task-card {
@@ -4870,6 +5032,15 @@
         background: #ffffff;
         border: 1px solid rgba(148, 163, 184, 0.18);
         box-shadow: none;
+        animation: appdosc-ai-task-search-message-in 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+      }
+
+      .appdosc-ai-task-search__message--assistant {
+        transform-origin: bottom left;
+      }
+
+      .appdosc-ai-task-search__message--user {
+        transform-origin: bottom right;
       }
 
       .appdosc-ai-task-search__message--with-results {
@@ -4974,19 +5145,30 @@
         content: '✓';
       }
 
-      @media (prefers-reduced-motion: reduce) {
-        .appdosc-ai-task-search__thinking-marker {
-          animation: none;
-        }
-      }
-
       .appdosc-ai-task-search__message-header {
+        display: flex;
+        align-items: center;
+        gap: 5px;
         color: #64748b;
         font-size: 10px;
         font-weight: 900;
         line-height: 1.1;
         text-transform: uppercase;
         letter-spacing: 0;
+      }
+
+      .appdosc-ai-task-search__message-header-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 18px;
+        height: 18px;
+        border-radius: 6px;
+        background: rgba(37, 99, 235, 0.1);
+        color: #2563eb;
+        font-size: 10px;
+        font-weight: 900;
+        line-height: 1;
       }
 
       .appdosc-ai-task-search__message-body {
@@ -5044,6 +5226,11 @@
         color: rgba(255, 255, 255, 0.92);
       }
 
+      .appdosc-ai-task-search__message--user .appdosc-ai-task-search__message-header-icon {
+        background: rgba(255, 255, 255, 0.16);
+        color: #ffffff;
+      }
+
       .appdosc-ai-task-search__message--user code {
         background: rgba(255, 255, 255, 0.16);
         color: #ffffff;
@@ -5055,7 +5242,33 @@
         margin-top: 4px;
       }
 
+      .appdosc-ai-task-search__results-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 1px 2px 0;
+        color: #334155;
+        font-size: 11px;
+        font-weight: 900;
+      }
+
+      .appdosc-ai-task-search__results-count {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 23px;
+        height: 23px;
+        padding: 0 7px;
+        border-radius: 999px;
+        background: rgba(37, 99, 235, 0.11);
+        color: #1d4ed8;
+        font-size: 11px;
+        line-height: 1;
+      }
+
       .appdosc-ai-task-search__result {
+        position: relative;
         display: grid;
         gap: 7px;
         padding: 10px;
@@ -5064,6 +5277,7 @@
         background: rgba(255, 255, 255, 0.88);
         box-shadow: 0 6px 18px rgba(15, 23, 42, 0.06);
         transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+        animation: appdosc-ai-task-search-result-in 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
       }
 
       .appdosc-ai-task-search__result[hidden] {
@@ -5071,6 +5285,7 @@
       }
 
       .appdosc-ai-task-search__results-toggle {
+        position: relative;
         display: inline-flex;
         align-items: center;
         justify-content: center;
@@ -5082,8 +5297,31 @@
         border-radius: 11px;
         background: rgba(239, 246, 255, 0.82);
         color: #1d4ed8;
+        cursor: pointer;
+        font-family: inherit;
         font-size: 12px;
         font-weight: 900;
+        line-height: 1.25;
+        box-shadow: 0 6px 16px rgba(37, 99, 235, 0.1);
+        appearance: none;
+        transition: border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+      }
+
+      .appdosc-ai-task-search__results-toggle:hover,
+      .appdosc-ai-task-search__results-toggle:focus-visible {
+        border-color: rgba(37, 99, 235, 0.42);
+        background: rgba(219, 234, 254, 0.94);
+        box-shadow: 0 8px 20px rgba(37, 99, 235, 0.16);
+        transform: translateY(-1px);
+      }
+
+      .appdosc-ai-task-search__results-toggle:focus-visible {
+        outline: 3px solid rgba(96, 165, 250, 0.28);
+        outline-offset: 2px;
+      }
+
+      .appdosc-ai-task-search__results-toggle:active {
+        transform: scale(0.985);
       }
 
       .appdosc-ai-task-search__results-toggle-icon {
@@ -5116,6 +5354,24 @@
         display: grid;
         gap: 5px;
         min-width: 0;
+      }
+
+      .appdosc-ai-task-search__result-number {
+        justify-self: start;
+        display: inline-flex;
+        align-items: center;
+        min-height: 24px;
+        max-width: 100%;
+        padding: 3px 9px;
+        border: 1px solid rgba(37, 99, 235, 0.2);
+        border-radius: 999px;
+        background: linear-gradient(135deg, rgba(219, 234, 254, 0.88), rgba(224, 242, 254, 0.82));
+        color: #1d4ed8;
+        font-size: 11px;
+        font-weight: 900;
+        line-height: 1.2;
+        overflow-wrap: anywhere;
+        animation: appdosc-ai-task-search-number-in 0.36s cubic-bezier(0.2, 0.9, 0.2, 1.15);
       }
 
       .appdosc-ai-task-search__result-title {
@@ -5229,9 +5485,22 @@
         background: rgba(37, 99, 235, 0.1);
         color: #1d4ed8;
         font-weight: 850;
+        animation: appdosc-ai-task-search-match-in 0.46s ease-out;
+      }
+
+      .appdosc-ai-task-search__result-actions {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 7px;
+        min-width: 0;
+      }
+
+      .appdosc-ai-task-search__result-actions[data-actions='single'] {
+        grid-template-columns: minmax(0, 1fr);
       }
 
       .appdosc-ai-task-search__result-link {
+        position: relative;
         justify-self: stretch;
         display: inline-flex;
         align-items: center;
@@ -5239,14 +5508,54 @@
         min-height: 40px;
         min-width: 0;
         padding: 0 8px 0 12px;
+        border: 0;
         border-radius: 10px;
         background: linear-gradient(135deg, #2563eb, #0284c7);
         color: #ffffff;
+        cursor: pointer;
+        font-family: inherit;
         font-size: 12px;
         font-weight: 900;
+        line-height: 1.25;
         text-decoration: none;
+        text-align: left;
+        overflow: hidden;
         box-shadow: 0 7px 16px rgba(37, 99, 235, 0.2);
+        appearance: none;
         transition: transform 0.18s ease, box-shadow 0.18s ease, filter 0.18s ease;
+      }
+
+      .appdosc-ai-task-search__result-link--file {
+        border: 1px solid rgba(37, 99, 235, 0.28);
+        background: rgba(239, 246, 255, 0.94);
+        color: #1d4ed8;
+        box-shadow: 0 6px 14px rgba(37, 99, 235, 0.1);
+      }
+
+      .appdosc-ai-task-search__result-link--file .appdosc-ai-task-search__result-link-icon {
+        background: rgba(37, 99, 235, 0.1);
+      }
+
+      .appdosc-ai-task-search__result-link:disabled {
+        cursor: progress;
+        filter: none;
+        opacity: 0.68;
+        transform: none;
+      }
+
+      .appdosc-ai-task-search__result-link::before {
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(105deg, transparent 30%, rgba(255, 255, 255, 0.22) 50%, transparent 70%);
+        content: '';
+        pointer-events: none;
+        transform: translateX(-120%);
+        animation: appdosc-ai-task-search-action-shine 0.75s ease-out 0.28s backwards;
+      }
+
+      .appdosc-ai-task-search__result-link > * {
+        position: relative;
+        z-index: 1;
       }
 
       .appdosc-ai-task-search__result-link-text {
@@ -5254,19 +5563,24 @@
         overflow-wrap: anywhere;
       }
 
-      .appdosc-ai-task-search__result-link:hover,
-      .appdosc-ai-task-search__result-link:focus-visible {
+      .appdosc-ai-task-search__result-link:not(:disabled):hover,
+      .appdosc-ai-task-search__result-link:not(:disabled):focus-visible {
         filter: brightness(1.04);
         box-shadow: 0 9px 20px rgba(37, 99, 235, 0.27);
         transform: translateY(-1px);
       }
 
-      .appdosc-ai-task-search__result-link:focus-visible {
+      .appdosc-ai-task-search__result-link:not(:disabled):active {
+        transform: scale(0.985);
+      }
+
+      .appdosc-ai-task-search__result-link:not(:disabled):focus-visible {
         outline: 3px solid rgba(96, 165, 250, 0.35);
         outline-offset: 2px;
       }
 
       .appdosc-ai-task-search__result-link-icon {
+        position: relative;
         display: inline-flex;
         align-items: center;
         justify-content: center;
@@ -5275,11 +5589,126 @@
         height: 26px;
         border-radius: 8px;
         background: rgba(255, 255, 255, 0.16);
+        transition: transform 0.18s ease;
+      }
+
+      .appdosc-ai-task-search__result-link:not(:disabled):hover .appdosc-ai-task-search__result-link-icon,
+      .appdosc-ai-task-search__result-link:not(:disabled):focus-visible .appdosc-ai-task-search__result-link-icon {
+        transform: translateX(2px);
       }
 
       .appdosc-ai-task-search__result-link-icon svg {
         width: 16px;
         height: 16px;
+      }
+
+      .appdosc-ai-task-search__result-link[data-loading='true'] .appdosc-ai-task-search__result-link-icon svg {
+        visibility: hidden;
+      }
+
+      .appdosc-ai-task-search__result-link[data-loading='true'] .appdosc-ai-task-search__result-link-icon::after {
+        position: absolute;
+        width: 12px;
+        height: 12px;
+        border: 2px solid rgba(37, 99, 235, 0.24);
+        border-top-color: currentColor;
+        border-radius: 50%;
+        content: '';
+        animation: appdosc-ai-task-sync-spin 0.8s linear infinite;
+      }
+
+      .appdosc-ai-task-search__result-action-status {
+        margin: -1px 1px 0;
+        color: #64748b;
+        font-size: 10px;
+        font-weight: 750;
+        line-height: 1.35;
+      }
+
+      .appdosc-ai-task-search__result-action-status[hidden] {
+        display: none;
+      }
+
+      .appdosc-ai-task-search__result-action-status[data-tone='loading'] {
+        color: #2563eb;
+      }
+
+      .appdosc-ai-task-search__result-action-status[data-tone='error'] {
+        color: #b91c1c;
+      }
+
+      @keyframes appdosc-ai-task-search-message-in {
+        from {
+          opacity: 0;
+          transform: translateY(7px) scale(0.985);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0) scale(1);
+        }
+      }
+
+      @keyframes appdosc-ai-task-search-result-in {
+        from {
+          opacity: 0;
+          transform: translateY(10px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      @keyframes appdosc-ai-task-search-number-in {
+        from {
+          opacity: 0;
+          transform: scale(0.88);
+        }
+        to {
+          opacity: 1;
+          transform: scale(1);
+        }
+      }
+
+      @keyframes appdosc-ai-task-search-match-in {
+        from {
+          box-shadow: 0 0 0 3px rgba(250, 204, 21, 0.22);
+        }
+        to {
+          box-shadow: 0 0 0 0 rgba(250, 204, 21, 0);
+        }
+      }
+
+      @keyframes appdosc-ai-task-search-action-shine {
+        from {
+          transform: translateX(-120%);
+        }
+        to {
+          transform: translateX(120%);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .appdosc-ai-task-search__thinking-marker,
+        .appdosc-ai-task-search__message,
+        .appdosc-ai-task-search__result,
+        .appdosc-ai-task-search__result-number,
+        .appdosc-ai-task-search__result-match,
+        .appdosc-ai-task-search__result-link::before {
+          animation: none;
+        }
+
+        .appdosc-ai-task-search__result,
+        .appdosc-ai-task-search__results-toggle,
+        .appdosc-ai-task-search__results-toggle-icon,
+        .appdosc-ai-task-search__result-link,
+        .appdosc-ai-task-search__result-link-icon {
+          transition: none;
+        }
+
+        .appdosc-ai-task-search__result-link[data-loading='true'] .appdosc-ai-task-search__result-link-icon::after {
+          animation: none;
+        }
       }
 
       .appdosc-ai-task-search__form {
@@ -5653,6 +6082,11 @@
         color: #94a3b8;
       }
 
+      :root[data-theme='dark'] .appdosc-ai-task-search__message-header-icon {
+        background: rgba(96, 165, 250, 0.16);
+        color: #bfdbfe;
+      }
+
       :root[data-theme='dark'] .appdosc-ai-task-search__message-lead,
       :root[data-theme='dark'] .appdosc-ai-task-search__message strong {
         color: #f8fafc;
@@ -5679,8 +6113,28 @@
         color: #ffffff;
       }
 
+      :root[data-theme='dark'] .appdosc-ai-task-search__message--user .appdosc-ai-task-search__message-header-icon {
+        background: rgba(255, 255, 255, 0.16);
+        color: #ffffff;
+      }
+
+      :root[data-theme='dark'] .appdosc-ai-task-search__results-head {
+        color: #cbd5e1;
+      }
+
+      :root[data-theme='dark'] .appdosc-ai-task-search__results-count {
+        background: rgba(96, 165, 250, 0.17);
+        color: #bfdbfe;
+      }
+
       :root[data-theme='dark'] .appdosc-ai-task-search__result-title {
         color: #f8fafc;
+      }
+
+      :root[data-theme='dark'] .appdosc-ai-task-search__result-number {
+        border-color: rgba(96, 165, 250, 0.28);
+        background: linear-gradient(135deg, rgba(30, 58, 138, 0.38), rgba(14, 116, 144, 0.24));
+        color: #bfdbfe;
       }
 
       :root[data-theme='dark'] .appdosc-ai-task-search__result {
@@ -5755,6 +6209,29 @@
       :root[data-theme='dark'] .appdosc-ai-task-search__result-link {
         background: linear-gradient(135deg, #2563eb, #0369a1);
         color: #ffffff;
+      }
+
+      :root[data-theme='dark'] .appdosc-ai-task-search__result-link--file {
+        border-color: rgba(96, 165, 250, 0.36);
+        background: rgba(30, 58, 138, 0.24);
+        color: #bfdbfe;
+        box-shadow: 0 6px 16px rgba(2, 6, 23, 0.22);
+      }
+
+      :root[data-theme='dark'] .appdosc-ai-task-search__result-link--file .appdosc-ai-task-search__result-link-icon {
+        background: rgba(96, 165, 250, 0.16);
+      }
+
+      :root[data-theme='dark'] .appdosc-ai-task-search__result-action-status {
+        color: #94a3b8;
+      }
+
+      :root[data-theme='dark'] .appdosc-ai-task-search__result-action-status[data-tone='loading'] {
+        color: #93c5fd;
+      }
+
+      :root[data-theme='dark'] .appdosc-ai-task-search__result-action-status[data-tone='error'] {
+        color: #fca5a5;
       }
 
       :root[data-theme='dark'] .appdosc-ai-task-search__tool {
@@ -5865,6 +6342,24 @@
         .appdosc-ai-task-search__message-lead,
         .appdosc-ai-task-search__result-summary {
           font-size: 12px;
+        }
+
+        .appdosc-ai-task-search__result-number {
+          min-height: 22px;
+          padding: 3px 8px;
+          font-size: 10px;
+        }
+
+        .appdosc-ai-task-search__result-link {
+          min-height: 44px;
+        }
+
+        .appdosc-ai-task-search__result-actions {
+          grid-template-columns: minmax(0, 1fr);
+        }
+
+        .appdosc-ai-task-search__results-toggle {
+          min-height: 44px;
         }
 
         .appdosc-ai-task-search__message--with-results {
@@ -8834,6 +9329,14 @@
         </div>
       </header>
 
+      <div class="appdosc-impersonation-banner" data-impersonation-banner hidden>
+        <div class="appdosc-impersonation-banner__copy">
+          <span>Тестовый режим: вы работаете от лица</span>
+          <strong class="appdosc-impersonation-banner__name" data-impersonation-banner-name>пользователя</strong>
+        </div>
+        <button type="button" class="appdosc-impersonation-banner__exit" data-impersonation-exit>Вернуться</button>
+      </div>
+
       <section class="appdosc__user" data-user-panel>
         <div class="appdosc__user-state" data-summary>
           <div class="appdosc__summary-status" data-summary-status>
@@ -9519,6 +10022,18 @@
             </div>
           </div>
         </div>
+        <div class="appdosc-settings-sheet__section" data-impersonation-section hidden>Тестирование от лица пользователя</div>
+        <div class="appdosc-settings-sheet__impersonation" data-impersonation-panel hidden>
+          <p class="appdosc-settings-sheet__impersonation-hint">Выберите пользователя из доступных организаций. Все действия будут выполняться с его правами, пока вы не вернётесь в свой профиль.</p>
+          <select class="appdosc-settings-sheet__impersonation-select" data-impersonation-select aria-label="Пользователь для тестового входа">
+            <option value="">Выберите пользователя</option>
+          </select>
+          <div class="appdosc-settings-sheet__impersonation-actions">
+            <button type="button" class="appdosc-settings-sheet__impersonation-action" data-impersonation-apply disabled>Войти от лица</button>
+            <button type="button" class="appdosc-settings-sheet__impersonation-action appdosc-settings-sheet__impersonation-action--exit" data-impersonation-reset hidden>Вернуться в свой профиль</button>
+          </div>
+          <div class="appdosc-settings-sheet__impersonation-status" data-impersonation-status>Режим тестирования выключен.</div>
+        </div>
         <button type="button" class="appdosc-settings-sheet__item">
           <span class="appdosc-settings-sheet__item-left"><span>✏️</span><span>Редактировать профиль</span></span>
           <span class="appdosc-settings-sheet__coming">В разработке</span>
@@ -9573,7 +10088,5 @@
         </div>
       </section>
     </div>
-
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
   </body>
 </html>

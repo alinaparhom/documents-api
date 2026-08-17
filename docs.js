@@ -3,7 +3,7 @@
   var DOCUMENTS_SCRIPT_SOURCE = document.currentScript && document.currentScript.src
     ? document.currentScript.src
     : '';
-  var DOCUMENTS_FEATURES_MODULE_VERSION = 'admin-inline-scroll-20260811'; // Обновляет прокрутку и компоновку вкладок администратора.
+  var DOCUMENTS_FEATURES_MODULE_VERSION = 'object-correspondence-template-20260813'; // Добавляет шаблон переписки и групповые заголовки таблицы объекта.
   var DATE_FORMATTER = new Intl.DateTimeFormat('ru-RU');
   var DATE_TIME_FORMATTER;
   var docsLogger = {
@@ -167,7 +167,7 @@
       map[column.key] = {
         width: getColumnDefaultWidth(column.key),
         fontSize: fontSize,
-        visible: true
+        visible: column.defaultVisible !== false
       };
     });
     return map;
@@ -607,6 +607,8 @@
   var OCR_BROWSER_MAX_PDF_PAGES = 10;
   var OCR_BROWSER_PDF_SCALE = 2;
   var OCR_BROWSER_TESSERACT_CDN_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
+  var OBJECT_TABLE_COLUMN_MIN_WIDTH = 180;
+  var OBJECT_TABLE_BASE_WIDTH = 220;
   var messageTimerId = null;
   var outgoingRegistryEscapeHandler = null;
   var outgoingFilterPopoverOutsideHandler = null;
@@ -646,6 +648,10 @@
     paginationInfo: null,
     paginationButtons: null,
     pageSizeSelect: null,
+    workspace: null,
+    organizationView: null,
+    objectContextBar: null,
+    objectView: null,
     filterRow: null,
     tabsBar: null,
     filterBar: null,
@@ -680,6 +686,12 @@
     navigation: null,
     usersButton: null,
     usersView: null,
+    objectsButton: null,
+    objectsView: null,
+    objectsList: null,
+    objectsStatus: null,
+    objectsNameInput: null,
+    objectsCreateButton: null,
     groups: null,
     usersCard: null,
     sectionHeading: null,
@@ -813,9 +825,11 @@
           mergeTelegramUserId: mergeTelegramUserId,
           normalizeTextInputValue: normalizeTextInputValue,
           normalizeUserIdentifier: normalizeUserIdentifier,
+          refreshObjects: refreshObjects,
           sendClientDiagnostics: sendClientDiagnostics,
           showMessage: showMessage,
           state: state,
+          updateTable: updateTable,
           updateStateFromPayload: updateStateFromPayload,
           uploadFormDataWithProgress: uploadFormDataWithProgress
         });
@@ -1230,6 +1244,11 @@
     }
 
     if (accessChanged && normalized && normalized.accessGranted && state.organization) {
+      refreshObjects({ initial: true }).catch(function(error) {
+        if (typeof docsLogger.warn === 'function') {
+          docsLogger.warn('Не удалось обновить список объектов:', error);
+        }
+      });
       loadRegistry(state.organization).catch(function(error) {
         if (typeof console !== 'undefined' && typeof docsLogger.error === 'function') {
           docsLogger.error('Не удалось обновить реестр документов после смены пользователя:', error);
@@ -1240,7 +1259,7 @@
   }
 
   var TABLE_GROUPS = [
-    { key: 'flow', label: 'Входящие и исходящие', span: 10 },
+    { key: 'flow', label: 'Входящие и исходящие', span: 11 },
     { key: 'execution', label: 'Исполнение', span: 5 },
     { key: 'control', label: 'Контроль', span: 2 }
   ];
@@ -1250,6 +1269,7 @@
     { key: 'actions', label: 'Действия', group: 'flow', searchable: false },
     { key: 'files', label: 'Файлы', group: 'flow', searchable: false },
     { key: 'status', label: 'Статус', group: 'flow', searchable: true, searchHint: 'Введите статус' },
+    { key: 'object', label: 'Объект', group: 'flow', searchable: true, searchHint: 'Введите название объекта', defaultVisible: false },
     { key: 'registrationDate', label: 'Дата регистрации', group: 'flow', searchable: true, searchHint: 'Например: 12.03.2024' },
     { key: 'direction', label: 'Тип', group: 'flow', searchable: true, searchHint: 'Введите входящий или исходящий' },
     { key: 'correspondent', label: 'Корреспондент', group: 'flow', searchable: true, searchHint: 'Введите имя корреспондента' },
@@ -1313,6 +1333,7 @@
     dueDate: 160,
     instruction: 210,
     status: 180,
+    object: 200,
     files: 160,
     actions: 160
   };
@@ -1425,6 +1446,21 @@
     userAssignmentKeyMap: null,
     hasUserAssignmentKeys: false,
     effectiveUserRole: '',
+    objects: {
+      items: [],
+      loaded: false,
+      loading: false,
+      promise: null,
+      canManage: false,
+      mode: 'organization',
+      activeView: 'table',
+      activeId: '',
+      activeObject: null,
+      rows: [],
+      query: '',
+      tableLoading: false,
+      tableError: ''
+    },
     admin: {
       settings: {
         responsibles: [],
@@ -3350,6 +3386,11 @@
       '.documents-due__overdue-note{display:inline-flex;align-items:center;width:max-content;max-width:100%;padding:2px 7px;border-radius:999px;background:#dc2626;color:#fff;font-size:10px;font-weight:900;line-height:1.4;text-transform:uppercase;letter-spacing:0;}' +
       '.documents-status{display:flex;flex-direction:column;align-items:flex-start;gap:5px;min-width:0;}' +
       '.documents-status__badge{display:inline-grid;grid-template-columns:8px minmax(0,1fr);align-items:center;gap:7px;max-width:100%;min-height:26px;padding:4px 9px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;color:#334155;font-size:12px;font-weight:900;line-height:1.2;box-sizing:border-box;}' +
+      '.documents-object-cell{display:inline-flex;align-items:center;gap:7px;max-width:100%;min-height:27px;padding:4px 9px;border:1px solid #dbeafe;border-radius:8px;background:#eff6ff;color:#1d4ed8;font-size:12px;font-weight:850;line-height:1.2;box-sizing:border-box;}' +
+      '.documents-object-cell::before{content:"";flex:0 0 auto;width:7px;height:7px;border-radius:999px;background:#3b82f6;}' +
+      '.documents-object-cell__name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
+      '.documents-object-cell--unavailable{border-color:#e2e8f0;background:#f8fafc;color:#64748b;}' +
+      '.documents-object-cell--unavailable::before{background:#94a3b8;}' +
       '.documents-status__badge-dot{width:8px;height:8px;border-radius:999px;background:currentColor;box-shadow:0 0 0 3px rgba(148,163,184,.16);}' +
       '.documents-status__badge-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
       '.documents-status__badge--work{background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8;}' +
@@ -3884,7 +3925,10 @@
       return;
     }
     var values = getDocumentFilterValues(doc, index);
-    if (!matchesActiveDocumentTab(doc, values)) {
+    if (isObjectDocumentsViewActive() && !documentBelongsToObject(doc, state.objects.activeId)) {
+      return;
+    }
+    if (!isObjectDocumentsViewActive() && !matchesActiveDocumentTab(doc, values)) {
       return;
     }
     if (!matchesDocumentFilters(values, collector.columnKey)) {
@@ -4850,7 +4894,6 @@
       || state.showUnviewedOnly
       || hasActiveSorting()
       || Boolean(normalizeGroupingColumn(state.groupingColumn))
-      || getHiddenColumnCount() > 0
       || state.columnMoveMode === true;
   }
 
@@ -4926,6 +4969,11 @@
       var hiddenCount = getHiddenColumnCount();
       elements.columnsButton.classList.toggle('is-active', hiddenCount > 0);
       setToolbarButtonBadge(elements.columnsButton, hiddenCount > 0 ? String(hiddenCount) : '');
+      var columnsButtonLabel = hiddenCount > 0
+        ? 'Скрыть столбцы. Скрыто: ' + String(hiddenCount)
+        : 'Скрыть столбцы';
+      elements.columnsButton.title = columnsButtonLabel;
+      elements.columnsButton.setAttribute('aria-label', columnsButtonLabel);
     }
     if (elements.resetButton) {
       elements.resetButton.classList.toggle('is-active', hasActiveTableParameters() || hasViewSettingsChanged());
@@ -5583,6 +5631,7 @@
       registryNumber: '',
       actions: '',
       files: '',
+      object: '',
       registrationDate: '',
       direction: '',
       correspondent: '',
@@ -5607,6 +5656,7 @@
       ? String(doc.entryNumber)
       : String(index + 1);
     values.registryNumber = doc.registryNumber ? String(doc.registryNumber) : '';
+    values.object = getDocumentObjectName(doc);
     var registrationFormatted = formatDate(doc.registrationDate);
     values.registrationDate = registrationFormatted === '—' ? '' : registrationFormatted;
     values.direction = doc.direction ? String(doc.direction) : '';
@@ -6451,9 +6501,10 @@
       var button = createElement('button', 'documents-tab');
       button.type = 'button';
       button.setAttribute('role', 'tab');
-      button.setAttribute('aria-selected', state.activeDocumentTab === tab.id ? 'true' : 'false');
+      var documentTabActive = state.objects.mode !== 'object' && state.activeDocumentTab === tab.id;
+      button.setAttribute('aria-selected', documentTabActive ? 'true' : 'false');
       button.setAttribute('aria-label', labelText + ': ' + count);
-      if (state.activeDocumentTab === tab.id) {
+      if (documentTabActive) {
         button.classList.add('is-active');
       }
       button.appendChild(createElement('span', 'documents-tab__label', labelText));
@@ -6461,6 +6512,9 @@
         button.appendChild(createElement('span', 'documents-tab__count', String(count)));
       }
       button.addEventListener('click', function() {
+        if (!showOrganizationDocuments()) {
+          return;
+        }
         activateDocumentTab(tab.id);
       });
       shell.appendChild(button);
@@ -6483,6 +6537,35 @@
 
     builtInTabs.forEach(appendTab);
     customTabs.forEach(appendTab);
+
+    if (state.objects.items.length) {
+      list.appendChild(createElement('span', 'documents-tabs__objects-label', 'Объекты'));
+      state.objects.items.forEach(function(object) {
+        var shell = createElement('div', 'documents-tab-shell documents-tab-shell--object');
+        var button = createElement('button', 'documents-tab');
+        button.type = 'button';
+        button.setAttribute('role', 'tab');
+        var linkedDocumentsCount = countVisibleDocumentsForObject(object.id);
+        var objectActive = state.objects.mode === 'object' && state.objects.activeId === object.id;
+        button.setAttribute('aria-selected', objectActive ? 'true' : 'false');
+        button.setAttribute(
+          'aria-label',
+          'Объект «' + object.name + '». Задач документооборота: ' + String(linkedDocumentsCount)
+        );
+        if (objectActive) {
+          button.classList.add('is-active');
+        }
+        button.appendChild(createElement('span', 'documents-tab__label', object.name));
+        if (linkedDocumentsCount > 0) {
+          button.appendChild(createElement('span', 'documents-tab__count', String(linkedDocumentsCount)));
+        }
+        button.addEventListener('click', function() {
+          openObjectTable(object.id);
+        });
+        shell.appendChild(button);
+        list.appendChild(shell);
+      });
+    }
 
     var addButton = createElement('button', 'documents-tabs__add', '+');
     addButton.type = 'button';
@@ -7085,19 +7168,6 @@
     return chip;
   }
 
-  function pluralize(count, one, few, many) {
-    var value = Math.abs(Number(count) || 0);
-    var mod10 = value % 10;
-    var mod100 = value % 100;
-    if (mod10 === 1 && mod100 !== 11) {
-      return one;
-    }
-    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) {
-      return few;
-    }
-    return many;
-  }
-
   function getSortingSummaryText() {
     var sorting = state.visualSettings && state.visualSettings.sorting
       ? normalizeSortingSettings(state.visualSettings.sorting)
@@ -7169,13 +7239,6 @@
       elements.filterBar.appendChild(createParameterChip('Группировка', getGroupingLabel(groupingColumn), 'Отключить группировку', function() {
         setTableGrouping('');
       }, 'documents-filter-chip--warning'));
-    }
-
-    var hiddenCount = getHiddenColumnCount();
-    if (hiddenCount > 0) {
-      elements.filterBar.appendChild(createParameterChip('Скрыто', hiddenCount + ' ' + pluralize(hiddenCount, 'столбец', 'столбца', 'столбцов'), 'Показать все столбцы', function() {
-        showAllTableColumns();
-      }, 'documents-filter-chip--muted'));
     }
 
     if (state.columnMoveMode) {
@@ -9251,6 +9314,7 @@
     applyVisualSettings(nextSettings);
     applyColumnVisibility(nextSettings.columns);
     applyColumnWidths();
+    updateHeaderToolModes();
     updateFilterBar();
     scheduleTablePreferencesSave();
   }
@@ -11153,6 +11217,7 @@
       { label: 'Регистрационный №', value: doc.registryNumber || '—' },
       { label: 'Дата регистрации', value: formatDate(doc.registrationDate) },
       { label: 'Тип', value: doc.direction || '—' },
+      { label: 'Объект', value: getDocumentObjectName(doc) || '—' },
       { label: 'Корреспондент', value: doc.correspondent || '—' },
       { label: '№ документа', value: doc.documentNumber || '—' },
       { label: 'Дата документа', value: formatDate(doc.documentDate) },
@@ -15946,7 +16011,11 @@
           continue;
         }
         var values = getDocumentFilterValues(doc, i);
-        if (matchesActiveDocumentTab(doc, values) && matchesDocumentFilters(values)) {
+        if (isObjectDocumentsViewActive() && !documentBelongsToObject(doc, state.objects.activeId)) {
+          continue;
+        }
+        var matchesCurrentTab = isObjectDocumentsViewActive() || matchesActiveDocumentTab(doc, values);
+        if (matchesCurrentTab && matchesDocumentFilters(values)) {
           entries.push({ doc: doc, values: values, index: i });
         }
         if (entries.length >= 300) {
@@ -17639,6 +17708,24 @@
     return parts.join('|');
   }
 
+  function createDocumentObjectCell(doc) {
+    var objectId = getDocumentObjectId(doc);
+    if (!objectId) {
+      return '—';
+    }
+    var object = findWorkspaceObject(objectId);
+    var cell = createElement(
+      'span',
+      'documents-object-cell' + (object ? '' : ' documents-object-cell--unavailable')
+    );
+    cell.appendChild(createElement(
+      'span',
+      'documents-object-cell__name',
+      object && object.name ? object.name : 'Недоступный объект'
+    ));
+    return cell;
+  }
+
   function renderTableRowCells(tr, doc, index, filterValues, force) {
     if (!tr) {
       return;
@@ -17868,6 +17955,7 @@
     filesCell.appendChild(filesList);
     descriptorsByKey.files = buildCellDescriptor(filesCell, '', 'files');
     descriptorsByKey.status = buildCellDescriptor(createStatusCell(doc), 'documents-cell--status', 'status');
+    descriptorsByKey.object = buildCellDescriptor(createDocumentObjectCell(doc), '', 'object');
 
     descriptorsByKey.registrationDate = buildCellDescriptor(formatDate(doc.registrationDate), '', 'registrationDate');
     descriptorsByKey.direction = buildCellDescriptor(doc.direction || '—', '', 'direction');
@@ -18647,6 +18735,11 @@
     var documents = Array.isArray(state.documents) ? state.documents : [];
     var filteredEntries = [];
     var unviewedCount = 0;
+    var objectDocumentsActive = isObjectDocumentsViewActive();
+    var activeObjectId = objectDocumentsActive ? state.objects.activeId : '';
+    if (objectDocumentsActive) {
+      renderObjectDocumentsContext();
+    }
 
     for (var i = 0; i < documents.length; i += 1) {
       var doc = documents[i];
@@ -18657,7 +18750,11 @@
       if (values.__hasUnviewed) {
         unviewedCount += 1;
       }
-      if (matchesActiveDocumentTab(doc, values) && matchesDocumentFilters(values)) {
+      if (objectDocumentsActive && !documentBelongsToObject(doc, activeObjectId)) {
+        continue;
+      }
+      var matchesCurrentTab = objectDocumentsActive || matchesActiveDocumentTab(doc, values);
+      if (matchesCurrentTab && matchesDocumentFilters(values)) {
         filteredEntries.push({ doc: doc, values: values, index: i });
       }
     }
@@ -18677,7 +18774,10 @@
       renderDocumentTabs();
     }
 
-    var filtersActive = hasActiveDocumentTab() || hasActiveFilters() || state.showUnassignedOnly || state.showUnviewedOnly;
+    var filtersActive = (!objectDocumentsActive && hasActiveDocumentTab())
+      || hasActiveFilters()
+      || state.showUnassignedOnly
+      || state.showUnviewedOnly;
 
     if (!filteredEntries.length) {
       var waitingForRegistry = Boolean(state.organization && (state.registryLoading || (!state.registryLoaded && !state.registryLoadError)));
@@ -18691,6 +18791,8 @@
         setTableEmptyState('', state.organization
           ? 'Реестр пуст. Добавьте первый документ.'
           : 'Организация не определена для этой страницы.');
+      } else if (objectDocumentsActive && countVisibleDocumentsForObject(activeObjectId) === 0) {
+        setTableEmptyState('', 'К этому объекту пока не привязаны задачи документооборота.');
       } else if (filtersActive) {
         setTableEmptyState('', 'По текущим фильтрам ничего не найдено.');
       } else {
@@ -20158,6 +20260,15 @@
         target[key] = fields[key];
       }
     });
+
+    if (Object.prototype.hasOwnProperty.call(fields, 'objectId')) {
+      var nextObjectId = String(fields.objectId || '').trim().toLowerCase();
+      if (/^obj_[a-f0-9]{16}$/.test(nextObjectId)) {
+        target.objectId = nextObjectId;
+      } else {
+        delete target.objectId;
+      }
+    }
 
     if (Object.prototype.hasOwnProperty.call(fields, 'assignees') || Object.prototype.hasOwnProperty.call(fields, 'assignee')) {
       var resolvedAssignees = [];
@@ -25659,6 +25770,18 @@
       showMessage('error', 'Добавление документов недоступно для вашей роли.');
       return;
     }
+    if (!state.objects.loaded) {
+      refreshObjects()
+        .then(function() {
+          openDocumentForm(doc);
+        })
+        .catch(function(error) {
+          showMessage('error', error && error.message
+            ? 'Не удалось загрузить объекты: ' + error.message
+            : 'Не удалось загрузить список объектов.');
+        });
+      return;
+    }
 
     runWithResponsibles(function() {
       var isEditMode = Boolean(doc && doc.id);
@@ -25819,6 +25942,24 @@
         choices: ['Входящий', 'Исходящий', 'Внутренний']
       });
       grid.appendChild(directionField.field);
+
+      var objectField = addField({ name: 'object_id', label: 'Объект', type: 'select' });
+      var objectPlaceholder = createElement('option', '', 'Без привязки к объекту');
+      objectPlaceholder.value = '';
+      objectField.input.appendChild(objectPlaceholder);
+      var availableObjects = state.objects && Array.isArray(state.objects.items) ? state.objects.items : [];
+      availableObjects.forEach(function(object) {
+        if (!object || !object.id || !object.name) {
+          return;
+        }
+        var option = createElement('option', '', object.name);
+        option.value = object.id;
+        objectField.input.appendChild(option);
+      });
+      if (!availableObjects.length) {
+        objectPlaceholder.textContent = 'Объекты ещё не созданы';
+      }
+      grid.appendChild(objectField.field);
 
       var correspondentField = addField({ name: 'correspondent', label: 'Отправитель / получатель *', required: true });
       attachCorrespondentSuggestions(correspondentField);
@@ -26592,6 +26733,7 @@
           registryNumber: normalizeTextInputValue(registryField.input.value),
           registrationDate: normalizeTextInputValue(registrationDateField.input.value),
           direction: normalizeTextInputValue(directionField.input.value),
+          objectId: normalizeTextInputValue(objectField.input.value),
           correspondent: normalizeTextInputValue(correspondentField.input.value),
           documentNumber: normalizeTextInputValue(documentNumberField.input.value),
           documentDate: normalizeTextInputValue(documentDateField.input.value),
@@ -26813,6 +26955,7 @@
           formData.append('action', 'create');
           formData.append('organization', state.organization);
           setFormDataValue(formData, 'correspondent', createFields.correspondent);
+          setFormDataValue(formData, 'object_id', createFields.objectId);
           if (typeof formData.delete === 'function') {
             formData.delete('attachments[]');
           }
@@ -26975,6 +27118,7 @@
         registryField.input.value = doc.registryNumber || doc.registry_number || '';
         registrationDateField.input.value = doc.registrationDate || doc.registration_date || '';
         directionField.input.value = doc.direction || '';
+        objectField.input.value = getDocumentObjectId(doc);
         correspondentField.input.value = doc.correspondent || '';
         documentNumberField.input.value = doc.documentNumber || doc.document_number || '';
         documentDateField.input.value = doc.documentDate || doc.document_date || '';
@@ -27662,11 +27806,1003 @@
     });
   }
 
+  function ensureObjectWorkspaceStyles() {
+    if (document.getElementById('documents-object-workspace-style')) {
+      return;
+    }
+    var style = document.createElement('style');
+    style.id = 'documents-object-workspace-style';
+    style.textContent = '' +
+      '.documents-object-mode-hidden{display:none;}' +
+      '.documents-organization-view,.documents-object-view{display:flex;flex:1 1 auto;min-width:0;min-height:0;flex-direction:column;}' +
+      '.documents-object-view{background:#f7fbff;}' +
+      '.documents-organization-view[hidden],.documents-object-view[hidden]{display:none;}' +
+      '.documents-tabs__objects-label{display:inline-flex;align-items:center;min-height:40px;margin-left:8px;padding:0 10px;border-left:1px solid #cbd5e1;color:#64748b;font-size:10px;font-weight:900;letter-spacing:.05em;text-transform:uppercase;white-space:nowrap;}' +
+      '.documents-tab-shell--object .documents-tab__count{background:#f1f5f9;color:#475569;}' +
+      '.documents-tab-shell--object .documents-tab.is-active{border-bottom-color:#2563eb;color:#1d4ed8;}' +
+      '.documents-object-context[hidden]{display:none;}' +
+      '.documents-object-toolbar{display:flex;align-items:center;gap:9px;padding:10px 14px;border-bottom:1px solid #e0e6ef;background:#fff;}' +
+      '.documents-object-toolbar__back,.documents-object-toolbar__refresh,.documents-object-toolbar__add{min-height:34px;padding:0 12px;border:1px solid #dbe3ee;border-radius:8px;background:#fff;color:#334155;font-size:12px;font-weight:850;cursor:pointer;}' +
+      '.documents-object-toolbar__add{border-color:#2563eb;background:#2563eb;color:#fff;}' +
+      '.documents-object-toolbar__back:hover,.documents-object-toolbar__refresh:hover,.documents-object-toolbar__back:focus-visible,.documents-object-toolbar__refresh:focus-visible{border-color:#93c5fd;background:#eff6ff;color:#1d4ed8;outline:none;}' +
+      '.documents-object-toolbar__add:hover,.documents-object-toolbar__add:focus-visible{background:#1d4ed8;outline:none;}' +
+      '.documents-object-toolbar__title{min-width:0;color:#0f172a;font-size:14px;font-weight:950;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
+      '.documents-object-toolbar__views{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:3px;margin-left:auto;padding:3px;border:1px solid #e2e8f0;border-radius:10px;background:#f1f5f9;}' +
+      '.documents-object-toolbar__view{min-height:32px;padding:0 11px;border:0;border-radius:7px;background:transparent;color:#64748b;font-size:11px;font-weight:850;white-space:nowrap;cursor:pointer;}' +
+      '.documents-object-toolbar__view:hover,.documents-object-toolbar__view:focus-visible{color:#1d4ed8;outline:none;}' +
+      '.documents-object-toolbar__view.is-active{background:#fff;color:#1d4ed8;box-shadow:0 2px 7px rgba(15,23,42,.1);}' +
+      '.documents-object-toolbar__linked-count{flex:0 0 auto;color:#64748b;font-size:11px;font-weight:800;white-space:nowrap;}' +
+      '.documents-object-sheetbar{display:flex;align-items:center;gap:10px;padding:10px 14px;background:#f7fbff;}' +
+      '.documents-object-search{display:flex;flex:1 1 320px;max-width:620px;min-width:180px;align-items:center;gap:8px;padding:8px 11px;border:1px solid #e0e6ef;border-radius:10px;background:#fff;box-shadow:0 1px 2px rgba(16,42,67,.08),0 4px 16px rgba(16,42,67,.06);}' +
+      '.documents-object-search::before{content:"⌕";color:#5f6368;font-size:18px;line-height:1;transform:rotate(-20deg);}' +
+      '.documents-object-search__input{width:100%;min-width:0;border:0;background:transparent;color:#202124;font:inherit;outline:none;}' +
+      '.documents-object-sheetbar__count{color:#5f6368;font-size:12px;font-weight:700;white-space:nowrap;}' +
+      '.documents-object-sheetbar__hint{margin-left:auto;color:#5f6368;font-size:11px;white-space:nowrap;}' +
+      '.documents-object-table-wrap{position:relative;flex:1 1 auto;min-height:0;margin:0 14px 14px;overflow-x:auto;overflow-y:auto;scrollbar-gutter:stable;-webkit-overflow-scrolling:touch;touch-action:pan-x pan-y;border:1px solid #e0e6ef;border-radius:14px;background:#fff;box-shadow:0 1px 2px rgba(16,42,67,.08),0 4px 16px rgba(16,42,67,.06);}' +
+      '.documents-object-table{--documents-object-header-row-height:42px;width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;color:#202124;font-size:13px;}' +
+      '.documents-object-table th{position:sticky;top:0;z-index:3;height:42px;padding:7px 10px;border-right:1px solid #e0e6ef;border-bottom:1px solid #e0e6ef;background:#f8f9fa;color:#5f6368;text-align:left;font-size:11px;font-weight:700;letter-spacing:.025em;line-height:1.25;}' +
+      '.documents-object-table__header--groups th{background:#e8f0fe;color:#1967d2;text-align:center;}' +
+      '.documents-object-table__header--fields th{top:var(--documents-object-header-row-height);background:#f8f9fa;}' +
+      '.documents-object-table td{height:42px;padding:0;border-right:1px solid #e0e6ef;border-bottom:1px solid #f1f3f4;background:#fff;vertical-align:middle;}' +
+      '.documents-object-table th:last-child,.documents-object-table td:last-child{border-right:0;}' +
+      '.documents-object-table tbody tr:hover td{background:#f4f8ff;}' +
+      '.documents-object-table tbody tr:focus-within td{background:#f4f8ff;}' +
+      '.documents-object-table__number{width:58px;text-align:center;}' +
+      '.documents-object-table th.documents-object-table__number{left:0;z-index:7;}' +
+      '.documents-object-table td.documents-object-table__number{position:sticky;left:0;z-index:2;background:#f8f9fa;color:#5f6368;font-size:12px;font-weight:700;}' +
+      '.documents-object-table__actions{width:150px;}' +
+      '.documents-object-table th.documents-object-table__actions{right:0;z-index:7;}' +
+      '.documents-object-table td.documents-object-table__actions{position:sticky;right:0;z-index:2;padding:5px;background:#fff;}' +
+      '.documents-object-table tbody tr:hover td.documents-object-table__number,.documents-object-table tbody tr:hover td.documents-object-table__actions,.documents-object-table tbody tr:focus-within td.documents-object-table__number,.documents-object-table tbody tr:focus-within td.documents-object-table__actions{background:#f4f8ff;}' +
+      '.documents-object-table__input{display:block;width:100%;min-height:41px;box-sizing:border-box;padding:8px 10px;border:0;border-radius:0;background:transparent;color:#202124;font:inherit;outline:none;}' +
+      '.documents-object-table__input:focus{background:#fff;box-shadow:inset 0 0 0 2px #1a73e8;}' +
+      '.documents-object-table__row.is-dirty td{background:#fef7e0;}' +
+      '.documents-object-table__row.is-dirty .documents-object-table__input:focus{background:#fff;}' +
+      '.documents-object-table__row.is-saving{opacity:.68;}' +
+      '.documents-object-table__row-actions{display:flex;gap:5px;justify-content:center;}' +
+      '.documents-object-table__save,.documents-object-table__delete,.documents-object-table__cancel{min-height:31px;padding:0 9px;border:1px solid #e0e6ef;border-radius:8px;background:#fff;color:#202124;font-size:11px;font-weight:700;cursor:pointer;}' +
+      '.documents-object-table__save{border-color:#1a73e8;background:#1a73e8;color:#fff;}' +
+      '.documents-object-table__delete{border-color:#f0b4b2;color:#c5221f;}' +
+      '.documents-object-table__delete:hover{background:#fce8e6;}' +
+      '.documents-object-table__save:disabled,.documents-object-table__delete:disabled,.documents-object-table__cancel:disabled{opacity:.48;cursor:default;}' +
+      '.documents-object-search-empty{padding:44px 16px;text-align:center;color:#5f6368;font-size:13px;}' +
+      '.documents-object-search-empty[hidden]{display:none;}' +
+      '.documents-object-empty{display:flex;align-items:center;justify-content:center;min-height:220px;padding:24px;color:#64748b;font-size:13px;font-weight:750;text-align:center;}' +
+      '@media (max-width:720px){' +
+      '.documents-tabs__objects-label{margin-left:4px;padding:0 7px;}' +
+      '.documents-object-toolbar{flex-wrap:wrap;padding:7px;}' +
+      '.documents-object-toolbar__title{order:-1;width:100%;}' +
+      '.documents-object-toolbar__views{order:3;width:100%;margin-left:0;}' +
+      '.documents-object-toolbar__view{min-height:42px;padding:0 6px;white-space:normal;line-height:1.15;}' +
+      '.documents-object-toolbar__linked-count{order:4;width:100%;}' +
+      '.documents-object-toolbar__add{margin-left:auto;}' +
+      '.documents-object-sheetbar{align-items:stretch;flex-wrap:wrap;padding:8px;}' +
+      '.documents-object-search{flex-basis:100%;max-width:none;}' +
+      '.documents-object-sheetbar__hint{display:none;}' +
+      '.documents-object-table-wrap{margin:0 8px 8px;border-radius:11px;}' +
+      '}';
+    document.head.appendChild(style);
+  }
+
+  function getDocumentObjectId(doc) {
+    if (!doc || typeof doc !== 'object') {
+      return '';
+    }
+    var objectId = doc.objectId !== undefined && doc.objectId !== null
+      ? String(doc.objectId).trim().toLowerCase()
+      : '';
+    return /^obj_[a-f0-9]{16}$/.test(objectId) ? objectId : '';
+  }
+
+  function getDocumentObjectName(doc) {
+    var objectId = getDocumentObjectId(doc);
+    if (!objectId) {
+      return '';
+    }
+    var object = findWorkspaceObject(objectId);
+    return object && object.name ? String(object.name) : 'Недоступный объект';
+  }
+
+  function documentBelongsToObject(doc, objectId) {
+    return Boolean(objectId) && getDocumentObjectId(doc) === String(objectId);
+  }
+
+  function countVisibleDocumentsForObject(objectId) {
+    var documents = Array.isArray(state.documents) ? state.documents : [];
+    var count = 0;
+    for (var i = 0; i < documents.length; i += 1) {
+      if (documentBelongsToObject(documents[i], objectId) && documentVisibleForCurrentUser(documents[i])) {
+        count += 1;
+      }
+    }
+    return count;
+  }
+
+  function isObjectDocumentsViewActive() {
+    return state.objects.mode === 'object'
+      && state.objects.activeView === 'documents'
+      && Boolean(state.objects.activeId);
+  }
+
+  function normalizeObjectSummary(object) {
+    if (!object || typeof object !== 'object') {
+      return null;
+    }
+    var id = object.id ? String(object.id).trim() : '';
+    var name = object.name ? String(object.name).trim() : '';
+    if (!/^obj_[a-f0-9]{16}$/.test(id) || !name) {
+      return null;
+    }
+    var columns = Array.isArray(object.columns) ? object.columns.map(function(column) {
+      if (!column || typeof column !== 'object') {
+        return null;
+      }
+      var columnId = column.id ? String(column.id).trim() : '';
+      var label = column.label ? String(column.label).trim() : '';
+      if (!/^col_[a-f0-9]{16}$/.test(columnId) || !label) {
+        return null;
+      }
+      return {
+        id: columnId,
+        label: label,
+        group: column.group ? String(column.group).trim() : '',
+        type: column.type === 'date' ? 'date' : 'text'
+      };
+    }).filter(Boolean) : [];
+    return {
+      id: id,
+      name: name,
+      columns: columns,
+      schemaRevision: Math.max(1, Number(object.schemaRevision) || 1),
+      revision: Math.max(1, Number(object.revision) || 1),
+      rowsCount: Math.max(0, Number(object.rowsCount) || 0),
+      createdAt: object.createdAt ? String(object.createdAt) : '',
+      updatedAt: object.updatedAt ? String(object.updatedAt) : ''
+    };
+  }
+
+  function findWorkspaceObject(objectId) {
+    var items = state.objects && Array.isArray(state.objects.items) ? state.objects.items : [];
+    for (var i = 0; i < items.length; i += 1) {
+      if (items[i] && items[i].id === objectId) {
+        return items[i];
+      }
+    }
+    return null;
+  }
+
+  function syncActiveObjectSummaryToList() {
+    if (!state.objects.activeObject) {
+      return;
+    }
+    for (var i = 0; i < state.objects.items.length; i += 1) {
+      if (state.objects.items[i] && state.objects.items[i].id === state.objects.activeObject.id) {
+        state.objects.items[i] = normalizeObjectSummary(state.objects.activeObject) || state.objects.activeObject;
+        return;
+      }
+    }
+  }
+
+  function applyObjectsPayload(data) {
+    var items = data && Array.isArray(data.objects) ? data.objects.map(normalizeObjectSummary).filter(Boolean) : [];
+    state.objects.items = items;
+    state.objects.canManage = Boolean(data && data.canManageObjects);
+    state.objects.loaded = true;
+    invalidateFilterValuesCache();
+    if (state.objects.activeId && !findWorkspaceObject(state.objects.activeId)) {
+      state.objects.activeId = '';
+      state.objects.activeObject = null;
+      state.objects.rows = [];
+      state.objects.query = '';
+      state.objects.activeView = 'table';
+      state.objects.mode = 'organization';
+    }
+    renderDocumentTabs();
+    syncObjectWorkspaceView();
+    updateTable();
+    return items;
+  }
+
+  function refreshObjects(options) {
+    if (!state.organization) {
+      return Promise.resolve([]);
+    }
+    if (state.objects.loading && state.objects.promise) {
+      return state.objects.promise;
+    }
+    state.objects.loading = true;
+    var initial = Boolean(options && options.initial);
+    var request = fetch(buildApiUrl('objects_list', { organization: state.organization, cacheBust: Date.now() }), {
+      credentials: 'same-origin'
+    })
+      .then(handleResponse)
+      .then(function(data) {
+        var items = applyObjectsPayload(data);
+        if (initial) {
+          state.objects.activeId = '';
+          state.objects.activeObject = null;
+          state.objects.rows = [];
+          state.objects.query = '';
+          state.objects.activeView = 'table';
+          state.objects.mode = 'organization';
+          syncObjectWorkspaceView();
+          renderDocumentTabs();
+        }
+        return items;
+      })
+      .catch(function(error) {
+        if (initial) {
+          state.objects.activeId = '';
+          state.objects.activeObject = null;
+          state.objects.rows = [];
+          state.objects.query = '';
+          state.objects.activeView = 'table';
+          state.objects.mode = 'organization';
+          syncObjectWorkspaceView();
+          renderDocumentTabs();
+        }
+        throw error;
+      })
+      .finally(function() {
+        state.objects.loading = false;
+        state.objects.promise = null;
+      });
+    state.objects.promise = request;
+    return request;
+  }
+
+  function objectViewHasDirtyRows() {
+    return Boolean(elements.objectView && elements.objectView.querySelector('.documents-object-table__row.is-dirty'));
+  }
+
+  function objectViewHasSavingRows() {
+    return Boolean(elements.objectView && elements.objectView.querySelector('.documents-object-table__row.is-saving'));
+  }
+
+  function confirmDiscardObjectRows() {
+    if (objectViewHasSavingRows()) {
+      showMessage('info', 'Дождитесь завершения сохранения строки.');
+      return false;
+    }
+    if (!objectViewHasDirtyRows()) {
+      return true;
+    }
+    return window.confirm('Есть несохранённые изменения строк. Закрыть их без сохранения?');
+  }
+
+  function setWorkspaceMode(mode) {
+    state.objects.mode = mode;
+    syncObjectWorkspaceView();
+  }
+
+  function showOrganizationDocuments() {
+    if (state.objects.mode === 'object' && !confirmDiscardObjectRows()) {
+      return false;
+    }
+    state.objects.activeId = '';
+    state.objects.activeObject = null;
+    state.objects.rows = [];
+    state.objects.query = '';
+    state.objects.activeView = 'table';
+    setWorkspaceMode('organization');
+    resetTablePage();
+    renderDocumentTabs();
+    updateTable();
+    return true;
+  }
+
+  function syncObjectWorkspaceHeader() {
+    var mode = state.objects.mode || 'organization';
+    var hideOrganizationActions = mode !== 'organization';
+    [elements.addButton, elements.responsibleButton, elements.unviewedButton, elements.outgoingButton, elements.ordersButton, elements.settingsButton].forEach(function(button) {
+      if (button) {
+        button.classList.toggle('documents-object-mode-hidden', hideOrganizationActions);
+      }
+    });
+    var title = document.getElementById('documents-title');
+    if (title) {
+      if (mode === 'object' && state.objects.activeObject) {
+        title.textContent = 'Объект — ' + state.objects.activeObject.name;
+      } else {
+        title.textContent = 'Документооборот — ' + (state.organization || 'организация');
+      }
+    }
+  }
+
+  function createObjectWorkspaceToolbar(activeView, options) {
+    var object = state.objects.activeObject || findWorkspaceObject(state.objects.activeId);
+    var toolbar = createElement('div', 'documents-object-toolbar');
+    var back = createElement('button', 'documents-object-toolbar__back', '← Документооборот');
+    back.type = 'button';
+    back.addEventListener('click', showOrganizationDocuments);
+    toolbar.appendChild(back);
+    toolbar.appendChild(createElement(
+      'div',
+      'documents-object-toolbar__title',
+      object && object.name ? object.name : 'Объект'
+    ));
+
+    var views = createElement('div', 'documents-object-toolbar__views');
+    views.setAttribute('role', 'tablist');
+    views.setAttribute('aria-label', 'Разделы объекта');
+    var tableView = createElement(
+      'button',
+      'documents-object-toolbar__view' + (activeView === 'table' ? ' is-active' : ''),
+      'Таблица объекта'
+    );
+    tableView.type = 'button';
+    tableView.setAttribute('role', 'tab');
+    tableView.setAttribute('aria-selected', activeView === 'table' ? 'true' : 'false');
+    tableView.addEventListener('click', showObjectTableView);
+    views.appendChild(tableView);
+    var documentsView = createElement(
+      'button',
+      'documents-object-toolbar__view' + (activeView === 'documents' ? ' is-active' : ''),
+      'Задачи документооборота'
+    );
+    documentsView.type = 'button';
+    documentsView.setAttribute('role', 'tab');
+    documentsView.setAttribute('aria-selected', activeView === 'documents' ? 'true' : 'false');
+    documentsView.addEventListener('click', showObjectDocumentsView);
+    views.appendChild(documentsView);
+    toolbar.appendChild(views);
+
+    if (options && options.refresh) {
+      var refresh = createElement('button', 'documents-object-toolbar__refresh', 'Обновить');
+      refresh.type = 'button';
+      refresh.dataset.objectTableAction = 'refresh';
+      toolbar.appendChild(refresh);
+    }
+    if (options && options.add) {
+      var add = createElement('button', 'documents-object-toolbar__add', '+ Добавить строку');
+      add.type = 'button';
+      add.dataset.objectTableAction = 'add-row';
+      add.disabled = !object || !object.columns || !object.columns.length;
+      toolbar.appendChild(add);
+    }
+    if (activeView === 'documents') {
+      toolbar.appendChild(createElement(
+        'span',
+        'documents-object-toolbar__linked-count',
+        'Связанных задач: ' + String(countVisibleDocumentsForObject(state.objects.activeId))
+      ));
+    }
+    return toolbar;
+  }
+
+  function renderObjectDocumentsContext() {
+    if (!elements.objectContextBar) {
+      return;
+    }
+    elements.objectContextBar.innerHTML = '';
+    elements.objectContextBar.appendChild(createObjectWorkspaceToolbar('documents'));
+    elements.objectContextBar.hidden = false;
+  }
+
+  function showObjectDocumentsView() {
+    if (!state.objects.activeId || !state.objects.activeObject || !confirmDiscardObjectRows()) {
+      return;
+    }
+    state.objects.activeView = 'documents';
+    resetTablePage();
+    syncObjectWorkspaceView();
+    renderDocumentTabs();
+    updateTable();
+  }
+
+  function showObjectTableView() {
+    if (!state.objects.activeId || !state.objects.activeObject) {
+      return;
+    }
+    state.objects.activeView = 'table';
+    syncObjectWorkspaceView();
+    renderDocumentTabs();
+    if (state.objects.tableLoading) {
+      renderObjectTableState('Загружаем таблицу объекта...', false);
+    } else if (state.objects.tableError) {
+      renderObjectTableState(state.objects.tableError, true);
+    } else {
+      renderObjectRows();
+    }
+  }
+
+  function syncObjectWorkspaceView() {
+    if (!elements.organizationView || !elements.objectView) {
+      return;
+    }
+    var mode = state.objects.mode || 'organization';
+    var showObjectDocuments = mode === 'object' && state.objects.activeView === 'documents';
+    elements.organizationView.hidden = mode !== 'organization' && !showObjectDocuments;
+    elements.objectView.hidden = mode !== 'object' || showObjectDocuments;
+    if (elements.objectContextBar) {
+      elements.objectContextBar.hidden = !showObjectDocuments;
+      if (showObjectDocuments) {
+        renderObjectDocumentsContext();
+      }
+    }
+    syncObjectWorkspaceHeader();
+  }
+
+  function renderObjectTableState(message, isError) {
+    if (!elements.objectView) {
+      return;
+    }
+    elements.objectView.innerHTML = '';
+    elements.objectView.appendChild(createObjectWorkspaceToolbar('table', { refresh: true }));
+    var empty = createElement('div', 'documents-object-empty', message || 'Загружаем таблицу объекта...');
+    if (isError) {
+      empty.setAttribute('role', 'alert');
+    }
+    elements.objectView.appendChild(empty);
+  }
+
+  function createObjectSheetbar() {
+    var sheetbar = createElement('div', 'documents-object-sheetbar');
+    var search = createElement('label', 'documents-object-search');
+    var input = document.createElement('input');
+    input.type = 'search';
+    input.className = 'documents-object-search__input';
+    input.placeholder = 'Поиск по таблице объекта';
+    input.value = state.objects.query || '';
+    input.dataset.objectTableSearch = 'true';
+    input.setAttribute('aria-label', 'Поиск по строкам таблицы объекта');
+    search.appendChild(input);
+    sheetbar.appendChild(search);
+    var count = createElement('span', 'documents-object-sheetbar__count');
+    count.dataset.objectTableCount = 'true';
+    sheetbar.appendChild(count);
+    sheetbar.appendChild(createElement(
+      'span',
+      'documents-object-sheetbar__hint',
+      'Enter — вниз • Tab — следующая ячейка • Ctrl/Cmd+S — сохранить • Esc — отменить'
+    ));
+    return sheetbar;
+  }
+
+  function applyObjectTableSearch(view) {
+    var root = view || elements.objectView;
+    if (!root) {
+      return;
+    }
+    var query = String(state.objects.query || '').trim().toLocaleLowerCase('ru-RU');
+    var rows = Array.prototype.slice.call(root.querySelectorAll('.documents-object-table tbody tr'));
+    var visibleCount = 0;
+    rows.forEach(function(row) {
+      var values = Array.prototype.map.call(row.querySelectorAll('[data-column-id]'), function(input) {
+        return String(input.value || '').toLocaleLowerCase('ru-RU');
+      });
+      var visible = !query || values.some(function(value) { return value.indexOf(query) !== -1; });
+      row.hidden = !visible;
+      if (visible) {
+        visibleCount += 1;
+      }
+    });
+    var count = root.querySelector('[data-object-table-count]');
+    if (count) {
+      count.textContent = query
+        ? 'Показано: ' + String(visibleCount) + ' из ' + String(rows.length)
+        : 'Строк: ' + String(rows.length);
+    }
+    var empty = root.querySelector('[data-object-search-empty]');
+    if (empty) {
+      empty.hidden = !query || visibleCount > 0 || rows.length === 0;
+    }
+  }
+
+  function renderObjectRows() {
+    if (!elements.objectView || !state.objects.activeObject) {
+      return;
+    }
+    var object = state.objects.activeObject;
+    elements.objectView.innerHTML = '';
+    elements.objectView.appendChild(createObjectWorkspaceToolbar('table', { refresh: true, add: true }));
+
+    if (!object.columns.length) {
+      elements.objectView.appendChild(createElement('div', 'documents-object-empty', 'В объекте пока нет столбцов. Администратор может добавить их во вкладке «Объекты».'));
+      return;
+    }
+
+    elements.objectView.appendChild(createObjectSheetbar());
+
+    var wrapper = createElement('div', 'documents-object-table-wrap');
+    var table = createElement('table', 'documents-object-table');
+    table.style.minWidth = String(OBJECT_TABLE_BASE_WIDTH + object.columns.length * OBJECT_TABLE_COLUMN_MIN_WIDTH) + 'px';
+    var thead = document.createElement('thead');
+    var hasGroupedColumns = object.columns.some(function(column) {
+      return Boolean(column.group);
+    });
+    var headerRow = document.createElement('tr');
+    if (hasGroupedColumns) {
+      headerRow.className = 'documents-object-table__header--groups';
+    }
+    var numberHeader = createElement('th', 'documents-object-table__number', '№');
+    numberHeader.setAttribute('scope', 'col');
+    if (hasGroupedColumns) {
+      numberHeader.rowSpan = 2;
+    }
+    headerRow.appendChild(numberHeader);
+    var fieldHeaderRow = hasGroupedColumns ? document.createElement('tr') : headerRow;
+    if (hasGroupedColumns) {
+      fieldHeaderRow.className = 'documents-object-table__header--fields';
+    }
+    for (var columnIndex = 0; columnIndex < object.columns.length;) {
+      var column = object.columns[columnIndex];
+      if (!hasGroupedColumns || !column.group) {
+        var singleHeader = createElement('th', '', column.label);
+        singleHeader.setAttribute('scope', 'col');
+        if (hasGroupedColumns) {
+          singleHeader.rowSpan = 2;
+        }
+        headerRow.appendChild(singleHeader);
+        columnIndex += 1;
+        continue;
+      }
+      var groupEnd = columnIndex + 1;
+      while (groupEnd < object.columns.length && object.columns[groupEnd].group === column.group) {
+        groupEnd += 1;
+      }
+      var groupHeader = createElement('th', 'documents-object-table__group', column.group);
+      groupHeader.colSpan = groupEnd - columnIndex;
+      groupHeader.setAttribute('scope', 'colgroup');
+      headerRow.appendChild(groupHeader);
+      for (var groupedIndex = columnIndex; groupedIndex < groupEnd; groupedIndex += 1) {
+        var fieldHeader = createElement('th', '', object.columns[groupedIndex].label);
+        fieldHeader.setAttribute('scope', 'col');
+        fieldHeaderRow.appendChild(fieldHeader);
+      }
+      columnIndex = groupEnd;
+    }
+    var actionsHeader = createElement('th', 'documents-object-table__actions', 'Действия');
+    actionsHeader.setAttribute('scope', 'col');
+    if (hasGroupedColumns) {
+      actionsHeader.rowSpan = 2;
+    }
+    headerRow.appendChild(actionsHeader);
+    thead.appendChild(headerRow);
+    if (hasGroupedColumns) {
+      thead.appendChild(fieldHeaderRow);
+    }
+    table.appendChild(thead);
+    var tbody = document.createElement('tbody');
+    state.objects.rows.forEach(function(row, index) {
+      tbody.appendChild(createObjectTableRow(row, index));
+    });
+    table.appendChild(tbody);
+    wrapper.appendChild(table);
+    var searchEmpty = createElement('div', 'documents-object-search-empty', 'По вашему запросу строки не найдены.');
+    searchEmpty.dataset.objectSearchEmpty = 'true';
+    searchEmpty.hidden = true;
+    wrapper.appendChild(searchEmpty);
+    if (!state.objects.rows.length) {
+      wrapper.appendChild(createElement('div', 'documents-object-empty', 'Таблица пока пустая. Добавьте первую строку.'));
+    }
+    elements.objectView.appendChild(wrapper);
+    applyObjectTableSearch(elements.objectView);
+  }
+
+  function createObjectTableRow(row, index, isNew) {
+    var tr = document.createElement('tr');
+    tr.className = 'documents-object-table__row' + (isNew ? ' is-dirty' : '');
+    tr.dataset.rowId = row && row.id ? String(row.id) : '';
+    tr.dataset.rowVersion = row && row.version ? String(row.version) : '0';
+    var numberCell = createElement('td', 'documents-object-table__number', isNew ? 'Новая' : String(index + 1));
+    tr.appendChild(numberCell);
+    var values = row && row.values && typeof row.values === 'object' ? row.values : {};
+    state.objects.activeObject.columns.forEach(function(column) {
+      var td = document.createElement('td');
+      var input = document.createElement('input');
+      input.className = 'documents-object-table__input';
+      input.type = column.type === 'date' ? 'date' : 'text';
+      input.value = values[column.id] !== undefined && values[column.id] !== null ? String(values[column.id]) : '';
+      input.dataset.columnId = column.id;
+      input.setAttribute('aria-label', column.label);
+      td.appendChild(input);
+      tr.appendChild(td);
+    });
+    var actions = createElement('td', 'documents-object-table__actions');
+    var actionsWrap = createElement('div', 'documents-object-table__row-actions');
+    var save = createElement('button', 'documents-object-table__save', 'Сохранить');
+    save.type = 'button';
+    save.dataset.objectRowAction = 'save';
+    save.disabled = !isNew;
+    actionsWrap.appendChild(save);
+    if (isNew) {
+      var cancel = createElement('button', 'documents-object-table__cancel', 'Отмена');
+      cancel.type = 'button';
+      cancel.dataset.objectRowAction = 'cancel';
+      actionsWrap.appendChild(cancel);
+    } else {
+      var remove = createElement('button', 'documents-object-table__delete', 'Удалить');
+      remove.type = 'button';
+      remove.dataset.objectRowAction = 'delete';
+      actionsWrap.appendChild(remove);
+    }
+    actions.appendChild(actionsWrap);
+    tr.appendChild(actions);
+    return tr;
+  }
+
+  function openObjectTable(objectId) {
+    var object = findWorkspaceObject(objectId);
+    if (!object) {
+      showMessage('error', 'Объект больше недоступен.');
+      refreshObjects({ initial: true }).catch(function() {});
+      return;
+    }
+    if (state.objects.mode === 'object'
+      && state.objects.activeId !== object.id
+      && !confirmDiscardObjectRows()
+    ) {
+      return;
+    }
+    var keepQuery = state.objects.activeId === object.id;
+    state.objects.activeId = object.id;
+    state.objects.activeObject = object;
+    state.objects.rows = [];
+    state.objects.query = keepQuery ? state.objects.query : '';
+    state.objects.activeView = 'table';
+    state.objects.tableLoading = true;
+    state.objects.tableError = '';
+    setWorkspaceMode('object');
+    renderDocumentTabs();
+    renderObjectTableState('Загружаем таблицу объекта...', false);
+    fetch(buildApiUrl('object_table', {
+      organization: state.organization,
+      objectId: object.id,
+      cacheBust: Date.now()
+    }), { credentials: 'same-origin' })
+      .then(handleResponse)
+      .then(function(data) {
+        if (state.objects.activeId !== object.id) {
+          return;
+        }
+        var freshObject = normalizeObjectSummary(data && data.object ? data.object : object);
+        state.objects.activeObject = freshObject || object;
+        state.objects.rows = data && Array.isArray(data.rows) ? data.rows : [];
+        syncActiveObjectSummaryToList();
+        state.objects.tableLoading = false;
+        renderObjectRows();
+        syncObjectWorkspaceHeader();
+      })
+      .catch(function(error) {
+        if (state.objects.activeId !== object.id) {
+          return;
+        }
+        state.objects.tableLoading = false;
+        state.objects.tableError = error.message || 'Не удалось загрузить таблицу.';
+        renderObjectTableState(state.objects.tableError, true);
+      });
+  }
+
+  function collectObjectRowValues(rowElement) {
+    var values = {};
+    rowElement.querySelectorAll('[data-column-id]').forEach(function(input) {
+      values[input.dataset.columnId] = input.value || '';
+    });
+    return values;
+  }
+
+  function saveObjectRow(rowElement) {
+    if (!rowElement || !state.objects.activeObject) {
+      return;
+    }
+    if (rowElement.dataset.saving === 'true') {
+      return;
+    }
+    rowElement.dataset.saving = 'true';
+    rowElement.classList.add('is-saving');
+    rowElement.querySelectorAll('[data-column-id]').forEach(function(input) {
+      input.disabled = true;
+    });
+    rowElement.querySelectorAll('[data-object-row-action]').forEach(function(button) {
+      button.disabled = true;
+    });
+    var saveButton = rowElement.querySelector('[data-object-row-action="save"]');
+    if (saveButton) {
+      saveButton.disabled = true;
+      saveButton.textContent = 'Сохраняем…';
+    }
+    var payload = {
+      organization: state.organization,
+      objectId: state.objects.activeObject.id,
+      schemaRevision: state.objects.activeObject.schemaRevision,
+      row: {
+        id: rowElement.dataset.rowId || '',
+        version: Number(rowElement.dataset.rowVersion) || 0,
+        values: collectObjectRowValues(rowElement)
+      }
+    };
+    fetch(buildApiUrl('object_row_save'), {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+      .then(handleResponse)
+      .then(function(data) {
+        var savedRow = data && data.row ? data.row : null;
+        if (!savedRow) {
+          throw new Error('Сервер не вернул сохранённую строку.');
+        }
+        var replaced = false;
+        for (var i = 0; i < state.objects.rows.length; i += 1) {
+          if (state.objects.rows[i] && state.objects.rows[i].id === savedRow.id) {
+            state.objects.rows[i] = savedRow;
+            replaced = true;
+            break;
+          }
+        }
+        if (!replaced) {
+          state.objects.rows.push(savedRow);
+        }
+        state.objects.activeObject.revision = Number(data.revision) || state.objects.activeObject.revision;
+        state.objects.activeObject.rowsCount = state.objects.rows.length;
+        syncActiveObjectSummaryToList();
+        renderObjectRows();
+        renderDocumentTabs();
+        showMessage('success', data.message || 'Строка сохранена.');
+      })
+      .catch(function(error) {
+        rowElement.dataset.saving = 'false';
+        rowElement.classList.remove('is-saving');
+        rowElement.querySelectorAll('[data-column-id]').forEach(function(input) {
+          input.disabled = false;
+        });
+        rowElement.querySelectorAll('[data-object-row-action]').forEach(function(button) {
+          button.disabled = false;
+        });
+        if (saveButton) {
+          saveButton.disabled = false;
+          saveButton.textContent = 'Сохранить';
+        }
+        var suffix = error && error.status === 409 ? ' Нажмите «Обновить», чтобы получить актуальные данные.' : '';
+        showMessage('error', (error.message || 'Не удалось сохранить строку.') + suffix);
+      });
+  }
+
+  function deleteObjectRow(rowElement) {
+    if (!rowElement || !state.objects.activeObject) {
+      return;
+    }
+    if (!window.confirm('Удалить эту строку без возможности восстановления?')) {
+      return;
+    }
+    var payload = {
+      organization: state.organization,
+      objectId: state.objects.activeObject.id,
+      schemaRevision: state.objects.activeObject.schemaRevision,
+      rowId: rowElement.dataset.rowId || '',
+      rowVersion: Number(rowElement.dataset.rowVersion) || 0
+    };
+    fetch(buildApiUrl('object_row_delete'), {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+      .then(handleResponse)
+      .then(function(data) {
+        state.objects.rows = state.objects.rows.filter(function(row) {
+          return row && row.id !== payload.rowId;
+        });
+        state.objects.activeObject.rowsCount = state.objects.rows.length;
+        state.objects.activeObject.revision = Number(data.revision) || state.objects.activeObject.revision;
+        syncActiveObjectSummaryToList();
+        renderObjectRows();
+        renderDocumentTabs();
+        showMessage('success', data.message || 'Строка удалена.');
+      })
+      .catch(function(error) {
+        var suffix = error && error.status === 409 ? ' Нажмите «Обновить», чтобы получить актуальные данные.' : '';
+        showMessage('error', (error.message || 'Не удалось удалить строку.') + suffix);
+      });
+  }
+
+  function appendEmptyObjectTableRow(view, focusColumnIndex) {
+    var root = view || elements.objectView;
+    var tbody = root ? root.querySelector('.documents-object-table tbody') : null;
+    if (!tbody) {
+      return null;
+    }
+    var existingNewRow = tbody.querySelector('tr[data-row-id=""]');
+    if (existingNewRow) {
+      var existingInputs = existingNewRow.querySelectorAll('[data-column-id]');
+      var existingInput = existingInputs[Math.max(0, Number(focusColumnIndex) || 0)] || existingInputs[0];
+      if (existingInput) {
+        existingInput.focus();
+      }
+      return existingNewRow;
+    }
+    state.objects.query = '';
+    var searchInput = root.querySelector('[data-object-table-search]');
+    if (searchInput) {
+      searchInput.value = '';
+    }
+    var emptyState = root.querySelector('.documents-object-table-wrap > .documents-object-empty');
+    if (emptyState) {
+      emptyState.remove();
+    }
+    var row = createObjectTableRow({ values: {} }, state.objects.rows.length, true);
+    tbody.appendChild(row);
+    applyObjectTableSearch(root);
+    var inputs = row.querySelectorAll('[data-column-id]');
+    var input = inputs[Math.max(0, Number(focusColumnIndex) || 0)] || inputs[0];
+    if (input) {
+      input.focus();
+    }
+    return row;
+  }
+
+  function restoreObjectTableRow(rowElement) {
+    if (!rowElement) {
+      return;
+    }
+    var rowId = rowElement.dataset.rowId || '';
+    if (!rowId) {
+      var tbody = rowElement.parentElement;
+      var wrapper = rowElement.closest('.documents-object-table-wrap');
+      rowElement.remove();
+      if (tbody && !tbody.querySelector('.documents-object-table__row') && wrapper
+        && !wrapper.querySelector('.documents-object-empty')
+      ) {
+        wrapper.appendChild(createElement('div', 'documents-object-empty', 'Таблица пока пустая. Добавьте первую строку.'));
+      }
+      applyObjectTableSearch(elements.objectView);
+      return;
+    }
+    for (var index = 0; index < state.objects.rows.length; index += 1) {
+      if (state.objects.rows[index] && state.objects.rows[index].id === rowId) {
+        rowElement.replaceWith(createObjectTableRow(state.objects.rows[index], index, false));
+        applyObjectTableSearch(elements.objectView);
+        return;
+      }
+    }
+  }
+
+  function focusObjectTableCell(input, rowOffset) {
+    var row = input ? input.closest('.documents-object-table__row') : null;
+    var tbody = row ? row.parentElement : null;
+    if (!row || !tbody) {
+      return false;
+    }
+    var columnInputs = Array.prototype.slice.call(row.querySelectorAll('[data-column-id]'));
+    var columnIndex = columnInputs.indexOf(input);
+    var visibleRows = Array.prototype.filter.call(tbody.querySelectorAll('.documents-object-table__row'), function(candidate) {
+      return !candidate.hidden;
+    });
+    var rowIndex = visibleRows.indexOf(row);
+    var targetRow = visibleRows[rowIndex + rowOffset];
+    if (!targetRow && rowOffset > 0 && !state.objects.query) {
+      targetRow = appendEmptyObjectTableRow(elements.objectView, columnIndex);
+    }
+    var targetInputs = targetRow ? targetRow.querySelectorAll('[data-column-id]') : [];
+    var targetInput = targetInputs[columnIndex];
+    if (!targetInput) {
+      return false;
+    }
+    targetInput.focus();
+    if (targetInput.type === 'text') {
+      targetInput.select();
+    }
+    return true;
+  }
+
+  function focusAdjacentObjectTableInput(input, backwards) {
+    var table = input ? input.closest('.documents-object-table') : null;
+    if (!table) {
+      return false;
+    }
+    var inputs = Array.prototype.filter.call(table.querySelectorAll('[data-column-id]'), function(candidate) {
+      var row = candidate.closest('.documents-object-table__row');
+      return row && !row.hidden;
+    });
+    var inputIndex = inputs.indexOf(input);
+    var target = inputs[inputIndex + (backwards ? -1 : 1)];
+    if (!target && !backwards && !state.objects.query) {
+      var currentRow = input.closest('.documents-object-table__row');
+      if (currentRow && !currentRow.dataset.rowId) {
+        return false;
+      }
+      var newRow = appendEmptyObjectTableRow(elements.objectView, 0);
+      target = newRow ? newRow.querySelector('[data-column-id]') : null;
+    }
+    if (!target) {
+      return false;
+    }
+    target.focus();
+    if (target.type === 'text') {
+      target.select();
+    }
+    return true;
+  }
+
+  function bindObjectViewEvents(view) {
+    if (!view || view.dataset.objectEventsBound === 'true') {
+      return;
+    }
+    view.dataset.objectEventsBound = 'true';
+    view.addEventListener('input', function(event) {
+      var searchInput = event.target && event.target.closest ? event.target.closest('[data-object-table-search]') : null;
+      if (searchInput && view.contains(searchInput)) {
+        state.objects.query = String(searchInput.value || '');
+        applyObjectTableSearch(view);
+        return;
+      }
+      var input = event.target && event.target.closest ? event.target.closest('[data-column-id]') : null;
+      if (!input || !view.contains(input)) {
+        return;
+      }
+      var row = input.closest('.documents-object-table__row');
+      if (!row) {
+        return;
+      }
+      row.classList.add('is-dirty');
+      var save = row.querySelector('[data-object-row-action="save"]');
+      if (save) {
+        save.disabled = false;
+      }
+    });
+    view.addEventListener('keydown', function(event) {
+      var input = event.target && event.target.closest ? event.target.closest('[data-column-id]') : null;
+      if (!input || !view.contains(input)) {
+        return;
+      }
+      var row = input.closest('.documents-object-table__row');
+      if ((event.ctrlKey || event.metaKey) && String(event.key).toLowerCase() === 's') {
+        event.preventDefault();
+        if (row && row.classList.contains('is-dirty')) {
+          saveObjectRow(row);
+        }
+        return;
+      }
+      if (event.key === 'Escape' && row && row.classList.contains('is-dirty')) {
+        event.preventDefault();
+        restoreObjectTableRow(row);
+        return;
+      }
+      if (event.key === 'Enter' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        event.preventDefault();
+        focusObjectTableCell(input, event.shiftKey ? -1 : 1);
+        return;
+      }
+      if (event.key === 'Tab' && focusAdjacentObjectTableInput(input, event.shiftKey)) {
+        event.preventDefault();
+      }
+    });
+    view.addEventListener('click', function(event) {
+      var action = event.target && event.target.closest ? event.target.closest('[data-object-table-action],[data-object-row-action]') : null;
+      if (!action || !view.contains(action)) {
+        return;
+      }
+      var tableAction = action.dataset.objectTableAction || '';
+      if (tableAction === 'refresh') {
+        if (confirmDiscardObjectRows()) {
+          openObjectTable(state.objects.activeId);
+        }
+        return;
+      }
+      if (tableAction === 'add-row') {
+        appendEmptyObjectTableRow(view, 0);
+        return;
+      }
+      var rowElement = action.closest('.documents-object-table__row');
+      var rowAction = action.dataset.objectRowAction || '';
+      if (rowAction === 'save') {
+        saveObjectRow(rowElement);
+      } else if (rowAction === 'delete') {
+        deleteObjectRow(rowElement);
+      } else if (rowAction === 'cancel' && rowElement) {
+        renderObjectRows();
+      }
+    });
+  }
+
   function buildLayout(host) {
     host.innerHTML = '';
 
     ensureSearchStyles();
     ensureRegistryTableViewStyle();
+    ensureObjectWorkspaceStyles();
 
     if (!state.resizeListenerAttached && typeof window !== 'undefined' && window && typeof window.addEventListener === 'function') {
       window.addEventListener('resize', handleTableResize);
@@ -28120,9 +29256,18 @@
     tableWrapper.appendChild(pagination);
 
     document.body.appendChild(message);
-    workspace.appendChild(tableToolbar);
-    workspace.appendChild(filterBar);
-    workspace.appendChild(tableWrapper);
+    var organizationView = createElement('div', 'documents-organization-view');
+    var objectContextBar = createElement('div', 'documents-object-context');
+    objectContextBar.hidden = true;
+    organizationView.appendChild(objectContextBar);
+    organizationView.appendChild(tableToolbar);
+    organizationView.appendChild(filterBar);
+    organizationView.appendChild(tableWrapper);
+    var objectView = createElement('div', 'documents-object-view');
+    objectView.hidden = true;
+    bindObjectViewEvents(objectView);
+    workspace.appendChild(organizationView);
+    workspace.appendChild(objectView);
 
     host.appendChild(workspace);
 
@@ -28142,6 +29287,10 @@
     elements.ordersButton = ordersButton;
     elements.settingsButton = settingsButton;
     elements.message = message;
+    elements.workspace = workspace;
+    elements.organizationView = organizationView;
+    elements.objectContextBar = objectContextBar;
+    elements.objectView = objectView;
     elements.tableToolbar = tableToolbar;
     elements.toolsToggle = toolsToggle;
     elements.filterModeButton = null;
@@ -28182,6 +29331,7 @@
     ensureToolbarMenu(document.body);
     bindSearchEvents();
     handleTableResize();
+    syncObjectWorkspaceView();
   }
 
   function startDocumentsRuntime(target) {
@@ -28225,6 +29375,10 @@
       sendClientDiagnostics('start_documents', startDetails);
     }
     state.admin.loaded = false;
+    state.objects = {
+      items: [], loaded: false, loading: false, promise: null, canManage: false,
+      mode: 'organization', activeView: 'table', activeId: '', activeObject: null, rows: [], query: '', tableLoading: false, tableError: ''
+    };
     state.admin.settings = {
       responsibles: [],
       block2: [],
@@ -28289,6 +29443,11 @@
     bootstrapDocsSettingsIfReady();
 
     if (state.organization) {
+      refreshObjects({ initial: true }).catch(function(error) {
+        if (typeof docsLogger.warn === 'function') {
+          docsLogger.warn('Не удалось загрузить объекты:', error);
+        }
+      });
       var legacyColumnOrderLoad = loadColumnOrder(state.organization).catch(function(error) {
         if (typeof console !== 'undefined' && typeof docsLogger.warn === 'function') {
           docsLogger.warn('Не удалось загрузить порядок столбцов:', error);
@@ -28433,6 +29592,11 @@
     state.realtime.registrySignature = '';
     state.realtime.registryMetaSignature = '';
     state.permissions = { canManageInstructions: false, canCreateDocuments: false, canDeleteDocuments: false, canManageSubordinates: false };
+    state.objects = {
+      items: [], loaded: false, loading: false, promise: null, canManage: false,
+      mode: 'organization', activeView: 'table', activeId: '', activeObject: null, rows: [], query: '', tableLoading: false, tableError: ''
+    };
+    syncObjectWorkspaceView();
     state.admin.settings = { responsibles: [], block2: [], block3: [], aiBriefProvider: 'default' };
     state.admin.loaded = false;
     state.admin.saving = false;

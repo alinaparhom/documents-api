@@ -57,9 +57,21 @@ export function createTelegramBriefAi(dependencies = {}) {
       const value = authPayload[key];
       if (value !== undefined && value !== null && typeof value !== 'object') formData.append(key, String(value));
     });
+    const telegramInitData = normalize(
+      authPayload && (
+        authPayload.telegram_init_data
+        || authPayload.initData
+        || authPayload.telegramInitData
+      )
+    );
+    const headers = {};
+    if (telegramInitData) {
+      headers['X-Telegram-Init-Data'] = telegramInitData;
+    }
     const startedAt = Date.now();
     const response = await fetch('/docs.php?action=ai_brief_generate', {
       method: 'POST',
+      headers,
       credentials: 'include',
       body: formData,
     });
@@ -86,7 +98,7 @@ export function createTelegramBriefAi(dependencies = {}) {
     modal.className = 'appdosc-private-brief';
     modal.innerHTML = `
       <section class="appdosc-private-brief__panel" role="dialog" aria-modal="true" aria-labelledby="appdosc-private-brief-title">
-        <header class="appdosc-private-brief__head"><div><div id="appdosc-private-brief-title" class="appdosc-private-brief__title">Кратко ИИ</div><div class="appdosc-private-brief__hint">Приватный OCR → выбранная администратором модель</div></div><button type="button" class="appdosc-private-brief__close" aria-label="Закрыть">×</button></header>
+        <header class="appdosc-private-brief__head"><div><div id="appdosc-private-brief-title" class="appdosc-private-brief__title">Кратко ИИ</div><div class="appdosc-private-brief__hint">Приватный OCR → DeepSeek</div></div><button type="button" class="appdosc-private-brief__close" aria-label="Закрыть">×</button></header>
         <p class="appdosc-private-brief__status">Выберите файл.</p>
         <div class="appdosc-private-brief__body"><div class="appdosc-private-brief__list"></div><pre class="appdosc-private-brief__preview">Здесь появится краткий вывод.</pre></div>
       </section>`;

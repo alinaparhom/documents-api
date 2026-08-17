@@ -1,4 +1,14 @@
 export function createDocumentsFeatures(core) {
+  var ADMIN_OBJECT_MAX_COLUMNS = 50;
+  var CORRESPONDENCE_OBJECT_COLUMNS = [
+    { group: 'Входящее письмо от филиала/подрядчика', label: '№ входящего письма', type: 'text' },
+    { group: 'Входящее письмо от филиала/подрядчика', label: 'Кратко суть письма: проектный, сметный или организационный вопрос', type: 'text' },
+    { group: 'Входящее письмо от филиала/подрядчика', label: 'Требуется отправка Заказчику', type: 'text' },
+    { group: '', label: 'Исходящее письмо № … от … на Заказчика', type: 'text' },
+    { group: 'Ответ от Заказчика № … от …', label: 'Полнота ответа', type: 'text' },
+    { group: 'Ответ от Заказчика № … от …', label: 'Требуется уточняющий запрос от Генподрядчика и повторное письмо Заказчику', type: 'text' },
+    { group: '', label: '№ письма филиалу/подрядчику — ответ на входящее', type: 'text' }
+  ];
   var ADMIN_S3_READ_MAX_BYTES = core.ADMIN_S3_READ_MAX_BYTES;
   var DATE_TIME_FORMATTER = core.DATE_TIME_FORMATTER;
   var adminElements = core.adminElements;
@@ -16,9 +26,11 @@ export function createDocumentsFeatures(core) {
   var mergeTelegramUserId = core.mergeTelegramUserId;
   var normalizeTextInputValue = core.normalizeTextInputValue;
   var normalizeUserIdentifier = core.normalizeUserIdentifier;
+  var refreshObjects = core.refreshObjects;
   var sendClientDiagnostics = core.sendClientDiagnostics;
   var showMessage = core.showMessage;
   var state = core.state;
+  var updateTable = core.updateTable;
   var updateStateFromPayload = core.updateStateFromPayload;
   var uploadFormDataWithProgress = core.uploadFormDataWithProgress;
   var adminRenderTokens = {};
@@ -32,6 +44,8 @@ export function createDocumentsFeatures(core) {
       login: 'all',
       password: 'all'
     },
+    activeObjectId: '',
+    objectQuery: '',
     dirty: false
   };
   var cronManagementView = {
@@ -1881,11 +1895,11 @@ function ensureAdminTemplateStyles() {
     var style = document.createElement('style');
     style.id = 'documents-admin-template-style';
     style.textContent = '' +
-      '.documents-admin{position:fixed;inset:0;z-index:1800;display:none;background:#f8fafc;color:#0f172a;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}' +
+      '.documents-admin{position:fixed;inset:0;z-index:1800;display:none;background:#f6f8fc;color:#0f172a;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}' +
       '.documents-admin.is-visible{display:block;}' +
-      '.documents-admin__backdrop{position:absolute;inset:0;background:#f8fafc;}' +
-      '.documents-admin__dialog{position:relative;z-index:1;width:100%;height:100vh;height:100dvh;display:grid;grid-template-rows:auto auto minmax(0,1fr) auto;overflow:hidden;background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%);}' +
-      '.documents-admin__header{display:flex;align-items:flex-start;justify-content:space-between;gap:24px;padding:18px 22px 12px;}' +
+      '.documents-admin__backdrop{position:absolute;inset:0;background:#f6f8fc;}' +
+      '.documents-admin__dialog{position:relative;z-index:1;width:100%;height:100vh;height:100dvh;display:grid;grid-template-rows:auto auto minmax(0,1fr) auto;overflow:hidden;background:#f6f8fc;}' +
+      '.documents-admin__header{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:16px 20px 10px;background:#fff;}' +
       '.documents-admin__heading{display:flex;align-items:center;gap:22px;min-width:0;flex-wrap:wrap;}' +
       '.documents-admin__title{margin:0;font-size:28px;line-height:1.2;font-weight:850;letter-spacing:-.025em;color:#0f172a;}' +
       '.documents-admin__message{display:none;position:relative;padding-left:24px;color:#16a34a;font-size:14px;font-weight:700;line-height:24px;}' +
@@ -1893,28 +1907,27 @@ function ensureAdminTemplateStyles() {
       '.documents-admin__message--error{color:#dc2626;}' +
       '.documents-admin__dismiss{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 18px;border:1px solid #e2e8f0;border-radius:12px;background:#f8fafc;color:#334155;font-size:14px;font-weight:750;cursor:pointer;}' +
       '.documents-admin__dismiss:hover,.documents-admin__dismiss:focus-visible{border-color:#bfdbfe;background:#eff6ff;color:#1d4ed8;outline:none;}' +
-      '.documents-admin__navigation{display:flex;align-items:stretch;gap:8px;margin:0 18px;border-bottom:1px solid #e2e8f0;overflow-x:auto;scrollbar-gutter:stable;}' +
+      '.documents-admin__navigation{display:flex;align-items:stretch;gap:8px;margin:0;padding:0 18px;border-bottom:1px solid #e2e8f0;background:#fff;overflow-x:auto;scrollbar-gutter:stable;scroll-behavior:smooth;}' +
       '.documents-admin__nav-button{position:relative;flex:0 0 auto;min-height:52px;padding:0 18px;border:0;background:transparent;color:#64748b;font-size:14px;font-weight:750;cursor:pointer;}' +
       '.documents-admin__nav-button::after{content:"";position:absolute;left:12px;right:12px;bottom:-1px;height:2px;border-radius:999px;background:transparent;}' +
       '.documents-admin__nav-button:hover,.documents-admin__nav-button:focus-visible{color:#1d4ed8;outline:none;}' +
       '.documents-admin__nav-button.is-active{color:#2563eb;}' +
       '.documents-admin__nav-button.is-active::after{background:#2563eb;}' +
-      '.documents-admin__body{min-height:0;overflow:auto;scrollbar-gutter:stable;padding:24px 20px 28px;}' +
+      '.documents-admin__body{min-height:0;overflow:auto;scrollbar-gutter:stable;padding:18px 20px 24px;}' +
       '.documents-admin__users-view{display:flex;flex-direction:column;gap:22px;min-height:100%;max-width:1680px;margin:0 auto;}' +
       '.documents-admin__users-view[hidden],.documents-admin__log-panel[hidden]{display:none;}' +
-      '.documents-admin__ai-settings{display:grid;grid-template-columns:minmax(240px,.85fr) minmax(360px,1.6fr);gap:8px 28px;align-items:center;padding:22px 24px;border:1px solid #e2e8f0;border-radius:14px;background:#fff;box-shadow:0 1px 2px rgba(15,23,42,.03);}' +
+      '.documents-admin__ai-settings{display:grid;grid-template-columns:minmax(240px,.85fr) minmax(360px,1.6fr);gap:8px 28px;align-items:center;padding:18px 20px;border:1px solid #dbe3ee;border-radius:12px;background:#fff;box-shadow:0 4px 18px rgba(15,23,42,.035);}' +
       '.documents-admin__ai-settings-label{font-size:15px;font-weight:800;color:#0f172a;}' +
       '.documents-admin__ai-settings-hint{grid-column:1;margin:0;color:#64748b;font-size:13px;line-height:1.5;}' +
       '.documents-admin__ai-settings-select{grid-column:2;grid-row:1 / span 2;width:100%;min-height:46px;border:1px solid #dbe3ee;border-radius:10px;background:#fff;color:#0f172a;padding:0 14px;font-size:14px;font-weight:700;}' +
       '.documents-admin__ai-settings-select:focus{outline:3px solid rgba(37,99,235,.13);border-color:#60a5fa;}' +
-      '.documents-admin__groups{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));overflow:hidden;border:1px solid #e2e8f0;border-radius:12px;background:#fff;}' +
-      '.documents-admin__group-button{display:flex;align-items:center;justify-content:center;gap:10px;min-height:54px;padding:0 16px;border:0;border-right:1px solid #e2e8f0;background:#fff;color:#0f172a;font-size:14px;font-weight:800;cursor:pointer;}' +
-      '.documents-admin__group-button:last-child{border-right:0;}' +
-      '.documents-admin__group-button:hover,.documents-admin__group-button:focus-visible{background:#f8fafc;outline:none;}' +
-      '.documents-admin__group-button.is-active{background:linear-gradient(110deg,#eff6ff,#f8fbff);color:#2563eb;}' +
-      '.documents-admin__group-count{display:inline-flex;align-items:center;justify-content:center;min-width:26px;height:24px;padding:0 7px;border-radius:999px;background:#f1f5f9;color:#475569;font-size:12px;font-weight:850;box-sizing:border-box;}' +
-      '.documents-admin__group-button.is-active .documents-admin__group-count{background:#2563eb;color:#fff;box-shadow:0 5px 12px rgba(37,99,235,.22);}' +
-      '.documents-admin__users-card{position:relative;display:flex;flex-direction:column;min-height:390px;border:1px solid #e2e8f0;border-radius:16px;background:#fff;box-shadow:0 8px 28px rgba(15,23,42,.045);overflow:hidden;}' +
+      '.documents-admin__groups{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;padding:4px;border:1px solid #e2e8f0;border-radius:13px;background:#eef2f7;}' +
+      '.documents-admin__group-button{display:flex;align-items:center;justify-content:center;gap:8px;min-width:0;min-height:48px;padding:0 14px;border:0;border-radius:9px;background:transparent;color:#64748b;font-size:13px;font-weight:800;cursor:pointer;transition:background .16s ease,color .16s ease,box-shadow .16s ease;}' +
+      '.documents-admin__group-button:hover,.documents-admin__group-button:focus-visible{background:rgba(255,255,255,.7);color:#1d4ed8;outline:none;}' +
+      '.documents-admin__group-button.is-active{background:#fff;color:#1d4ed8;box-shadow:0 3px 10px rgba(15,23,42,.09);}' +
+      '.documents-admin__group-count{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:22px;padding:0 6px;border-radius:999px;background:#dfe6ef;color:#64748b;font-size:11px;font-weight:850;box-sizing:border-box;}' +
+      '.documents-admin__group-button.is-active .documents-admin__group-count{background:#dbeafe;color:#1d4ed8;}' +
+      '.documents-admin__users-card{position:relative;display:flex;flex-direction:column;min-height:390px;border:1px solid #dbe3ee;border-radius:12px;background:#fff;box-shadow:0 8px 28px rgba(15,23,42,.04);overflow:hidden;}' +
       '.documents-admin__toolbar{display:grid;grid-template-columns:minmax(180px,1fr) minmax(300px,430px) auto auto;align-items:center;gap:12px;padding:20px 22px;}' +
       '.documents-admin__section-heading{margin:0;font-size:20px;line-height:1.25;font-weight:850;color:#0f172a;}' +
       '.documents-admin__search{position:relative;min-width:0;}' +
@@ -1937,6 +1950,7 @@ function ensureAdminTemplateStyles() {
       '.documents-admin__section{min-height:0;}' +
       '.documents-admin__section[hidden]{display:none;}' +
       '.documents-admin__table-wrapper{max-height:calc(100vh - 430px);max-height:calc(100dvh - 430px);min-height:280px;overflow:auto;overflow-x:auto;scrollbar-gutter:stable;border-top:1px solid #eef2f7;}' +
+      '.documents-admin__table-scroll-hint,.documents-admin__object-scroll-hint{display:none;}' +
       '.documents-admin__table{width:100%;min-width:1420px;border-collapse:separate;border-spacing:0;table-layout:fixed;color:#334155;font-size:13px;}' +
       '.documents-admin__table th{position:sticky;top:0;z-index:4;height:46px;padding:0 10px;border-bottom:1px solid #e2e8f0;background:#f8fafc;color:#64748b;font-size:12px;font-weight:800;text-align:left;white-space:nowrap;}' +
       '.documents-admin__table td{height:58px;padding:7px 7px;border-bottom:1px solid #eef2f7;background:#fff;vertical-align:middle;}' +
@@ -1962,15 +1976,85 @@ function ensureAdminTemplateStyles() {
       '.documents-admin__row-actions{position:relative;text-align:center;}' +
       '.documents-admin__row-menu-toggle{display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;padding:0;border:1px solid #e2e8f0;border-radius:9px;background:#fff;color:#0f172a;font-size:20px;font-weight:850;line-height:1;cursor:pointer;}' +
       '.documents-admin__row-menu-toggle:hover,.documents-admin__row-menu-toggle:focus-visible,.documents-admin__row-menu-toggle[aria-expanded="true"]{border-color:#bfdbfe;background:#eff6ff;color:#1d4ed8;outline:none;}' +
-      '.documents-admin__row-menu{position:fixed;z-index:1850;display:flex;flex-direction:column;width:210px;padding:6px;border:1px solid #e2e8f0;border-radius:11px;background:#fff;box-shadow:0 16px 34px rgba(15,23,42,.17);text-align:left;}' +
+      '.documents-admin__row-menu{position:fixed;z-index:1850;display:flex;flex-direction:column;width:min(290px,calc(100vw - 20px));max-height:calc(100dvh - 20px);overflow:auto;scrollbar-gutter:stable;padding:7px;border:1px solid #dbe3ee;border-radius:11px;background:#fff;box-shadow:0 16px 34px rgba(15,23,42,.17);text-align:left;}' +
       '.documents-admin__row-menu[hidden]{display:none;}' +
       '.documents-admin__row-menu-button{min-height:38px;padding:0 11px;border:0;border-radius:7px;background:transparent;color:#334155;font-size:13px;font-weight:700;text-align:left;cursor:pointer;}' +
       '.documents-admin__row-menu-button:hover,.documents-admin__row-menu-button:focus-visible{background:#f8fafc;outline:none;}' +
       '.documents-admin__row-menu-button--danger{color:#dc2626;}' +
       '.documents-admin__row-menu-button:disabled{color:#94a3b8;cursor:default;}' +
+      '.documents-admin__row-menu-objects{margin:4px 0;padding:8px 5px;border-top:1px solid #eef2f7;border-bottom:1px solid #eef2f7;}' +
+      '.documents-admin__row-menu-objects-title{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:5px;padding:0 4px;color:#64748b;font-size:10px;font-weight:900;letter-spacing:.04em;text-transform:uppercase;}' +
+      '.documents-admin__row-menu-objects-count{display:inline-flex;align-items:center;justify-content:center;min-width:19px;height:19px;padding:0 5px;border-radius:999px;background:#e2e8f0;color:#475569;font-size:10px;}' +
+      '.documents-admin__row-menu-objects-list{display:flex;max-height:180px;overflow:auto;scrollbar-gutter:stable;flex-direction:column;gap:2px;}' +
+      '.documents-admin__object-selector-option{display:flex;align-items:flex-start;gap:8px;padding:8px;border-radius:7px;color:#334155;font-size:12px;font-weight:750;cursor:pointer;}' +
+      '.documents-admin__object-selector-option:hover{background:#f8fafc;}' +
+      '.documents-admin__object-selector-option input{margin-top:2px;accent-color:#2563eb;}' +
+      '.documents-admin__objects-view{display:none;width:min(1560px,100%);min-height:100%;margin:0 auto;}' +
+      '.documents-admin__objects-view.is-visible{display:block;}' +
+      '.documents-admin__objects-workspace{display:grid;grid-template-columns:minmax(300px,380px) minmax(0,1fr);min-height:calc(100dvh - 190px);border:1px solid #dbe3ee;border-radius:14px;background:#fff;box-shadow:0 8px 28px rgba(15,23,42,.045);overflow:hidden;}' +
+      '.documents-admin__objects-panel{display:grid;grid-template-rows:auto auto auto auto minmax(0,1fr) auto;min-width:0;border-right:1px solid #e2e8f0;background:#fff;}' +
+      '.documents-admin__objects-panel-header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:18px 18px 14px;}' +
+      '.documents-admin__objects-heading{margin:0;color:#0f172a;font-size:18px;font-weight:850;}' +
+      '.documents-admin__objects-hint{margin:4px 0 0;color:#64748b;font-size:12px;line-height:1.4;}' +
+      '.documents-admin__objects-create{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:7px;margin:0 18px 10px;padding:8px;border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;}' +
+      '.documents-admin__objects-input{width:100%;min-width:0;height:40px;box-sizing:border-box;padding:0 10px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;color:#0f172a;font-size:13px;}' +
+      '.documents-admin__objects-create-button,.documents-admin__object-save,.documents-admin__object-add-column,.documents-admin__object-apply-template,.documents-admin__object-delete{min-height:40px;padding:0 14px;border:1px solid #2563eb;border-radius:9px;background:#2563eb;color:#fff;font-size:12px;font-weight:850;cursor:pointer;transition:background .16s ease,border-color .16s ease,box-shadow .16s ease;}' +
+      '.documents-admin__objects-create-button:hover,.documents-admin__object-save:hover{border-color:#1d4ed8;background:#1d4ed8;box-shadow:0 7px 16px rgba(37,99,235,.18);}' +
+      '.documents-admin__objects-create-button:disabled,.documents-admin__object-save:disabled{border-color:#dbe3ee;background:#eef2f7;color:#94a3b8;box-shadow:none;cursor:default;}' +
+      '.documents-admin__objects-search{position:relative;margin:0 18px 12px;}' +
+      '.documents-admin__objects-search::before{content:"⌕";position:absolute;left:13px;top:50%;transform:translateY(-53%) rotate(-20deg);color:#94a3b8;font-size:19px;pointer-events:none;}' +
+      '.documents-admin__objects-search-input{width:100%;height:42px;box-sizing:border-box;padding:0 12px 0 38px;border:1px solid #dbe3ee;border-radius:9px;background:#fff;color:#0f172a;font-size:13px;}' +
+      '.documents-admin__objects-search-input:focus{outline:3px solid rgba(37,99,235,.1);border-color:#60a5fa;}' +
+      '.documents-admin__objects-status{display:none;margin:0 18px 10px;padding:9px 11px;border:1px solid #bfdbfe;border-radius:8px;background:#eff6ff;color:#1d4ed8;font-size:12px;font-weight:750;}' +
+      '.documents-admin__objects-status.is-visible{display:block;}' +
+      '.documents-admin__objects-status.is-error{border-color:#fecaca;background:#fef2f2;color:#b91c1c;}' +
+      '.documents-admin__objects-list{min-height:0;overflow:auto;scrollbar-gutter:stable;border-top:1px solid #eef2f7;}' +
+      '.documents-admin__object-list-item{display:grid;grid-template-columns:48px minmax(0,1fr) 18px;align-items:center;gap:12px;width:100%;min-height:86px;padding:13px 18px;border:0;border-bottom:1px solid #eef2f7;background:#fff;color:#0f172a;text-align:left;cursor:pointer;}' +
+      '.documents-admin__object-list-item:hover,.documents-admin__object-list-item:focus-visible{background:#f8fafc;outline:none;}' +
+      '.documents-admin__object-list-item.is-active{background:#f4f7ff;box-shadow:inset 3px 0 #2563eb;}' +
+      '.documents-admin__object-list-icon{display:inline-flex;align-items:center;justify-content:center;width:46px;height:46px;border:1px solid #dbeafe;border-radius:13px;background:#eff6ff;color:#2563eb;font-size:23px;font-weight:800;}' +
+      '.documents-admin__object-list-copy{min-width:0;}' +
+      '.documents-admin__object-list-name{display:block;overflow:hidden;color:#0f172a;font-size:14px;font-weight:850;text-overflow:ellipsis;white-space:nowrap;}' +
+      '.documents-admin__object-list-meta{display:block;margin-top:4px;color:#64748b;font-size:11px;font-weight:700;}' +
+      '.documents-admin__object-list-status{display:flex;align-items:center;gap:6px;margin-top:5px;color:#16a34a;font-size:11px;font-weight:750;}' +
+      '.documents-admin__object-list-status::before{content:"";width:7px;height:7px;border-radius:999px;background:#22c55e;}' +
+      '.documents-admin__object-list-arrow{color:#64748b;font-size:20px;}' +
+      '.documents-admin__objects-count{padding:12px 18px;border-top:1px solid #e2e8f0;color:#64748b;font-size:11px;font-weight:700;}' +
+      '.documents-admin__object-editor{min-width:0;background:#fff;}' +
+      '.documents-admin__object-editor-empty{display:flex;min-height:420px;align-items:center;justify-content:center;padding:30px;color:#64748b;font-size:13px;font-weight:700;text-align:center;}' +
+      '.documents-admin__object-card{min-height:100%;background:#fff;}' +
+      '.documents-admin__object-head{position:sticky;top:0;z-index:5;display:grid;grid-template-columns:minmax(220px,1fr) auto;gap:16px;align-items:center;padding:18px 20px;border-bottom:1px solid #e2e8f0;background:#fff;}' +
+      '.documents-admin__object-heading-copy{display:grid;gap:6px;min-width:0;}' +
+      '.documents-admin__object-heading-meta{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}' +
+      '.documents-admin__object-head-actions{display:flex;align-items:center;gap:8px;}' +
+      '.documents-admin__object-name{width:100%;height:42px;box-sizing:border-box;border:1px solid transparent;border-radius:8px;background:transparent;color:#0f172a;padding:0 8px;font-size:21px;font-weight:850;}' +
+      '.documents-admin__object-name:hover{border-color:#e2e8f0;background:#f8fafc;}' +
+      '.documents-admin__object-active{display:inline-flex;align-items:center;width:max-content;padding:4px 8px;border:1px solid #bbf7d0;border-radius:7px;background:#f0fdf4;color:#16a34a;font-size:11px;font-weight:850;}' +
+      '.documents-admin__object-meta{margin:0;color:#64748b;font-size:11px;font-weight:700;}' +
+      '.documents-admin__object-info{margin:14px 20px;padding:12px 14px;border:1px solid #bfdbfe;border-radius:9px;background:#f8fbff;color:#475569;font-size:12px;line-height:1.45;}' +
+      '.documents-admin__object-info::before{content:"i";display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;margin-right:8px;border:1.5px solid #2563eb;border-radius:999px;color:#2563eb;font-size:11px;font-weight:900;vertical-align:-1px;}' +
+      '.documents-admin__object-delete{border-color:#fecaca;background:#fff;color:#dc2626;}' +
+      '.documents-admin__object-delete:hover{border-color:#fca5a5;background:#fef2f2;}' +
+      '.documents-admin__object-fields-title{margin:0;padding:2px 20px 10px;color:#0f172a;font-size:14px;font-weight:850;}' +
+      '.documents-admin__object-columns{display:flex;flex-direction:column;margin:0 20px;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;}' +
+      '.documents-admin__object-columns-head,.documents-admin__object-column{display:grid;grid-template-columns:86px minmax(170px,1fr) minmax(220px,1.35fr) minmax(120px,.7fr) 110px;gap:10px;align-items:center;}' +
+      '.documents-admin__object-columns-head{min-height:42px;padding:0 12px;border-bottom:1px solid #e2e8f0;background:#f8fafc;color:#64748b;font-size:11px;font-weight:850;}' +
+      '.documents-admin__object-column{min-height:58px;padding:8px 12px;border-bottom:1px solid #eef2f7;background:#fff;}' +
+      '.documents-admin__object-column:last-child{border-bottom:0;}' +
+      '.documents-admin__object-column-move{display:flex;flex-direction:row;gap:4px;}' +
+      '.documents-admin__object-column-move button,.documents-admin__object-column-remove{min-height:34px;border:1px solid #dbe3ee;border-radius:7px;background:#fff;color:#475569;cursor:pointer;}' +
+      '.documents-admin__object-column-move button{width:34px;}' +
+      '.documents-admin__object-column-group,.documents-admin__object-column-label,.documents-admin__object-column-type{height:38px;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:8px;background:#fff;color:#0f172a;padding:0 10px;font-size:13px;}' +
+      '.documents-admin__objects-input:focus,.documents-admin__object-name:focus,.documents-admin__object-column-group:focus,.documents-admin__object-column-label:focus,.documents-admin__object-column-type:focus{outline:3px solid rgba(37,99,235,.1);border-color:#60a5fa;background:#fff;}' +
+      '.documents-admin__object-column-remove{padding:0 9px;color:#dc2626;font-size:11px;font-weight:800;}' +
+      '.documents-admin__object-column-actions{display:flex;align-items:center;gap:8px;margin:12px 20px 20px;}' +
+      '.documents-admin__object-add-column,.documents-admin__object-apply-template{margin:0;border-style:dashed;border-color:#93c5fd;background:#fff;color:#2563eb;}' +
+      '.documents-admin__object-add-column{flex:1 1 auto;}' +
+      '.documents-admin__object-apply-template{flex:0 0 auto;border-style:solid;}' +
+      '.documents-admin__object-card.is-dirty .documents-admin__object-save{box-shadow:0 0 0 3px rgba(37,99,235,.12);}' +
       '.documents-admin__empty-search{padding:34px 20px;color:#64748b;font-size:14px;font-weight:700;text-align:center;}' +
       '.documents-admin__empty-search[hidden]{display:none;}' +
-      '.documents-admin__footer{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:14px 22px;border-top:1px solid #e2e8f0;background:rgba(255,255,255,.97);box-shadow:0 -8px 28px rgba(15,23,42,.05);}' +
+      '.documents-admin__footer{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:12px 20px;border-top:1px solid #e2e8f0;background:#fff;box-shadow:0 -6px 20px rgba(15,23,42,.035);}' +
       '.documents-admin__footer[hidden]{display:none;}' +
       '.documents-admin__footer-status{display:flex;align-items:center;gap:10px;color:#64748b;font-size:13px;font-weight:700;}' +
       '.documents-admin__footer-status::before{content:"i";display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:2px solid #3b82f6;border-radius:999px;color:#2563eb;font-size:12px;font-weight:900;box-sizing:border-box;}' +
@@ -1982,13 +2066,27 @@ function ensureAdminTemplateStyles() {
       '.documents-admin__close:hover,.documents-admin__close:focus-visible{background:#f8fafc;outline:none;}' +
       '.documents-admin__save:hover,.documents-admin__save:focus-visible{background:#1d4ed8;outline:none;}' +
       '.documents-admin__save:disabled{opacity:.6;cursor:wait;}' +
-      '.documents-admin__log-panel{max-width:1680px;min-height:360px;box-sizing:border-box;margin:0 auto;padding:24px;border:1px solid #e2e8f0;border-radius:16px;background:#fff;box-shadow:0 8px 28px rgba(15,23,42,.045);}' +
+      '.documents-admin__log-panel{max-width:1680px;min-height:360px;box-sizing:border-box;margin:0 auto;padding:20px;border:1px solid #dbe3ee;border-radius:12px;background:#fff;box-shadow:0 8px 28px rgba(15,23,42,.04);}' +
       '.documents-admin__log-header{display:flex;align-items:center;justify-content:space-between;gap:12px;}' +
       '.documents-admin__log-title{margin:0;font-size:20px;color:#0f172a;}' +
       '.documents-admin__log-close,.documents-admin__log-copy{min-height:38px;padding:0 13px;border:1px solid #dbe3ee;border-radius:8px;background:#f8fafc;color:#334155;font-weight:750;cursor:pointer;}' +
-      '.documents-admin__log-list{padding-left:24px;color:#334155;}' +
-      '.documents-admin__log-textarea{width:100%;box-sizing:border-box;border:1px solid #dbe3ee;border-radius:9px;padding:10px;color:#334155;}' +
-      '.documents-admin__log-hint,.documents-admin__log-status{color:#64748b;font-size:13px;}' +
+      '.documents-admin__log-close:hover,.documents-admin__log-close:focus-visible,.documents-admin__log-copy:hover,.documents-admin__log-copy:focus-visible{border-color:#bfdbfe;background:#eff6ff;color:#1d4ed8;outline:none;}' +
+      '.documents-admin__log-copy:disabled{color:#94a3b8;cursor:default;}' +
+      '.documents-admin__log-list{display:grid;gap:8px;max-height:42vh;max-height:42dvh;margin:16px 0;padding:0;overflow:auto;scrollbar-gutter:stable;list-style:none;color:#334155;}' +
+      '.documents-admin__log-item{display:grid;grid-template-columns:34px minmax(0,1fr);gap:10px;align-items:start;padding:12px;border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;}' +
+      '.documents-admin__log-index{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:9px;background:#dbeafe;color:#1d4ed8;font-size:11px;font-weight:900;}' +
+      '.documents-admin__log-item-content{min-width:0;}' +
+      '.documents-admin__log-row{display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0;}' +
+      '.documents-admin__log-row--muted{margin-top:5px;color:#64748b;font-size:11px;}' +
+      '.documents-admin__log-name{min-width:0;overflow:hidden;color:#0f172a;font-size:13px;font-weight:850;text-overflow:ellipsis;white-space:nowrap;}' +
+      '.documents-admin__log-id{flex:0 0 auto;padding:4px 7px;border-radius:7px;background:#e2e8f0;color:#475569;font-size:10px;font-weight:850;}' +
+      '.documents-admin__log-username,.documents-admin__log-date{overflow-wrap:anywhere;}' +
+      '.documents-admin__log-empty{padding:28px 14px;border:1px dashed #cbd5e1;border-radius:10px;color:#64748b;font-size:13px;font-weight:750;text-align:center;}' +
+      '.documents-admin__log-textarea{width:100%;min-height:112px;box-sizing:border-box;border:1px solid #dbe3ee;border-radius:9px;padding:11px;background:#f8fafc;color:#475569;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;resize:vertical;}' +
+      '.documents-admin__log-hint,.documents-admin__log-status{color:#64748b;font-size:13px;line-height:1.45;}' +
+      '.documents-admin__log-status{margin:12px 0 0;padding:9px 11px;border:1px solid #dbeafe;border-radius:9px;background:#eff6ff;color:#1d4ed8;font-weight:750;}' +
+      '.documents-admin__log-status--error{border-color:#fecaca;background:#fef2f2;color:#b91c1c;}' +
+      '.documents-admin__log-status--success{border-color:#bbf7d0;background:#f0fdf4;color:#15803d;}' +
       '@media (max-width: 1180px){' +
       '.documents-admin__toolbar{grid-template-columns:minmax(160px,1fr) minmax(260px,1.3fr) auto;}' +
       '.documents-admin__add-row{grid-column:2 / 4;justify-self:end;}' +
@@ -2004,7 +2102,7 @@ function ensureAdminTemplateStyles() {
       '}' +
       '.documents-template-modal{display:none;width:100%;max-width:1680px;box-sizing:border-box;margin:0 auto;}' +
       '.documents-template-modal.is-visible{display:block;}' +
-      '.documents-template-modal__panel{width:100%;box-sizing:border-box;overflow:auto;border-radius:16px;background:#fff;border:1px solid #e2e8f0;box-shadow:0 8px 28px rgba(15,23,42,.045);padding:24px;display:flex;flex-direction:column;gap:18px;}' +
+      '.documents-template-modal__panel{width:100%;box-sizing:border-box;overflow:auto;border-radius:12px;background:#fff;border:1px solid #dbe3ee;box-shadow:0 8px 28px rgba(15,23,42,.04);padding:20px;display:flex;flex-direction:column;gap:16px;}' +
       '.documents-template-modal__title{margin:0;font-size:20px;font-weight:700;color:#0f172a;}' +
       '.documents-template-modal__subtitle{margin:0;color:#64748b;font-size:13px;line-height:1.45;}' +
       '.documents-template-modal__card{border:1px solid #e2e8f0;border-radius:12px;padding:16px;background:#f8fafc;display:flex;flex-direction:column;gap:8px;}' +
@@ -2023,7 +2121,7 @@ function ensureAdminTemplateStyles() {
       '.documents-template-modal__button--primary:hover:not(:disabled){border-color:#1d4ed8;background:#1d4ed8;color:#fff;}' +
       '.documents-s3-modal{display:none;width:100%;max-width:1680px;box-sizing:border-box;margin:0 auto;}' +
       '.documents-s3-modal.is-visible{display:block;}' +
-      '.documents-s3-modal__panel{width:100%;min-height:0;box-sizing:border-box;overflow:visible;border-radius:16px;background:#fff;border:1px solid #e2e8f0;box-shadow:0 8px 28px rgba(15,23,42,.045);padding:24px;display:grid;grid-template-rows:auto auto auto auto auto;gap:14px;}' +
+      '.documents-s3-modal__panel{width:100%;min-height:0;box-sizing:border-box;overflow:visible;border-radius:12px;background:#fff;border:1px solid #dbe3ee;box-shadow:0 8px 28px rgba(15,23,42,.04);padding:20px;display:grid;grid-template-rows:auto auto auto auto auto;gap:14px;}' +
       '.documents-s3-modal__title{margin:0;font-size:20px;font-weight:700;color:#0f172a;}' +
       '.documents-s3-modal__subtitle{margin:0;color:#64748b;font-size:13px;line-height:1.45;}' +
       '.documents-s3-modal__status{display:none;padding:10px 12px;border-radius:12px;font-size:13px;font-weight:600;background:rgba(59,130,246,0.12);color:#1d4ed8;}' +
@@ -2125,30 +2223,76 @@ function ensureAdminTemplateStyles() {
       '.documents-ocr-admin__empty{padding:18px;border:1px dashed rgba(148,163,184,0.35);border-radius:14px;color:#64748b;text-align:center;font-size:13px;font-weight:700;}' +
       '.documents-ocr-text-reader{display:none;}' +
       '.documents-ocr-text-reader.is-visible{display:flex;}' +
+      '@media (max-width:1050px){' +
+      '.documents-admin__objects-workspace{grid-template-columns:1fr;}' +
+      '.documents-admin__objects-panel{grid-template-rows:auto auto auto auto auto auto;border-right:0;border-bottom:1px solid #e2e8f0;}' +
+      '.documents-admin__objects-list{display:flex;max-height:none;overflow-x:auto;overflow-y:hidden;scrollbar-gutter:stable;padding:0 12px 12px;border-top:0;}' +
+      '.documents-admin__object-list-item{flex:0 0 min(280px,78vw);border:1px solid #e2e8f0;border-radius:10px;}' +
+      '.documents-admin__object-list-item.is-active{box-shadow:inset 0 -3px #2563eb;}' +
+      '.documents-admin__objects-count{display:none;}' +
+      '}' +
       '@media (max-width: 720px){' +
-      '.documents-admin__header{padding:14px 14px 10px;gap:12px;}' +
+      '.documents-admin__dialog{grid-template-rows:auto auto minmax(0,1fr) auto;}' +
+      '.documents-admin__header{position:relative;padding:13px 12px 9px;gap:8px;}' +
       '.documents-admin__heading{gap:8px;}' +
-      '.documents-admin__title{font-size:20px;}' +
+      '.documents-admin__title{font-size:19px;}' +
       '.documents-admin__message{width:100%;font-size:12px;}' +
-      '.documents-admin__dismiss{min-height:38px;padding:0 12px;font-size:12px;}' +
-      '.documents-admin__navigation{margin:0 10px;gap:0;}' +
-      '.documents-admin__nav-button{min-height:46px;padding:0 13px;font-size:13px;}' +
-      '.documents-admin__body{padding:14px 10px 18px;}' +
+      '.documents-admin__dismiss{min-height:44px;padding:0 12px;font-size:12px;}' +
+      '.documents-admin__navigation{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));margin:0;padding:6px 8px;gap:4px;border-top:1px solid #eef2f7;overflow:visible;}' +
+      '.documents-admin__nav-button{min-width:0;min-height:44px;padding:0 5px;border-radius:8px;font-size:11px;line-height:1.15;white-space:normal;}' +
+      '.documents-admin__nav-button:nth-child(-n+4){grid-column:span 3;}' +
+      '.documents-admin__nav-button:nth-child(n+5){grid-column:span 4;}' +
+      '.documents-admin__navigation[data-visible-count="6"] .documents-admin__nav-button:nth-child(-n+3){grid-column:span 4;}' +
+      '.documents-admin__navigation[data-visible-count="6"] .documents-admin__nav-button:nth-child(n+4){grid-column:span 4;}' +
+      '.documents-admin__nav-button::after{display:none;}' +
+      '.documents-admin__nav-button.is-active{background:#eff6ff;color:#1d4ed8;}' +
+      '.documents-admin__body{padding:10px 8px 14px;}' +
       '.documents-admin__users-view{gap:12px;}' +
-      '.documents-admin__ai-settings{grid-template-columns:1fr;padding:16px;gap:7px;}' +
+      '.documents-admin__ai-settings{grid-template-columns:1fr;padding:14px;border-radius:11px;gap:7px;}' +
       '.documents-admin__ai-settings-hint,.documents-admin__ai-settings-select{grid-column:1;grid-row:auto;}' +
-      '.documents-admin__groups{overflow-x:auto;scrollbar-gutter:stable;}' +
-      '.documents-admin__group-button{min-width:150px;min-height:48px;}' +
+      '.documents-admin__groups{gap:3px;padding:3px;overflow:visible;}' +
+      '.documents-admin__group-button{min-width:0;min-height:46px;padding:0 5px;gap:5px;font-size:11px;}' +
+      '.documents-admin__group-count{min-width:21px;height:20px;padding:0 5px;font-size:10px;}' +
       '.documents-admin__toolbar{grid-template-columns:1fr 1fr;gap:9px;padding:14px;}' +
       '.documents-admin__section-heading{grid-column:1 / -1;font-size:18px;}' +
       '.documents-admin__search{grid-column:1 / -1;}' +
-      '.documents-admin__filter-button,.documents-admin__add-row{width:100%;padding:0 11px;}' +
+      '.documents-admin__filter-button,.documents-admin__add-row{width:100%;min-height:44px;padding:0 11px;}' +
       '.documents-admin__filter-panel{left:0;right:auto;width:min(260px,calc(100vw - 40px));}' +
       '.documents-admin__table-wrapper{max-height:58vh;max-height:58dvh;min-height:300px;touch-action:pan-x pan-y;}' +
+      '.documents-admin__table-scroll-hint,.documents-admin__object-scroll-hint{display:flex;align-items:center;gap:7px;margin:0;padding:8px 12px;border-top:1px solid #eef2f7;background:#f8fafc;color:#64748b;font-size:11px;font-weight:700;}' +
+      '.documents-admin__table-scroll-hint::before,.documents-admin__object-scroll-hint::before{content:"↔";color:#2563eb;font-size:15px;font-weight:900;}' +
+      '.documents-admin__table-scroll-hint + .documents-admin__table-wrapper{border-top:0;}' +
+      '.documents-admin__input,.documents-admin__filter-select,.documents-admin__filter-reset{min-height:44px;}' +
+      '.documents-admin__row-menu-toggle{width:44px;height:44px;}' +
+      '.documents-admin__row-menu-button,.documents-admin__object-selector-option{min-height:44px;box-sizing:border-box;}' +
+      '.documents-admin__objects-workspace{min-height:0;border-radius:11px;}' +
+      '.documents-admin__objects-panel-header{display:grid;grid-template-columns:1fr;padding:14px 13px 10px;}' +
+      '.documents-admin__objects-create{grid-template-columns:minmax(0,1fr) auto;margin:0 13px 10px;padding:7px;box-sizing:border-box;}' +
+      '.documents-admin__objects-input{width:100%;height:44px;padding:0 10px;border:1px solid #cbd5e1;opacity:1;pointer-events:auto;}' +
+      '.documents-admin__objects-create-button{min-height:44px;white-space:nowrap;}' +
+      '.documents-admin__objects-search{margin:0 13px 10px;}' +
+      '.documents-admin__objects-search-input{height:44px;}' +
+      '.documents-admin__objects-status{margin:0 13px 10px;}' +
+      '.documents-admin__objects-list{padding:0 10px 10px;}' +
+      '.documents-admin__object-list-item{flex-basis:min(260px,82vw);min-height:80px;padding:11px 13px;}' +
+      '.documents-admin__object-head{grid-template-columns:1fr;padding:13px;gap:12px;}' +
+      '.documents-admin__object-name{width:100%;height:44px;padding:0;font-size:19px;}' +
+      '.documents-admin__object-head-actions{display:grid;grid-template-columns:1fr 1fr;width:100%;}' +
+      '.documents-admin__object-save,.documents-admin__object-delete{min-height:44px;width:100%;}' +
+      '.documents-admin__object-info{margin:12px 13px;}' +
+      '.documents-admin__object-fields-title{padding:2px 13px 9px;}' +
+      '.documents-admin__object-scroll-hint{margin:0 13px 8px;border:1px solid #e2e8f0;border-radius:8px;}' +
+      '.documents-admin__object-columns{margin:0 13px;overflow-x:auto;scrollbar-gutter:stable;}' +
+      '.documents-admin__object-columns-head,.documents-admin__object-column{min-width:880px;}' +
+      '.documents-admin__object-column-group,.documents-admin__object-column-label,.documents-admin__object-column-type{height:44px;}' +
+      '.documents-admin__object-column-move button,.documents-admin__object-column-remove{min-height:44px;}' +
+      '.documents-admin__object-column-actions{margin:12px 13px 16px;}' +
+      '.documents-admin__object-add-column,.documents-admin__object-apply-template{min-height:44px;}' +
+      '.documents-template-modal__button,.documents-s3-modal__button,.documents-s3-modal__mini-button,.documents-admin__log-close,.documents-admin__log-copy{min-height:44px;}' +
       '.documents-admin__footer{padding:10px;flex-direction:column;align-items:stretch;gap:9px;}' +
       '.documents-admin__footer-status{font-size:12px;}' +
       '.documents-admin__footer-actions{display:grid;grid-template-columns:1fr 1fr;}' +
-      '.documents-admin__close,.documents-admin__save{min-width:0;width:100%;padding:0 10px;}' +
+      '.documents-admin__close,.documents-admin__save{min-width:0;width:100%;min-height:44px;padding:0 10px;}' +
       '.documents-template-modal{padding:0;}' +
       '.documents-template-modal__panel{width:100%;border-radius:14px;padding:16px;}' +
       '.documents-template-modal__actions{display:grid;grid-template-columns:1fr;}' +
@@ -2174,7 +2318,31 @@ function ensureAdminTemplateStyles() {
       '.documents-ocr-admin__pane{min-height:420px;overflow:visible;}' +
       '.documents-ocr-admin__active{grid-template-columns:1fr;}' +
       '.documents-ocr-admin__active-state{justify-self:start;}' +
-      '.documents-ocr-admin__tabs{display:grid;grid-template-columns:1fr;}' +
+      '.documents-ocr-admin__tabs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;padding:4px;}' +
+      '.documents-ocr-admin__tab{min-height:48px;padding:6px 8px;font-size:11px;line-height:1.2;}' +
+      '.documents-admin__log-panel{min-height:0;padding:14px;border-radius:11px;}' +
+      '.documents-admin__log-header{align-items:flex-start;}' +
+      '.documents-admin__log-title{font-size:18px;}' +
+      '.documents-admin__log-list{max-height:none;margin:12px 0;}' +
+      '.documents-admin__log-row{align-items:flex-start;flex-direction:column;gap:4px;}' +
+      '.documents-admin__log-row--muted{gap:3px;}' +
+      '.documents-admin__log-name{white-space:normal;overflow-wrap:anywhere;}' +
+      '.documents-admin__log-id{align-self:flex-start;}' +
+      '}' +
+      '@media (max-width:420px){' +
+      '.documents-admin__title{font-size:17px;}' +
+      '.documents-admin__dismiss{padding:0 9px;font-size:11px;}' +
+      '.documents-admin__nav-button{padding:0 3px;font-size:10px;}' +
+      '.documents-admin__group-button{min-height:56px;flex-direction:column;gap:2px;padding:4px 2px;font-size:10px;}' +
+      '.documents-admin__toolbar{padding:12px 10px;gap:8px;}' +
+      '.documents-admin__section-heading{font-size:17px;}' +
+      '.documents-admin__objects-create{grid-template-columns:1fr;}' +
+      '.documents-admin__object-column-actions{align-items:stretch;flex-direction:column;}' +
+      '.documents-admin__object-apply-template{width:100%;}' +
+      '.documents-admin__objects-create-button{width:100%;}' +
+      '.documents-admin__object-info{font-size:11px;}' +
+      '.documents-s3-modal__grid{grid-template-columns:1fr;}' +
+      '.documents-s3-modal__explorer{min-height:360px;}' +
       '}' +
       '';
     document.head.appendChild(style);
@@ -2221,6 +2389,11 @@ function ensureAdminTemplateStyles() {
     usersButton.type = 'button';
     usersButton.dataset.adminNavigation = 'users';
     navigation.appendChild(usersButton);
+
+    var objectsButton = createElement('button', 'documents-admin__nav-button documents-admin__objects-button', 'Объекты');
+    objectsButton.type = 'button';
+    objectsButton.dataset.adminNavigation = 'objects';
+    navigation.appendChild(objectsButton);
 
     var templateButton = createElement('button', 'documents-admin__nav-button documents-admin__template-button', 'Шаблон');
     templateButton.type = 'button';
@@ -2288,6 +2461,49 @@ function ensureAdminTemplateStyles() {
 
     body.appendChild(logPanel);
 
+    var objectsView = createElement('div', 'documents-admin__objects-view');
+    var objectsWorkspace = createElement('div', 'documents-admin__objects-workspace');
+    var objectsPanel = createElement('aside', 'documents-admin__objects-panel');
+    var objectsPanelHeader = createElement('div', 'documents-admin__objects-panel-header');
+    var objectsPanelHeading = createElement('div');
+    objectsPanelHeading.appendChild(createElement('h3', 'documents-admin__objects-heading', 'Объекты организации'));
+    objectsPanelHeading.appendChild(createElement('p', 'documents-admin__objects-hint', 'Отдельные рабочие таблицы организации.'));
+    objectsPanelHeader.appendChild(objectsPanelHeading);
+    var objectsCreate = createElement('div', 'documents-admin__objects-create');
+    var objectsNameInput = document.createElement('input');
+    objectsNameInput.type = 'text';
+    objectsNameInput.maxLength = 160;
+    objectsNameInput.className = 'documents-admin__objects-input';
+    objectsNameInput.placeholder = 'Название нового объекта';
+    objectsNameInput.setAttribute('aria-label', 'Название нового объекта');
+    var objectsCreateButton = createElement('button', 'documents-admin__objects-create-button', '+ Создать');
+    objectsCreateButton.type = 'button';
+    objectsCreateButton.disabled = true;
+    objectsCreate.appendChild(objectsNameInput);
+    objectsCreate.appendChild(objectsCreateButton);
+    objectsPanel.appendChild(objectsPanelHeader);
+    objectsPanel.appendChild(objectsCreate);
+    var objectsSearch = createElement('label', 'documents-admin__objects-search');
+    var objectsSearchInput = document.createElement('input');
+    objectsSearchInput.type = 'search';
+    objectsSearchInput.className = 'documents-admin__objects-search-input';
+    objectsSearchInput.placeholder = 'Поиск объектов';
+    objectsSearchInput.setAttribute('aria-label', 'Поиск объектов');
+    objectsSearch.appendChild(objectsSearchInput);
+    objectsPanel.appendChild(objectsSearch);
+    var objectsStatus = createElement('div', 'documents-admin__objects-status');
+    objectsStatus.setAttribute('role', 'status');
+    objectsPanel.appendChild(objectsStatus);
+    var objectsList = createElement('div', 'documents-admin__objects-list');
+    objectsPanel.appendChild(objectsList);
+    var objectsCount = createElement('div', 'documents-admin__objects-count', 'Всего объектов: 0');
+    objectsPanel.appendChild(objectsCount);
+    var objectsEditor = createElement('section', 'documents-admin__object-editor');
+    objectsWorkspace.appendChild(objectsPanel);
+    objectsWorkspace.appendChild(objectsEditor);
+    objectsView.appendChild(objectsWorkspace);
+    body.appendChild(objectsView);
+
     var usersView = createElement('div', 'documents-admin__users-view');
 
     var aiSettings = createElement('section', 'documents-admin__ai-settings');
@@ -2304,7 +2520,7 @@ function ensureAdminTemplateStyles() {
     aiSettings.appendChild(createElement(
       'p',
       'documents-admin__ai-settings-hint',
-      'Выбор действует для веб-версии и Telegram. Для DeepSeek ключ DEEPSEEK_API_KEY хранится только в .env.'
+      'Выбор действует для веб-версии. В Telegram «Кратко ИИ» всегда использует DeepSeek; ключ DEEPSEEK_API_KEY хранится только в .env.'
     ));
     usersView.appendChild(aiSettings);
 
@@ -2344,7 +2560,7 @@ function ensureAdminTemplateStyles() {
     toolbar.appendChild(search);
 
     var filterWrap = createElement('div', 'documents-admin__filter-wrap');
-    var filterButton = createElement('button', 'documents-admin__filter-button', '▽  Фильтры');
+    var filterButton = createElement('button', 'documents-admin__filter-button', 'Фильтры');
     filterButton.type = 'button';
     filterButton.setAttribute('aria-expanded', 'false');
     var filterPanel = createElement('div', 'documents-admin__filter-panel');
@@ -2381,8 +2597,9 @@ function ensureAdminTemplateStyles() {
     filterWrap.appendChild(filterPanel);
     toolbar.appendChild(filterWrap);
 
-    var addRowButton = createElement('button', 'documents-admin__add-row', '+  Добавить пользователя');
+    var addRowButton = createElement('button', 'documents-admin__add-row', '+ Добавить');
     addRowButton.type = 'button';
+    addRowButton.title = 'Добавить пользователя';
     toolbar.appendChild(addRowButton);
     usersCard.appendChild(toolbar);
 
@@ -2414,6 +2631,8 @@ function ensureAdminTemplateStyles() {
         '</thead>' +
         '<tbody></tbody>';
       tableWrapper.appendChild(table);
+      var tableScrollHint = createElement('div', 'documents-admin__table-scroll-hint', 'Проведите по таблице влево или вправо, чтобы увидеть все поля');
+      section.appendChild(tableScrollHint);
       section.appendChild(tableWrapper);
       usersCard.appendChild(section);
 
@@ -2627,6 +2846,15 @@ function ensureAdminTemplateStyles() {
     adminElements.navigation = navigation;
     adminElements.usersButton = usersButton;
     adminElements.usersView = usersView;
+    adminElements.objectsButton = objectsButton;
+    adminElements.objectsView = objectsView;
+    adminElements.objectsList = objectsList;
+    adminElements.objectsEditor = objectsEditor;
+    adminElements.objectsCount = objectsCount;
+    adminElements.objectsSearchInput = objectsSearchInput;
+    adminElements.objectsStatus = objectsStatus;
+    adminElements.objectsNameInput = objectsNameInput;
+    adminElements.objectsCreateButton = objectsCreateButton;
     adminElements.groups = groups;
     adminElements.usersCard = usersCard;
     adminElements.sectionHeading = sectionHeading;
@@ -2679,6 +2907,28 @@ function ensureAdminTemplateStyles() {
 
     usersButton.addEventListener('click', function() {
       showAdminUsersView();
+    });
+
+    objectsButton.addEventListener('click', function() {
+      showAdminObjectsView();
+    });
+    objectsCreateButton.addEventListener('click', createAdminObject);
+    objectsNameInput.addEventListener('input', function() {
+      objectsCreateButton.disabled = String(objectsNameInput.value || '').trim() === '';
+    });
+    objectsNameInput.addEventListener('keydown', function(event) {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        createAdminObject();
+      }
+    });
+    objectsList.addEventListener('click', handleAdminObjectsClick);
+    objectsEditor.addEventListener('click', handleAdminObjectsClick);
+    objectsEditor.addEventListener('input', handleAdminObjectEditorChange);
+    objectsEditor.addEventListener('change', handleAdminObjectEditorChange);
+    objectsSearchInput.addEventListener('input', function() {
+      adminUiState.objectQuery = String(objectsSearchInput.value || '').trim().toLocaleLowerCase('ru-RU');
+      renderAdminObjectList();
     });
 
     groups.addEventListener('click', function(event) {
@@ -2735,7 +2985,11 @@ function ensureAdminTemplateStyles() {
 
     usersCard.addEventListener('click', handleAdminUsersCardClick);
     usersCard.addEventListener('input', handleAdminUsersCardInput);
-    usersCard.addEventListener('scroll', function() {
+    usersCard.addEventListener('change', handleAdminObjectSelectorChange);
+    usersCard.addEventListener('scroll', function(event) {
+      if (event.target && event.target.closest && event.target.closest('.documents-admin__row-menu')) {
+        return;
+      }
       closeAdminRowMenus();
     }, true);
     aiProviderSelect.addEventListener('change', markAdminDirty);
@@ -2750,21 +3004,27 @@ function ensureAdminTemplateStyles() {
 
     templateButton.addEventListener('click', function() {
       closeAdminRowMenus();
-      prepareAdminInlineView('template');
+      if (!prepareAdminInlineView('template')) {
+        return;
+      }
       openAdminTemplateModal();
       setAdminNavigation('template');
     });
 
     s3Button.addEventListener('click', function() {
       closeAdminRowMenus();
-      prepareAdminInlineView('s3');
+      if (!prepareAdminInlineView('s3')) {
+        return;
+      }
       openAdminS3Modal();
       setAdminNavigation('s3');
     });
 
     ocrButton.addEventListener('click', function() {
       closeAdminRowMenus();
-      prepareAdminInlineView('ocr');
+      if (!prepareAdminInlineView('ocr')) {
+        return;
+      }
       openAdminOcrModal();
       if (ensureAdminOcrState().visible) {
         setAdminNavigation('ocr');
@@ -2780,7 +3040,9 @@ function ensureAdminTemplateStyles() {
 
     cronManagementButton.addEventListener('click', function() {
       closeAdminRowMenus();
-      prepareAdminInlineView('cron');
+      if (!prepareAdminInlineView('cron')) {
+        return;
+      }
       openCronManagementModal();
       setAdminNavigation('cron');
     });
@@ -2961,8 +3223,560 @@ function ensureAdminTemplateStyles() {
     });
   }
 
+  function setAdminObjectsStatus(message, isError) {
+    if (!adminElements.objectsStatus) {
+      return;
+    }
+    adminElements.objectsStatus.textContent = message || '';
+    adminElements.objectsStatus.classList.toggle('is-visible', Boolean(message));
+    adminElements.objectsStatus.classList.toggle('is-error', Boolean(message && isError));
+  }
+
+  function getActiveAdminObject() {
+    var objects = state.objects && Array.isArray(state.objects.items) ? state.objects.items : [];
+    var active = null;
+    objects.some(function(object) {
+      if (object && object.id === adminUiState.activeObjectId) {
+        active = object;
+        return true;
+      }
+      return false;
+    });
+    if (!active && objects.length) {
+      active = objects[0];
+      adminUiState.activeObjectId = active.id;
+    }
+    return active;
+  }
+
+  function renderAdminObjectList() {
+    if (!adminElements.objectsList) {
+      return;
+    }
+    var objects = state.objects && Array.isArray(state.objects.items) ? state.objects.items : [];
+    var query = adminUiState.objectQuery || '';
+    var visibleObjects = objects.filter(function(object) {
+      return !query || String(object.name || '').toLocaleLowerCase('ru-RU').indexOf(query) !== -1;
+    });
+    adminElements.objectsList.innerHTML = '';
+    if (adminElements.objectsCount) {
+      adminElements.objectsCount.textContent = 'Всего объектов: ' + String(objects.length);
+    }
+    if (!visibleObjects.length) {
+      adminElements.objectsList.appendChild(createElement(
+        'div',
+        'documents-admin__empty-search',
+        objects.length ? 'По этому запросу объекты не найдены.' : 'Объекты ещё не созданы.'
+      ));
+      return;
+    }
+    visibleObjects.forEach(function(object) {
+      var item = createElement('button', 'documents-admin__object-list-item');
+      item.type = 'button';
+      item.dataset.adminObjectAction = 'select';
+      item.dataset.objectId = object.id;
+      if (object.id === adminUiState.activeObjectId) {
+        item.classList.add('is-active');
+        item.setAttribute('aria-current', 'true');
+      }
+      item.appendChild(createElement('span', 'documents-admin__object-list-icon', '▦'));
+      var copy = createElement('span', 'documents-admin__object-list-copy');
+      copy.appendChild(createElement('span', 'documents-admin__object-list-name', object.name));
+      copy.appendChild(createElement('span', 'documents-admin__object-list-meta', 'Строк в таблице: ' + String(object.rowsCount || 0)));
+      copy.appendChild(createElement('span', 'documents-admin__object-list-status', 'Активен'));
+      item.appendChild(copy);
+      item.appendChild(createElement('span', 'documents-admin__object-list-arrow', '›'));
+      adminElements.objectsList.appendChild(item);
+    });
+  }
+
+  function renderAdminObjectEditor() {
+    if (!adminElements.objectsEditor) {
+      return;
+    }
+    adminElements.objectsEditor.innerHTML = '';
+    var object = getActiveAdminObject();
+    if (!object) {
+      adminElements.objectsEditor.appendChild(createElement(
+        'div',
+        'documents-admin__object-editor-empty',
+        'Создайте первый объект — здесь появится настройка его таблицы.'
+      ));
+      return;
+    }
+    var card = createElement('article', 'documents-admin__object-card');
+    card.dataset.objectId = object.id;
+    card.dataset.objectName = object.name;
+    card.dataset.schemaRevision = String(object.schemaRevision || 1);
+    card.dataset.removedColumnIds = '[]';
+    var head = createElement('div', 'documents-admin__object-head');
+    var headingCopy = createElement('div', 'documents-admin__object-heading-copy');
+    var nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.maxLength = 160;
+    nameInput.className = 'documents-admin__object-name';
+    nameInput.value = object.name;
+    nameInput.setAttribute('aria-label', 'Название объекта');
+    headingCopy.appendChild(nameInput);
+    var headingMeta = createElement('div', 'documents-admin__object-heading-meta');
+    headingMeta.appendChild(createElement('span', 'documents-admin__object-active', 'Активен'));
+    headingMeta.appendChild(createElement(
+      'span',
+      'documents-admin__object-meta',
+      'Столбцов: ' + String(object.columns.length) + ' • строк: ' + String(object.rowsCount || 0)
+    ));
+    headingCopy.appendChild(headingMeta);
+    head.appendChild(headingCopy);
+    var headActions = createElement('div', 'documents-admin__object-head-actions');
+    var saveButton = createElement('button', 'documents-admin__object-save', 'Сохранить');
+    saveButton.type = 'button';
+    saveButton.disabled = true;
+    saveButton.dataset.adminObjectAction = 'save';
+    headActions.appendChild(saveButton);
+    var deleteButton = createElement('button', 'documents-admin__object-delete', 'Удалить');
+    deleteButton.type = 'button';
+    deleteButton.title = 'Удалить объект без возможности восстановления';
+    deleteButton.dataset.adminObjectAction = 'delete';
+    headActions.appendChild(deleteButton);
+    head.appendChild(headActions);
+    card.appendChild(head);
+    card.appendChild(createElement(
+      'div',
+      'documents-admin__object-info',
+      'Настройте отдельную таблицу объекта. Одинаковая группа у соседних столбцов объединит их в двухуровневой шапке.'
+    ));
+    card.appendChild(createElement('h4', 'documents-admin__object-fields-title', 'Поля таблицы'));
+    card.appendChild(createElement(
+      'div',
+      'documents-admin__object-scroll-hint',
+      'Проведите таблицу влево или вправо, чтобы увидеть все настройки'
+    ));
+    var columns = createElement('div', 'documents-admin__object-columns');
+    var columnsHead = createElement('div', 'documents-admin__object-columns-head');
+    columnsHead.appendChild(createElement('span', '', 'Порядок'));
+    columnsHead.appendChild(createElement('span', '', 'Группа шапки'));
+    columnsHead.appendChild(createElement('span', '', 'Название столбца'));
+    columnsHead.appendChild(createElement('span', '', 'Тип'));
+    columnsHead.appendChild(createElement('span', '', 'Действия'));
+    columns.appendChild(columnsHead);
+    var columnsRows = createElement('div', 'documents-admin__object-column-rows');
+    object.columns.forEach(function(column, index) {
+      columnsRows.appendChild(createAdminObjectColumn(column, index));
+    });
+    updateAdminObjectColumnMoveButtons(columnsRows);
+    columns.appendChild(columnsRows);
+    card.appendChild(columns);
+    var columnActions = createElement('div', 'documents-admin__object-column-actions');
+    var applyTemplateButton = createElement('button', 'documents-admin__object-apply-template', 'Применить шаблон «Переписка»');
+    applyTemplateButton.type = 'button';
+    applyTemplateButton.dataset.adminObjectAction = 'apply-correspondence-template';
+    columnActions.appendChild(applyTemplateButton);
+    var addColumnButton = createElement('button', 'documents-admin__object-add-column', '+ Добавить столбец');
+    addColumnButton.type = 'button';
+    addColumnButton.dataset.adminObjectAction = 'add-column';
+    columnActions.appendChild(addColumnButton);
+    card.appendChild(columnActions);
+    adminElements.objectsEditor.appendChild(card);
+  }
+
+  function renderAdminObjects() {
+    getActiveAdminObject();
+    renderAdminObjectList();
+    renderAdminObjectEditor();
+  }
+
+  function markAdminObjectCardDirty(card) {
+    if (!card) {
+      return;
+    }
+    card.classList.add('is-dirty');
+    var saveButton = card.querySelector('[data-admin-object-action="save"]');
+    if (saveButton) {
+      saveButton.disabled = false;
+    }
+  }
+
+  function handleAdminObjectEditorChange(event) {
+    var card = event.target && event.target.closest ? event.target.closest('.documents-admin__object-card') : null;
+    if (card && adminElements.objectsEditor && adminElements.objectsEditor.contains(card)) {
+      markAdminObjectCardDirty(card);
+    }
+  }
+
+  function createAdminObjectColumn(column, index) {
+    var row = createElement('div', 'documents-admin__object-column');
+    row.dataset.columnId = column && column.id ? String(column.id) : '';
+    var move = createElement('div', 'documents-admin__object-column-move');
+    var up = createElement('button', '', '↑');
+    up.type = 'button';
+    up.title = 'Переместить выше';
+    up.dataset.adminObjectAction = 'column-up';
+    up.disabled = index === 0;
+    var down = createElement('button', '', '↓');
+    down.type = 'button';
+    down.title = 'Переместить ниже';
+    down.dataset.adminObjectAction = 'column-down';
+    move.appendChild(up);
+    move.appendChild(down);
+    row.appendChild(move);
+    var groupInput = document.createElement('input');
+    groupInput.type = 'text';
+    groupInput.maxLength = 120;
+    groupInput.className = 'documents-admin__object-column-group';
+    groupInput.value = column && column.group ? String(column.group) : '';
+    groupInput.placeholder = 'Необязательно';
+    groupInput.setAttribute('aria-label', 'Группа заголовка столбца');
+    row.appendChild(groupInput);
+    var labelInput = document.createElement('input');
+    labelInput.type = 'text';
+    labelInput.maxLength = 120;
+    labelInput.className = 'documents-admin__object-column-label';
+    labelInput.value = column && column.label ? String(column.label) : '';
+    labelInput.placeholder = 'Название столбца';
+    row.appendChild(labelInput);
+    var typeSelect = document.createElement('select');
+    typeSelect.className = 'documents-admin__object-column-type';
+    [['text', 'Текст'], ['date', 'Дата']].forEach(function(optionData) {
+      var option = document.createElement('option');
+      option.value = optionData[0];
+      option.textContent = optionData[1];
+      typeSelect.appendChild(option);
+    });
+    typeSelect.value = column && column.type === 'date' ? 'date' : 'text';
+    row.appendChild(typeSelect);
+    var remove = createElement('button', 'documents-admin__object-column-remove', 'Удалить');
+    remove.type = 'button';
+    remove.title = 'Удалить столбец и его значения после сохранения';
+    remove.dataset.adminObjectAction = 'remove-column';
+    row.appendChild(remove);
+    return row;
+  }
+
+  function collectAdminObjectColumns(card) {
+    var columns = [];
+    card.querySelectorAll('.documents-admin__object-column').forEach(function(row) {
+      var groupInput = row.querySelector('.documents-admin__object-column-group');
+      var labelInput = row.querySelector('.documents-admin__object-column-label');
+      var typeSelect = row.querySelector('.documents-admin__object-column-type');
+      var label = labelInput ? String(labelInput.value || '').trim() : '';
+      if (!label) {
+        return;
+      }
+      columns.push({
+        id: row.dataset.columnId || '',
+        group: groupInput ? String(groupInput.value || '').trim() : '',
+        label: label,
+        type: typeSelect && typeSelect.value === 'date' ? 'date' : 'text'
+      });
+    });
+    return columns;
+  }
+
+  function applyCorrespondenceObjectTemplate(card, columnsContainer) {
+    if (!card || !columnsContainer) {
+      return;
+    }
+    var hasCurrentColumns = columnsContainer.children.length > 0;
+    if (hasCurrentColumns && !window.confirm(
+      'Заменить текущие столбцы шаблоном «Переписка»? Значения удалённых столбцов будут удалены после сохранения объекта.'
+    )) {
+      return;
+    }
+    var confirmedRemovedColumnIds = getConfirmedRemovedAdminObjectColumnIds(card);
+    columnsContainer.querySelectorAll('.documents-admin__object-column').forEach(function(row) {
+      var columnId = String(row.dataset.columnId || '');
+      if (columnId && confirmedRemovedColumnIds.indexOf(columnId) === -1) {
+        confirmedRemovedColumnIds.push(columnId);
+      }
+    });
+    card.dataset.removedColumnIds = JSON.stringify(confirmedRemovedColumnIds);
+    columnsContainer.innerHTML = '';
+    CORRESPONDENCE_OBJECT_COLUMNS.forEach(function(column, index) {
+      columnsContainer.appendChild(createAdminObjectColumn(column, index));
+    });
+    updateAdminObjectColumnMoveButtons(columnsContainer);
+    markAdminObjectCardDirty(card);
+  }
+
+  function getConfirmedRemovedAdminObjectColumnIds(card) {
+    try {
+      var parsed = JSON.parse(card.dataset.removedColumnIds || '[]');
+      return Array.isArray(parsed) ? parsed.map(String) : [];
+    } catch (error) {
+      return [];
+    }
+  }
+
+  function updateAdminObjectColumnMoveButtons(columnsContainer) {
+    if (!columnsContainer) {
+      return;
+    }
+    var rows = Array.prototype.slice.call(columnsContainer.children);
+    rows.forEach(function(row, index) {
+      var up = row.querySelector('[data-admin-object-action="column-up"]');
+      var down = row.querySelector('[data-admin-object-action="column-down"]');
+      if (up) {
+        up.disabled = index === 0;
+      }
+      if (down) {
+        down.disabled = index === rows.length - 1;
+      }
+    });
+  }
+
+  function createAdminObject() {
+    var name = adminElements.objectsNameInput ? String(adminElements.objectsNameInput.value || '').trim() : '';
+    if (!name) {
+      setAdminObjectsStatus('Введите название объекта.', true);
+      if (adminElements.objectsNameInput) {
+        adminElements.objectsNameInput.focus();
+      }
+      return;
+    }
+    adminElements.objectsCreateButton.disabled = true;
+    setAdminObjectsStatus('Создаём объект...', false);
+    fetch(buildApiUrl('object_create'), {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ organization: state.organization, name: name })
+    })
+      .then(handleResponse)
+      .then(function(data) {
+        adminElements.objectsNameInput.value = '';
+        adminUiState.objectQuery = '';
+        if (adminElements.objectsSearchInput) {
+          adminElements.objectsSearchInput.value = '';
+        }
+        adminUiState.activeObjectId = data && data.object ? String(data.object.id || '') : '';
+        return refreshObjects().then(function() {
+          renderAdminObjects();
+          refreshAdminObjectSelectors();
+          setAdminObjectsStatus(data.message || 'Объект создан.', false);
+        });
+      })
+      .catch(function(error) {
+        setAdminObjectsStatus(error.message || 'Не удалось создать объект.', true);
+      })
+      .finally(function() {
+        adminElements.objectsCreateButton.disabled = !String(adminElements.objectsNameInput.value || '').trim();
+      });
+  }
+
+  function saveAdminObject(card) {
+    var nameInput = card.querySelector('.documents-admin__object-name');
+    var name = nameInput ? String(nameInput.value || '').trim() : '';
+    if (!name) {
+      setAdminObjectsStatus('Название объекта не может быть пустым.', true);
+      return;
+    }
+    var hasEmptyColumnLabel = Array.prototype.some.call(
+      card.querySelectorAll('.documents-admin__object-column-label'),
+      function(input) { return String(input.value || '').trim() === ''; }
+    );
+    if (hasEmptyColumnLabel) {
+      setAdminObjectsStatus('Укажите название каждого столбца или удалите пустой столбец кнопкой.', true);
+      return;
+    }
+    var saveButton = card.querySelector('[data-admin-object-action="save"]');
+    if (saveButton) {
+      saveButton.disabled = true;
+      saveButton.textContent = 'Сохраняем…';
+    }
+    fetch(buildApiUrl('object_schema_save'), {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        organization: state.organization,
+        objectId: card.dataset.objectId || '',
+        schemaRevision: Number(card.dataset.schemaRevision) || 0,
+        name: name,
+        columns: collectAdminObjectColumns(card),
+        confirmedRemovedColumnIds: getConfirmedRemovedAdminObjectColumnIds(card)
+      })
+    })
+      .then(handleResponse)
+      .then(function(data) {
+        adminUiState.activeObjectId = card.dataset.objectId || adminUiState.activeObjectId;
+        return refreshObjects().then(function() {
+          renderAdminObjects();
+          refreshAdminObjectSelectors();
+          setAdminObjectsStatus(data.message || 'Объект сохранён.', false);
+        });
+      })
+      .catch(function(error) {
+        setAdminObjectsStatus((error.message || 'Не удалось сохранить объект.') + (error.status === 409 ? ' Обновите вкладку «Объекты».' : ''), true);
+        if (saveButton) {
+          saveButton.disabled = false;
+          saveButton.textContent = 'Сохранить';
+        }
+      });
+  }
+
+  function deleteAdminObject(card) {
+    var name = String(card.dataset.objectName || '').trim();
+    var confirmation = window.prompt('Удаление необратимо. Введите точное название объекта «' + name + '»:');
+    if (confirmation === null) {
+      return;
+    }
+    if (confirmation !== name) {
+      setAdminObjectsStatus('Название введено неверно. Объект не удалён.', true);
+      return;
+    }
+    var deletedObjectId = card.dataset.objectId || '';
+    setAdminObjectsStatus('Удаляем объект и его таблицу...', false);
+    fetch(buildApiUrl('object_delete'), {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ organization: state.organization, objectId: deletedObjectId, confirmName: confirmation })
+    })
+      .then(handleResponse)
+      .then(function(data) {
+        adminUiState.activeObjectId = '';
+        if (Array.isArray(state.documents)) {
+          state.documents.forEach(function(documentRecord) {
+            if (!documentRecord || String(documentRecord.objectId || '') !== deletedObjectId) {
+              return;
+            }
+            delete documentRecord.objectId;
+            try {
+              delete documentRecord.__docsFilterValuesCache;
+            } catch (error) {
+              documentRecord.__docsFilterValuesCache = null;
+            }
+          });
+          state.filterValuesCacheVersion = (Number(state.filterValuesCacheVersion) || 0) + 1;
+        }
+        return Promise.all([refreshObjects(), fetchAdminSettings()]).then(function() {
+          renderAdminObjects();
+          renderAdminRows('responsibles', state.admin.settings.responsibles, false);
+          renderAdminRows('block2', state.admin.settings.block2, false);
+          renderAdminRows('block3', state.admin.settings.block3, false);
+          if (typeof updateTable === 'function') {
+            updateTable();
+          }
+          setAdminObjectsStatus(data.message || 'Объект удалён.', false);
+        });
+      })
+      .catch(function(error) {
+        setAdminObjectsStatus(error.message || 'Не удалось удалить объект.', true);
+      });
+  }
+
+  function handleAdminObjectsClick(event) {
+    var action = event.target && event.target.closest ? event.target.closest('[data-admin-object-action]') : null;
+    if (!action || (!adminElements.objectsList.contains(action) && !adminElements.objectsEditor.contains(action))) {
+      return;
+    }
+    var actionName = action.dataset.adminObjectAction || '';
+    if (actionName === 'select') {
+      var nextObjectId = action.dataset.objectId || '';
+      var currentCard = adminElements.objectsEditor.querySelector('.documents-admin__object-card.is-dirty');
+      if (currentCard && currentCard.dataset.objectId !== nextObjectId
+        && !window.confirm('Есть несохранённые изменения объекта. Переключиться без сохранения?')
+      ) {
+        return;
+      }
+      adminUiState.activeObjectId = nextObjectId;
+      renderAdminObjects();
+      return;
+    }
+    var card = action.closest('.documents-admin__object-card');
+    if (!card) {
+      return;
+    }
+    if (actionName === 'save') {
+      saveAdminObject(card);
+      return;
+    }
+    if (actionName === 'delete') {
+      deleteAdminObject(card);
+      return;
+    }
+    var columnRow = action.closest('.documents-admin__object-column');
+    var columnsContainer = card.querySelector('.documents-admin__object-column-rows');
+    if (actionName === 'apply-correspondence-template' && columnsContainer) {
+      applyCorrespondenceObjectTemplate(card, columnsContainer);
+    } else if (actionName === 'add-column' && columnsContainer) {
+      if (columnsContainer.children.length >= ADMIN_OBJECT_MAX_COLUMNS) {
+        setAdminObjectsStatus('В одном объекте можно создать не более 50 столбцов.', true);
+        return;
+      }
+      columnsContainer.appendChild(createAdminObjectColumn({ id: '', group: '', label: '', type: 'text' }, columnsContainer.children.length));
+      markAdminObjectCardDirty(card);
+      updateAdminObjectColumnMoveButtons(columnsContainer);
+      var newInput = columnsContainer.lastElementChild.querySelector('.documents-admin__object-column-label');
+      if (newInput) {
+        newInput.focus();
+      }
+    } else if (actionName === 'remove-column' && columnRow) {
+      if (window.confirm('Удалить столбец? Все данные этого столбца будут удалены после сохранения объекта.')) {
+        var removedColumnId = String(columnRow.dataset.columnId || '');
+        if (removedColumnId) {
+          var confirmedRemovedColumnIds = getConfirmedRemovedAdminObjectColumnIds(card);
+          if (confirmedRemovedColumnIds.indexOf(removedColumnId) === -1) {
+            confirmedRemovedColumnIds.push(removedColumnId);
+          }
+          card.dataset.removedColumnIds = JSON.stringify(confirmedRemovedColumnIds);
+        }
+        columnRow.remove();
+        markAdminObjectCardDirty(card);
+        updateAdminObjectColumnMoveButtons(columnsContainer);
+      }
+    } else if (actionName === 'column-up' && columnRow && columnRow.previousElementSibling) {
+      columnsContainer.insertBefore(columnRow, columnRow.previousElementSibling);
+      markAdminObjectCardDirty(card);
+      updateAdminObjectColumnMoveButtons(columnsContainer);
+    } else if (actionName === 'column-down' && columnRow && columnRow.nextElementSibling) {
+      columnsContainer.insertBefore(columnRow.nextElementSibling, columnRow);
+      markAdminObjectCardDirty(card);
+      updateAdminObjectColumnMoveButtons(columnsContainer);
+    }
+  }
+
+  function showAdminObjectsView() {
+    if (adminUiState.dirty && !window.confirm('Есть несохранённые изменения пользователей. Закрыть их без сохранения?')) {
+      return;
+    }
+    if (adminUiState.dirty) {
+      renderAdminRows('responsibles', state.admin.settings.responsibles, false);
+      renderAdminRows('block2', state.admin.settings.block2, false);
+      renderAdminRows('block3', state.admin.settings.block3, false);
+    }
+    clearAdminDirtyState();
+    prepareAdminInlineView('objects');
+    if (adminElements.objectsView) {
+      adminElements.objectsView.classList.add('is-visible');
+    }
+    setAdminNavigation('objects');
+    setAdminObjectsStatus(state.objects.loaded ? '' : 'Загружаем объекты...', false);
+    refreshObjects()
+      .then(function() {
+        renderAdminObjects();
+        setAdminObjectsStatus('', false);
+      })
+      .catch(function(error) {
+        setAdminObjectsStatus(error.message || 'Не удалось загрузить объекты.', true);
+      });
+  }
+
+  function confirmLeaveAdminObjectEditor(nextViewKey) {
+    if (adminUiState.activeNavigation !== 'objects' || nextViewKey === 'objects' || !adminElements.objectsEditor) {
+      return true;
+    }
+    if (!adminElements.objectsEditor.querySelector('.documents-admin__object-card.is-dirty')) {
+      return true;
+    }
+    return window.confirm('Есть несохранённые изменения объекта. Перейти без сохранения?');
+  }
+
   function showAdminUsersView() {
     ensureAdminModal();
+    if (!confirmLeaveAdminObjectEditor('users')) {
+      return;
+    }
     closeAdminTemplateModal({ skipFocus: true });
     closeAdminS3Modal({ skipFocus: true });
     closeAdminOcrModal({ skipFocus: true });
@@ -2977,6 +3791,9 @@ function ensureAdminTemplateStyles() {
     if (adminElements.usersView) {
       adminElements.usersView.hidden = false;
     }
+    if (adminElements.objectsView) {
+      adminElements.objectsView.classList.remove('is-visible');
+    }
     if (adminElements.footer) {
       adminElements.footer.hidden = false;
     }
@@ -2986,6 +3803,9 @@ function ensureAdminTemplateStyles() {
 
   function prepareAdminInlineView(viewKey) {
     ensureAdminModal();
+    if (!confirmLeaveAdminObjectEditor(viewKey)) {
+      return false;
+    }
     if (viewKey !== 'template') {
       closeAdminTemplateModal({ skipFocus: true });
     }
@@ -3003,14 +3823,20 @@ function ensureAdminTemplateStyles() {
     if (adminElements.usersView) {
       adminElements.usersView.hidden = true;
     }
+    if (adminElements.objectsView) {
+      adminElements.objectsView.classList.remove('is-visible');
+    }
     if (adminElements.footer) {
       adminElements.footer.hidden = true;
     }
     setAdminNavigation(viewKey);
+    return true;
   }
 
   function showAdminLogView() {
-    prepareAdminInlineView('log');
+    if (!prepareAdminInlineView('log')) {
+      return;
+    }
     openAdminLogPanel();
     setAdminNavigation('log');
   }
@@ -3179,6 +4005,98 @@ function ensureAdminTemplateStyles() {
     }
   }
 
+  function getAdminRowObjectIds(row) {
+    if (!row || !row.dataset || !row.dataset.objectIds) {
+      return [];
+    }
+    try {
+      var parsed = JSON.parse(row.dataset.objectIds);
+      return Array.isArray(parsed) ? parsed.map(String) : [];
+    } catch (error) {
+      return [];
+    }
+  }
+
+  function setAdminRowObjectIds(row, objectIds) {
+    if (!row || !row.dataset) {
+      return;
+    }
+    var normalized = [];
+    var seen = Object.create(null);
+    (Array.isArray(objectIds) ? objectIds : []).forEach(function(objectId) {
+      var id = String(objectId || '');
+      if (!/^obj_[a-f0-9]{16}$/.test(id) || seen[id]) {
+        return;
+      }
+      seen[id] = true;
+      normalized.push(id);
+    });
+    row.dataset.objectIds = JSON.stringify(normalized);
+    var count = row.querySelector('[data-admin-object-count]');
+    if (count) {
+      count.textContent = String(normalized.length);
+      count.title = normalized.length ? 'Назначено объектов: ' + String(normalized.length) : 'Объекты не назначены';
+    }
+    row.querySelectorAll('[data-admin-object-option]').forEach(function(checkbox) {
+      checkbox.checked = seen[checkbox.value] === true;
+    });
+  }
+
+  function createAdminObjectMenu(row, selectedIds) {
+    var selectedMap = Object.create(null);
+    (Array.isArray(selectedIds) ? selectedIds : []).forEach(function(objectId) {
+      selectedMap[String(objectId || '')] = true;
+    });
+    var section = createElement('div', 'documents-admin__row-menu-objects');
+    var title = createElement('div', 'documents-admin__row-menu-objects-title');
+    title.appendChild(createElement('span', '', 'Доступ к объектам'));
+    var count = createElement('span', 'documents-admin__row-menu-objects-count', String(Object.keys(selectedMap).length));
+    count.dataset.adminObjectCount = '1';
+    title.appendChild(count);
+    section.appendChild(title);
+    var list = createElement('div', 'documents-admin__row-menu-objects-list');
+    list.setAttribute('role', 'group');
+    list.setAttribute('aria-label', 'Объекты пользователя');
+    var objects = state.objects && Array.isArray(state.objects.items) ? state.objects.items : [];
+    if (!objects.length) {
+      list.appendChild(createElement('div', 'documents-admin__empty-search', 'Объекты не созданы.'));
+    } else {
+      objects.forEach(function(object) {
+        var label = createElement('label', 'documents-admin__object-selector-option');
+        var checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.value = object.id;
+        checkbox.checked = selectedMap[object.id] === true;
+        checkbox.dataset.adminObjectOption = '1';
+        label.appendChild(checkbox);
+        label.appendChild(createElement('span', '', object.name));
+        list.appendChild(label);
+      });
+    }
+    section.appendChild(list);
+    row.dataset.objectIds = JSON.stringify(Array.isArray(selectedIds) ? selectedIds : []);
+    return section;
+  }
+
+  function refreshAdminObjectSelectors() {
+    if (!adminElements.usersCard) {
+      return;
+    }
+    adminElements.usersCard.querySelectorAll('tbody tr').forEach(function(row) {
+      var currentSection = row.querySelector('.documents-admin__row-menu-objects');
+      if (!currentSection) {
+        return;
+      }
+      var selectedIds = getAdminRowObjectIds(row);
+      var parent = currentSection.parentElement;
+      if (!parent) {
+        return;
+      }
+      parent.replaceChild(createAdminObjectMenu(row, selectedIds), currentSection);
+      setAdminRowObjectIds(row, selectedIds);
+    });
+  }
+
   function closeAdminRowMenus(exceptMenu) {
     if (!adminElements.usersCard) {
       return;
@@ -3206,6 +4124,12 @@ function ensureAdminTemplateStyles() {
         adminElements.filterButton.setAttribute('aria-expanded', 'false');
       }
     }
+    var objectOptionsOwner = event.target && event.target.closest
+      ? event.target.closest('.documents-admin__row-menu-objects')
+      : null;
+    if (objectOptionsOwner && adminElements.usersCard.contains(objectOptionsOwner)) {
+      return;
+    }
     var menuToggle = event.target && event.target.closest
       ? event.target.closest('[data-admin-row-menu]')
       : null;
@@ -3221,8 +4145,8 @@ function ensureAdminTemplateStyles() {
       menuToggle.setAttribute('aria-expanded', shouldOpen ? 'true' : 'false');
       if (shouldOpen) {
         var toggleRect = menuToggle.getBoundingClientRect();
-        var menuWidth = 210;
-        var menuHeight = 92;
+        var menuWidth = Math.min(290, window.innerWidth - 20);
+        var menuHeight = Math.min(menu.scrollHeight || 180, window.innerHeight - 20);
         var viewportPadding = 10;
         var menuLeft = Math.max(viewportPadding, Math.min(toggleRect.right - menuWidth, window.innerWidth - menuWidth - viewportPadding));
         var menuTop = toggleRect.bottom + 6;
@@ -3303,6 +4227,25 @@ function ensureAdminTemplateStyles() {
     applyAdminRowFilters();
   }
 
+  function handleAdminObjectSelectorChange(event) {
+    var checkbox = event.target && event.target.closest
+      ? event.target.closest('[data-admin-object-option]')
+      : null;
+    if (!checkbox || !adminElements.usersCard.contains(checkbox)) {
+      return;
+    }
+    var row = checkbox.closest('tr');
+    if (!row) {
+      return;
+    }
+    var selected = [];
+    row.querySelectorAll('[data-admin-object-option]:checked').forEach(function(input) {
+      selected.push(input.value);
+    });
+    setAdminRowObjectIds(row, selected);
+    markAdminDirty();
+  }
+
   function sectionHasCredentials(sectionKey) {
     return sectionKey === 'responsibles' || sectionKey === 'block2' || sectionKey === 'block3';
   }
@@ -3339,7 +4282,8 @@ function ensureAdminTemplateStyles() {
       chatId: '',
       email: '',
       department: '',
-      note: ''
+      note: '',
+      objectIds: []
     };
     if (sectionHasCredentials(sectionKey)) {
       base.login = '';
@@ -3405,6 +4349,7 @@ function ensureAdminTemplateStyles() {
     }
 
     appendInputCell('department', data.department, 'text', 'organization-title');
+    tr.dataset.objectIds = JSON.stringify(Array.isArray(data.objectIds) ? data.objectIds : []);
 
     var noteInput = createAdminInput('note', data.note, 'hidden');
 
@@ -3419,6 +4364,7 @@ function ensureAdminTemplateStyles() {
     menuToggle.dataset.adminRowMenu = '1';
     var rowMenu = createElement('div', 'documents-admin__row-menu');
     rowMenu.hidden = true;
+    rowMenu.appendChild(createAdminObjectMenu(tr, Array.isArray(data.objectIds) ? data.objectIds : []));
     var clearPasswordButton = createElement('button', 'documents-admin__row-menu-button', 'Очистить пароль');
     clearPasswordButton.type = 'button';
     clearPasswordButton.dataset.adminRowAction = 'clear-password';
@@ -3431,6 +4377,7 @@ function ensureAdminTemplateStyles() {
     actions.appendChild(menuToggle);
     actions.appendChild(rowMenu);
     tr.appendChild(actions);
+    setAdminRowObjectIds(tr, Array.isArray(data.objectIds) ? data.objectIds : []);
 
     return tr;
   }
@@ -3684,6 +4631,7 @@ function ensureAdminTemplateStyles() {
         }
         entry[field] = input.value.trim();
       });
+      entry.objectIds = getAdminRowObjectIds(row);
       if (includeCredentials) {
         var passwordValue = entry.password ? entry.password.trim() : '';
         delete entry.password;
@@ -3705,6 +4653,12 @@ function ensureAdminTemplateStyles() {
         }
       }
       var hasValue = Object.keys(entry).some(function(key) {
+        if (key === 'role') {
+          return false;
+        }
+        if (Array.isArray(entry[key])) {
+          return entry[key].length > 0;
+        }
         return entry[key] !== '';
       });
       if (hasValue) {
@@ -4311,7 +5265,7 @@ function ensureAdminTemplateStyles() {
     return explorer;
   }
 
- function updateAdminS3Panel() {
+  function updateAdminS3Panel() {
     ensureAdminModal();
     var s3State = ensureAdminS3State();
     if (adminElements.s3Button) {
@@ -7126,6 +8080,11 @@ function ensureAdminTemplateStyles() {
         adminElements.ocrButton.hidden = !canUseGlobalAdminOcr();
         adminElements.ocrButton.disabled = !canUseGlobalAdminOcr();
       }
+      if (adminElements.navigation) {
+        adminElements.navigation.dataset.visibleCount = String(
+          adminElements.navigation.querySelectorAll('[data-admin-navigation]:not([hidden])').length
+        );
+      }
       lastFocusedElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       ensureAdminUserLogState().visible = false;
       ensureAdminTemplateState().visible = false;
@@ -7152,8 +8111,15 @@ function ensureAdminTemplateStyles() {
         adminElements.aiBriefProviderSelect.value = state.admin.settings.aiBriefProvider === 'deepseek' ? 'deepseek' : 'default';
       }
       updateAdminMessage(state.admin.loaded ? '' : 'Загружаем настройки...', false);
-      loadAdminSettings({ focus: !state.admin.loaded }).catch(function() {
-        // сообщение уже показано в updateAdminMessage
+      Promise.all([
+        loadAdminSettings({ focus: !state.admin.loaded }),
+        refreshObjects()
+      ]).then(function() {
+        renderAdminRows('responsibles', state.admin.settings.responsibles, false);
+        renderAdminRows('block2', state.admin.settings.block2, false);
+        renderAdminRows('block3', state.admin.settings.block3, false);
+      }).catch(function() {
+        // сообщение уже показано в updateAdminMessage или будет показано при открытии вкладки объектов
       });
     } catch (error) {
       var message = error && error.message ? error.message : 'Неизвестная ошибка.';
@@ -7171,6 +8137,9 @@ function ensureAdminTemplateStyles() {
 
   function closeAdminModal() {
     if (!adminElements.modal) {
+      return;
+    }
+    if (!confirmLeaveAdminObjectEditor('closed')) {
       return;
     }
     adminRenderTokens = {};
@@ -7225,6 +8194,8 @@ function ensureAdminTemplateStyles() {
         showAdminUsersView();
       } else if (ensureAdminUserLogState().visible) {
         closeAdminLogPanel();
+      } else if (adminUiState.activeNavigation === 'objects') {
+        showAdminUsersView();
       } else {
         closeAdminModal();
       }

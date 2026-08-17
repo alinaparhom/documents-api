@@ -2,11 +2,7 @@
 // чтобы браузер не отдал закэшированный старый apppdf.js без нужных экспортов.
 const _moduleV = new URL(import.meta.url).searchParams.get('v');
 const _vSuffix = _moduleV ? '?v=' + encodeURIComponent(_moduleV) : '';
-const { createPdfViewer, preloadPdfjs } = await import('./apppdf.js' + _vSuffix);
-const { createTelegramBriefAi } = await import('./ai-short_repsonse.js' + _vSuffix);
-
-// Начинаем загрузку pdf.js как можно раньше, чтобы он был готов к моменту открытия документа
-preloadPdfjs();
+const { createPdfViewer } = await import('./apppdf.js' + _vSuffix);
 
 const API_URL = '/docs.php?action=mini_app_tasks';
 const THEME_SETTINGS_SAVE_ENDPOINT = '/docs.php?action=mini_app_save_theme';
@@ -22,25 +18,15 @@ const PDF_UPLOAD_ENDPOINT = '/docs.php?action=mini_app_upload_pdf';
 const TELEGRAM_AVATAR_ENDPOINT = '/docs.php?action=mini_app_telegram_avatar';
 const FILE_DOWNLOAD_ENDPOINT = '/docs.php?action=mini_app_download_file';
 const OFFICE_LOG_ENDPOINT = '/frontworks_log.php';
-const DOC_LOAD_LOG_ENDPOINT = '/docs.php?action=mini_app_doc_load_log';
 let aiDialogLoader = null;
-
-let aiDialogPrewarmStarted = false;
-
-function prewarmAiDialogScript() {
-  if (aiDialogPrewarmStarted) return;
-  aiDialogPrewarmStarted = true;
-  window.setTimeout(() => {
-    import('./telegram-ai-response-dialog.js' + _vSuffix).catch(() => {
-      // Тихий прогрев: без fallback и без лишней нагрузки на сеть.
-    });
-  }, 350);
-}
+let telegramBriefModulePromise = null;
+let telegramBriefModalFactory = null;
 let systemThemeMediaQuery = null;
 let isSystemThemeListenerBound = false;
 const THEME_MODE_OPTIONS = ['dark', 'light'];
 const TASK_LIST_MODE_OPTIONS = ['default', 'insight'];
 const TASK_AI_SEARCH_MODE_OPTIONS = ['local', 'ai'];
+const TASK_AI_SEARCH_FILE_SOURCE_TYPES = new Set(['ocr', 'file_name', 'file_description']);
 const TASK_AI_SEARCH_LOCAL_RESULT_LIMIT = 1000;
 const TASK_AI_SEARCH_REMOTE_RESULT_LIMIT = 5;
 const TASK_AI_SYNC_STATUS_MAX_CONSECUTIVE_ERRORS = 2;
@@ -52,105 +38,13 @@ const TASK_SEARCH_SCROLLABLE_SELECTOR = [
   '.appdosc-ai-task-search__input',
 ].join(',');
 const taskAttachmentPreviewCache = new Map();
-const taskPdfBinaryCache = new Map();
-const TASK_PDF_BINARY_CACHE_TTL_MS = 3 * 60 * 1000;
-const TASK_PDF_BINARY_CACHE_MAX_ENTRIES = 24;
-const TASK_PDF_FETCH_TIMEOUT_MS_WARMUP = 3 * 1000;
-const TASK_PDF_FETCH_TIMEOUT_MS_USER_CLICK = 18 * 1000;
-const TASK_PDF_SHARED_PROMISE_WAIT_TIMEOUT_MS = 3500;
 const AI_DIALOG_TASK_RESOLVE_TIMEOUT_MS = 2200;
-const TASK_SNAPSHOT_FETCH_TIMEOUT_MS = 2500;
-const ENABLE_TASK_PDF_WARMUP = true;
-const pdfFetchTimeoutUrls = new Set();
-
-function normalizePdfBinaryCacheKey(url) {
-  const normalized = normalizeValue(url);
-  if (!normalized) {
-    return '';
-  }
-  try {
-    const parsed = new URL(normalized, window.location.origin);
-    parsed.searchParams.delete('v');
-    parsed.hash = '';
-    return parsed.toString();
-  } catch (error) {
-    return normalized.replace(/([?&])v=\d+(&)?/g, (match, prefix, tail) => (tail ? prefix : '')).replace(/[?&]$/, '');
-  }
-}
-
-function compactTaskPdfBinaryCache() {
-  if (!taskPdfBinaryCache.size) {
-    return;
-  }
-  const now = Date.now();
-  taskPdfBinaryCache.forEach((entry, key) => {
-    const createdAt = entry && typeof entry.createdAt === 'number' ? entry.createdAt : 0;
-    if (!createdAt || now - createdAt > TASK_PDF_BINARY_CACHE_TTL_MS) {
-      taskPdfBinaryCache.delete(key);
-    }
-  });
-  if (taskPdfBinaryCache.size <= TASK_PDF_BINARY_CACHE_MAX_ENTRIES) {
-    return;
-  }
-  const ordered = Array.from(taskPdfBinaryCache.entries())
-    .sort((a, b) => {
-      const aAt = a[1] && typeof a[1].lastAccessedAt === 'number' ? a[1].lastAccessedAt : 0;
-      const bAt = b[1] && typeof b[1].lastAccessedAt === 'number' ? b[1].lastAccessedAt : 0;
-      return aAt - bAt;
-    });
-  while (ordered.length > TASK_PDF_BINARY_CACHE_MAX_ENTRIES) {
-    const oldest = ordered.shift();
-    if (oldest && oldest[0]) {
-      taskPdfBinaryCache.delete(oldest[0]);
-    }
-  }
-}
-
-function getTaskPdfBinaryCacheEntry(url) {
-  const key = normalizePdfBinaryCacheKey(url);
-  if (!key) {
-    return null;
-  }
-  const entry = taskPdfBinaryCache.get(key);
-  if (!entry) {
-    return null;
-  }
-  const now = Date.now();
-  if (entry.createdAt && now - entry.createdAt > TASK_PDF_BINARY_CACHE_TTL_MS) {
-    taskPdfBinaryCache.delete(key);
-    return null;
-  }
-  entry.lastAccessedAt = now;
-  return entry;
-}
-
-function setTaskPdfBinaryCacheEntry(url, entry) {
-  const key = normalizePdfBinaryCacheKey(url);
-  if (!key || !entry || typeof entry !== 'object') {
-    return null;
-  }
-  const now = Date.now();
-  const nextEntry = {
-    ...entry,
-    createdAt: entry.createdAt || now,
-    lastAccessedAt: now,
-  };
-  taskPdfBinaryCache.set(key, nextEntry);
-  compactTaskPdfBinaryCache();
-  return nextEntry;
-}
-
-function clearTaskPdfBinaryCachePromiseByKey(cacheKey) {
-  if (!cacheKey) {
-    return;
-  }
-  const current = taskPdfBinaryCache.get(cacheKey);
-  if (!current || !current.promise) {
-    return;
-  }
-  const { promise, ...rest } = current;
-  taskPdfBinaryCache.set(cacheKey, rest);
-}
+// Подробности задачи могут читаться из большого snapshot; 2,5 секунды давали
+// ложную ошибку на мобильной сети ещё до завершения штатного ответа.
+const TASK_SNAPSHOT_FETCH_TIMEOUT_MS = 12000;
+// Повтор выполняется только после неполного ответа и короче основного запроса,
+// чтобы явное нажатие «Просмотреть» не завершалось ложной ошибкой.
+const TASK_DETAILS_RETRY_TIMEOUT_MS = 6000;
 
 function createPdfRequestId() {
   const randomPart = Math.random().toString(36).slice(2, 10);
@@ -193,401 +87,6 @@ function ensurePdfTimingDiagnostics(details, fallback = {}) {
       : (typeof fallbackData.waitedExistingPromiseDurationMs === 'number' ? fallbackData.waitedExistingPromiseDurationMs : 0),
     responseUrl: normalizeValue(input.responseUrl) || normalizeValue(fallbackData.responseUrl) || '',
     'content-length': normalizeValue(input['content-length']) || normalizeValue(input.contentLength) || normalizeValue(fallbackData['content-length']) || normalizeValue(fallbackData.contentLength) || '',
-  };
-}
-
-function concatUint8Chunks(chunks, totalLength) {
-  if (!Array.isArray(chunks) || totalLength <= 0) {
-    return new Uint8Array(0);
-  }
-  const result = new Uint8Array(totalLength);
-  let offset = 0;
-  chunks.forEach((chunk) => {
-    if (!(chunk instanceof Uint8Array) || !chunk.byteLength) {
-      return;
-    }
-    result.set(chunk, offset);
-    offset += chunk.byteLength;
-  });
-  return result;
-}
-
-async function readResponseArrayBufferWithProgress(response, onProgress) {
-  const contentLengthRaw = response && response.headers ? response.headers.get('content-length') : '';
-  const parsedTotal = Number.parseInt(contentLengthRaw || '', 10);
-  const totalBytes = Number.isFinite(parsedTotal) && parsedTotal > 0 ? parsedTotal : 0;
-  const canStream = response
-    && response.body
-    && typeof response.body.getReader === 'function'
-    && typeof onProgress === 'function';
-
-  if (!canStream) {
-    return response.arrayBuffer();
-  }
-
-  const reader = response.body.getReader();
-  const chunks = [];
-  const startedAt = Date.now();
-  let loadedBytes = 0;
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) {
-      break;
-    }
-    if (!(value instanceof Uint8Array) || !value.byteLength) {
-      continue;
-    }
-    chunks.push(value);
-    loadedBytes += value.byteLength;
-    try {
-      onProgress({
-        loadedBytes,
-        totalBytes,
-        startedAt,
-        finished: false,
-      });
-    } catch (_error) {
-      // Прогресс не должен срывать загрузку файла.
-    }
-  }
-
-  try {
-    onProgress({
-      loadedBytes,
-      totalBytes,
-      startedAt,
-      finished: true,
-    });
-  } catch (_error) {
-    // Прогресс не должен срывать загрузку файла.
-  }
-
-  return concatUint8Chunks(chunks, loadedBytes).buffer;
-}
-
-async function fetchPdfBinaryForViewer(previewUrl, source = 'user_click', requestId = '', options = {}) {
-  const requestSource = source === 'warmup' ? 'warmup' : 'user_click';
-  const normalizedRequestId = normalizeValue(requestId) || createPdfRequestId();
-  const traceId = normalizeValue(options && options.traceId) || normalizedRequestId;
-  const onProgress = typeof (options && options.onProgress) === 'function' ? options.onProgress : null;
-  const diagnosticsContext = options && options.diagnosticsContext && typeof options.diagnosticsContext === 'object'
-    ? options.diagnosticsContext
-    : {};
-  const fetchTimeoutMs = requestSource === 'warmup'
-    ? TASK_PDF_FETCH_TIMEOUT_MS_WARMUP
-    : TASK_PDF_FETCH_TIMEOUT_MS_USER_CLICK;
-  const sameOrigin = isSameOriginUrl(previewUrl);
-  const cachedEntry = getTaskPdfBinaryCacheEntry(previewUrl);
-  const cacheKey = normalizePdfBinaryCacheKey(previewUrl);
-  if (cachedEntry && cachedEntry.arrayBuffer) {
-    const cachedRequestId = cachedEntry.requestId || normalizedRequestId;
-    return {
-      ...cachedEntry,
-      requestId: cachedRequestId,
-      traceId: cachedEntry.traceId || cachedRequestId,
-      source: requestSource,
-      fromCache: true,
-      cacheHitArrayBuffer: true,
-      cacheKey,
-      sameOrigin,
-      fetchStartedAt: typeof cachedEntry.fetchStartedAt === 'number' ? cachedEntry.fetchStartedAt : 0,
-      waitedExistingPromise: false,
-      waitedExistingPromiseDurationMs: 0,
-      existingPromiseSource: '',
-    };
-  }
-  if (cachedEntry && cachedEntry.promise) {
-    const existingPromiseSource = cachedEntry && cachedEntry.source ? cachedEntry.source : '';
-    if (requestSource === 'user_click' && existingPromiseSource === 'warmup') {
-      clearTaskPdfBinaryCachePromiseByKey(cacheKey);
-      logClientEvent('task_view_pdf_diagnostics', {
-        prefix: 'Просмотр2',
-        step: 'fetch:skip_warmup_promise',
-        details: {
-          url: previewUrl,
-          requestId: normalizedRequestId,
-          traceId,
-          source: requestSource,
-          cacheKey,
-          waitedExistingPromise: false,
-          waitedExistingPromiseDurationMs: 0,
-          existingPromiseSource,
-          reason: 'user_click_priority',
-        },
-        requestId: normalizedRequestId,
-        traceId,
-        source: requestSource,
-        cacheKey,
-        waitedExistingPromise: false,
-        waitedExistingPromiseDurationMs: 0,
-        existingPromiseSource,
-        reason: 'user_click_priority',
-      }, { keepalive: true });
-    } else {
-    const waitStartedAt = Date.now();
-    let awaited = null;
-    let timedOut = false;
-    if (requestSource === 'user_click' && TASK_PDF_SHARED_PROMISE_WAIT_TIMEOUT_MS > 0) {
-      let sharedPromiseTimeoutId = null;
-      const sharedPromiseTimeout = new Promise((_, reject) => {
-        sharedPromiseTimeoutId = window.setTimeout(() => {
-          const timeoutError = new Error('shared_promise_timeout');
-          timeoutError.name = 'SharedPromiseTimeoutError';
-          timeoutError.code = 'shared_promise_timeout';
-          reject(timeoutError);
-        }, TASK_PDF_SHARED_PROMISE_WAIT_TIMEOUT_MS);
-      });
-      try {
-        awaited = await Promise.race([cachedEntry.promise, sharedPromiseTimeout]);
-      } catch (error) {
-        if (error && (error.code === 'shared_promise_timeout' || error.name === 'SharedPromiseTimeoutError')) {
-          timedOut = true;
-        } else {
-          throw error;
-        }
-      } finally {
-        if (sharedPromiseTimeoutId !== null) {
-          window.clearTimeout(sharedPromiseTimeoutId);
-        }
-      }
-    } else {
-      awaited = await cachedEntry.promise;
-    }
-
-    const waitEndedAt = Date.now();
-    const waitedExistingPromiseDurationMs = Math.max(0, waitEndedAt - waitStartedAt);
-
-    if (timedOut) {
-      clearTaskPdfBinaryCachePromiseByKey(cacheKey);
-      logClientEvent('task_view_pdf_diagnostics', {
-        prefix: 'Просмотр2',
-        step: 'fetch:shared_promise_timeout',
-        details: {
-          url: previewUrl,
-          requestId: normalizedRequestId,
-          traceId,
-          source: requestSource,
-          cacheKey,
-          waitedMs: waitedExistingPromiseDurationMs,
-          waitedExistingPromise: true,
-          existingPromiseSource: cachedEntry && cachedEntry.source ? cachedEntry.source : '',
-        },
-        requestId: normalizedRequestId,
-        traceId,
-        source: requestSource,
-        cacheKey,
-        waitedMs: waitedExistingPromiseDurationMs,
-      }, { keepalive: true });
-    } else {
-      const awaitedRequestId = awaited && awaited.requestId
-        ? awaited.requestId
-        : (cachedEntry.requestId || normalizedRequestId);
-      const awaitedTraceId = awaited && awaited.traceId ? awaited.traceId : awaitedRequestId;
-      const awaitedContentLength = awaited && awaited.contentLength ? awaited.contentLength : '';
-      const existingPromiseSource = cachedEntry && cachedEntry.source
-        ? cachedEntry.source
-        : (awaited && awaited.source ? awaited.source : '');
-      logClientEvent('task_view_pdf_diagnostics', {
-        prefix: 'Просмотр2',
-        step: 'fetch:wait_existing_promise',
-        details: {
-          url: previewUrl,
-          requestId: awaitedRequestId,
-          traceId: awaitedTraceId,
-          source: requestSource,
-          cacheKey,
-          cacheHitArrayBuffer: false,
-          waitedExistingPromise: true,
-          waitedExistingPromiseDurationMs,
-          existingPromiseSource,
-          fetchDurationMs: awaited && typeof awaited.fetchDurationMs === 'number' ? awaited.fetchDurationMs : 0,
-          ttfbMs: awaited && typeof awaited.ttfbMs === 'number' ? awaited.ttfbMs : 0,
-          downloadMs: awaited && typeof awaited.downloadMs === 'number' ? awaited.downloadMs : 0,
-          responseUrl: awaited && awaited.responseUrl ? awaited.responseUrl : previewUrl,
-          'content-length': awaitedContentLength,
-          requestedUrl: previewUrl,
-          awaitedResponseUrl: awaited && awaited.responseUrl ? awaited.responseUrl : '',
-          awaitedSource: awaited && awaited.source ? awaited.source : requestSource,
-          fetchStartedAt: awaited && typeof awaited.fetchStartedAt === 'number' ? awaited.fetchStartedAt : 0,
-        },
-        requestId: awaitedRequestId,
-        traceId: awaitedTraceId,
-        source: requestSource,
-        cacheKey,
-        fetchDurationMs: awaited && typeof awaited.fetchDurationMs === 'number' ? awaited.fetchDurationMs : 0,
-        responseUrl: awaited && awaited.responseUrl ? awaited.responseUrl : previewUrl,
-        'content-length': awaitedContentLength,
-        requestedUrl: previewUrl,
-        awaitedResponseUrl: awaited && awaited.responseUrl ? awaited.responseUrl : '',
-        awaitedSource: awaited && awaited.source ? awaited.source : requestSource,
-        fetchStartedAt: awaited && typeof awaited.fetchStartedAt === 'number' ? awaited.fetchStartedAt : 0,
-        requestStartedAt: awaited && typeof awaited.requestStartedAt === 'number' ? awaited.requestStartedAt : 0,
-        responseReceivedAt: awaited && typeof awaited.responseReceivedAt === 'number' ? awaited.responseReceivedAt : 0,
-        arrayBufferReadyAt: awaited && typeof awaited.arrayBufferReadyAt === 'number' ? awaited.arrayBufferReadyAt : 0,
-        cacheHitArrayBuffer: false,
-        waitedExistingPromise: true,
-        waitedExistingPromiseDurationMs,
-        existingPromiseSource,
-        ttfbMs: awaited && typeof awaited.ttfbMs === 'number' ? awaited.ttfbMs : 0,
-        downloadMs: awaited && typeof awaited.downloadMs === 'number' ? awaited.downloadMs : 0,
-      }, { keepalive: true });
-      return {
-        ...awaited,
-        requestId: awaitedRequestId,
-        traceId: awaitedTraceId,
-        source: requestSource,
-        fromCache: true,
-        cacheHitArrayBuffer: false,
-        cacheKey,
-        sameOrigin,
-        waitedExistingPromise: true,
-        waitedExistingPromiseDurationMs,
-        existingPromiseSource,
-      };
-    }
-    }
-  }
-
-  const requestStartedAt = Date.now();
-  const fetchStartedAt = requestStartedAt;
-  const fetchStartedAtPerf = (typeof performance !== 'undefined' && performance && typeof performance.now === 'function')
-    ? performance.now()
-    : Date.now();
-  const shouldUseFetchTimeout = fetchTimeoutMs > 0;
-  const abortController = shouldUseFetchTimeout && typeof AbortController === 'function' ? new AbortController() : null;
-  let timeoutId = null;
-  const clearFetchTimeout = () => {
-    if (timeoutId === null) {
-      return;
-    }
-    window.clearTimeout(timeoutId);
-    timeoutId = null;
-  };
-  if (shouldUseFetchTimeout && abortController) {
-    timeoutId = window.setTimeout(() => {
-      abortController.abort('fetch_timeout');
-    }, fetchTimeoutMs);
-  }
-  const requestPromise = fetch(previewUrl, {
-    credentials: sameOrigin ? 'include' : 'omit',
-    cache: sameOrigin ? 'default' : 'no-store',
-    ...(abortController ? { signal: abortController.signal } : {}),
-  }).then(async (response) => {
-    clearFetchTimeout();
-    const responseReceivedAt = Date.now();
-    const fetchRespondedAt = (typeof performance !== 'undefined' && performance && typeof performance.now === 'function')
-      ? performance.now()
-      : Date.now();
-    if (!response.ok) {
-      const error = new Error(`http_${response.status}`);
-      error.responseStatus = response.status;
-      throw error;
-    }
-    const contentLength = response.headers ? response.headers.get('content-length') : '';
-    const arrayBuffer = await readResponseArrayBufferWithProgress(response, onProgress);
-    const arrayBufferReadyAt = Date.now();
-    const arrayBufferReadyAtPerf = (typeof performance !== 'undefined' && performance && typeof performance.now === 'function')
-      ? performance.now()
-      : Date.now();
-    const ttfbMs = Math.max(0, Math.round(fetchRespondedAt - fetchStartedAtPerf));
-    const downloadMs = Math.max(0, Math.round(arrayBufferReadyAtPerf - fetchRespondedAt));
-    const result = {
-      status: response.status,
-      statusText: response.statusText,
-      redirected: response.redirected,
-      responseType: response.type,
-      responseUrl: response.url || previewUrl,
-      headers: collectResponseHeaders(response),
-      contentType: response.headers ? response.headers.get('content-type') : '',
-      contentLength,
-      fetchDurationMs: ttfbMs,
-      ttfbMs,
-      downloadMs,
-      sameOrigin,
-      cacheMode: sameOrigin ? 'default' : 'no-store',
-      resourceTiming: getFetchResourceTimingSample(response.url || previewUrl),
-      connectionInfo: getConnectionDiagnostics(),
-      arrayBuffer,
-      byteLength: arrayBuffer ? arrayBuffer.byteLength : 0,
-      requestId: normalizedRequestId,
-      traceId,
-      source: requestSource,
-      cacheKey,
-      requestStartedAt,
-      fetchStartedAt,
-      responseReceivedAt,
-      arrayBufferReadyAt,
-      waitedExistingPromise: false,
-      waitedExistingPromiseDurationMs: 0,
-      existingPromiseSource: '',
-      cacheHitArrayBuffer: false,
-    };
-    setTaskPdfBinaryCacheEntry(previewUrl, result);
-    return result;
-  }).catch((error) => {
-    clearFetchTimeout();
-    const isTimeoutError = Boolean(error && (error.name === 'AbortError' || error === 'fetch_timeout' || error.message === 'fetch_timeout'));
-    if (!isTimeoutError) {
-      throw error;
-    }
-    const timeoutError = new Error('fetch_timeout');
-    timeoutError.name = 'FetchTimeoutError';
-    timeoutError.code = 'fetch_timeout';
-    logClientEvent('task_view_pdf_diagnostics', {
-      ...diagnosticsContext,
-      prefix: 'Просмотр2',
-      step: 'fetch:timeout',
-      details: {
-        ...diagnosticsContext,
-        url: previewUrl,
-        requestId: normalizedRequestId,
-        traceId,
-        source: requestSource,
-        cacheKey,
-        waitedMs: fetchTimeoutMs,
-      },
-      requestId: normalizedRequestId,
-      traceId,
-      source: requestSource,
-      cacheKey,
-      waitedMs: fetchTimeoutMs,
-    }, { keepalive: true });
-    clearTaskPdfBinaryCachePromiseByKey(cacheKey);
-    pdfFetchTimeoutUrls.add(normalizePdfBinaryCacheKey(previewUrl));
-    throw timeoutError;
-  }).finally(() => {
-    clearFetchTimeout();
-    const key = normalizePdfBinaryCacheKey(previewUrl);
-    if (!key) {
-      return;
-    }
-    clearTaskPdfBinaryCachePromiseByKey(key);
-  });
-
-  setTaskPdfBinaryCacheEntry(previewUrl, {
-    promise: requestPromise,
-    requestId: normalizedRequestId,
-    traceId,
-    source: requestSource,
-    cacheKey,
-    requestStartedAt,
-    fetchStartedAt,
-  });
-  const loaded = await requestPromise;
-  return {
-    ...loaded,
-    requestId: loaded.requestId || normalizedRequestId,
-    traceId: loaded.traceId || traceId,
-    source: requestSource,
-    fromCache: false,
-    cacheHitArrayBuffer: false,
-    cacheKey,
-    sameOrigin,
-    fetchStartedAt: typeof loaded.fetchStartedAt === 'number' ? loaded.fetchStartedAt : fetchStartedAt,
-    waitedExistingPromise: false,
-    waitedExistingPromiseDurationMs: 0,
-    existingPromiseSource: '',
   };
 }
 
@@ -654,7 +153,9 @@ function ensureAiDialogScriptLoaded() {
         '/js/documents/app/telegram-ai-response-dialog.js',
         '/app/telegram-ai-response-dialog.js',
       ];
-      const version = encodeURIComponent(String(window.__ASSET_VERSION__ || Date.now()));
+      const version = encodeURIComponent(String(
+        window.__RUNTIME_ASSET_VERSION__ || window.__ASSET_VERSION__ || Date.now(),
+      ));
       for (let index = 0; index < scriptSources.length; index += 1) {
         const src = `${scriptSources[index]}?v=${version}`;
         const loaded = await new Promise((resolve) => {
@@ -679,8 +180,6 @@ function ensureAiDialogScriptLoaded() {
 
   return aiDialogLoader;
 }
-
-prewarmAiDialogScript();
 
 async function openAiDialogSafely(context = {}) {
   const reportDependencyLoad = (payload = {}) => {
@@ -723,27 +222,30 @@ async function openAiDialogSafely(context = {}) {
   }
 }
 
-function openTelegramBriefModal(task, statusHandler) {
-  try {
-    telegramBriefModalFactory(task, statusHandler);
-  } catch (error) {
-    if (typeof statusHandler === 'function') {
-      statusHandler('error', 'Не удалось открыть Кратко ИИ. Обновите страницу.');
-    }
-    logClientEvent('task_view_error', {
-      reason: 'brief_ai_open_failed',
-      message: error instanceof Error ? error.message : String(error),
-    });
+async function ensureTelegramBriefModalFactory() {
+  if (telegramBriefModalFactory) {
+    return telegramBriefModalFactory;
   }
+  if (!telegramBriefModulePromise) {
+    telegramBriefModulePromise = import('./ai-short_repsonse.js' + _vSuffix)
+      .then(({ createTelegramBriefAi }) => createTelegramBriefAi({
+        normalizeValue,
+        getAttachmentName,
+        resolveFileFetchUrl,
+        getTaskOrganization,
+        buildRequestBody,
+      }))
+      .then((factory) => {
+        telegramBriefModalFactory = factory;
+        return factory;
+      })
+      .catch((error) => {
+        telegramBriefModulePromise = null;
+        throw error;
+      });
+  }
+  return telegramBriefModulePromise;
 }
-
-const telegramBriefModalFactory = createTelegramBriefAi({
-  normalizeValue,
-  getAttachmentName,
-  resolveFileFetchUrl,
-  getTaskOrganization,
-  buildRequestBody,
-});
 
 const ALLOWED_LOG_EVENTS = new Set([
   'bootstrap_after_init_telegram',
@@ -758,40 +260,19 @@ const ALLOWED_LOG_EVENTS = new Set([
   'runtime_error',
   'runtime_unhandled_rejection',
   'task_view_fetch_error',
-  'task_view_fetch_start',
-  'task_view_fetch_success',
   'task_view_inline_error',
-  'task_view_inline_start',
-  'task_view_inline_success',
-  'task_view_inline_attempt',
-  'task_view_inline_mode',
   'task_view_inline_unavailable',
-  'task_view_inline_viewer_ready',
   'task_view_inline_viewer_missing',
-  'task_view_files_resolved',
   'task_view_files_empty',
-  'task_view_open_start',
   'task_view_open_failed',
-  'task_view_watch_open_click',
-  'task_view_watch_open_success',
+  'task_view_open_external_prompt',
+  'task_view_watch_open_external_prompt',
   'task_view_watch_open_error',
-  'task_view_watch_tab_click',
-  'task_view_watch_tab_success',
+  'task_view_watch_tab_external_prompt',
   'task_view_watch_tab_error',
-  'task_view_watch_tab_finish',
-  'task_view_watch_tab_skip_busy',
-  'task_view_watch_tab_cache_hit',
-  'task_view_watch_tab_cache_save',
-  'task_view_watch_phase_start',
-  'task_view_watch_phase_end',
   'task_view_watch_phase_error',
   'task_view_watch_warning',
-  'task_view_inline_headers',
-  'task_view_pdf_diagnostics',
-  'task_view_pdf_render_result',
-  'task_view_pdf_page_count',
-  'task_view_resolve',
-  'task_view_stage',
+  'task_details_identity_mismatch',
   'task_assign_error',
   'task_assign_request',
   'task_assign_success',
@@ -895,8 +376,9 @@ const VIEWER_LOG_PREFIX = 'Просмотр';
 const VIEWER_LOG_PREFIX_DEEP = 'Просмотр2';
 const CONSOLE_LOG_PREFIX = 'Console';
 const PDF_DIAGNOSTIC_EVENT = 'appdosc:pdf-log';
-const PDF_DIAGNOSTIC_THROTTLE_MS = 1200;
 const PDF_LOG_THROTTLE_MS = 350;
+// Серверное восстановление старого файла из S3 ограничено 60 секундами.
+const VIEWER_SERVER_FALLBACK_TIMEOUT_MS = 60000;
 const BULK_ASSIGN_FEEDBACK_TIMEOUT_MS = 2400;
 const TELEGRAM_MISSING_MESSAGE = 'У пользователя нет ID Telegram. Обратитесь к администратору.';
 const RESPONSIBLE_PANEL_TITLE = 'Назначенные задачи по ответственным';
@@ -987,9 +469,21 @@ let pdfLogThrottleAt = 0;
 let lastTasksLoadAt = 0;
 const MIN_RELOAD_INTERVAL_MS = 30000;
 let loadTasksAbortController = null;
+let taskPagesRefreshPromise = null;
 let renderThrottleTimer = null;
 const RENDER_THROTTLE_MS = 100;
 let lastRenderedTasksSignature = '';
+// Большая карточка содержит много полей и обработчиков. Первый небольшой пакет
+// освобождает главный поток для нажатия «Просмотреть», остальные идут порциями.
+const CARD_RENDER_INITIAL_BATCH_SIZE = 12;
+const CARD_RENDER_BATCH_SIZE = 8;
+const CARD_RENDER_VIEWER_PAUSE_MS = 160;
+const TASKS_PAGE_SIZE = 24;
+let cardRenderGeneration = 0;
+let cardRenderTimer = null;
+let cardRenderPausedForViewer = false;
+let activeCardRenderSignature = '';
+let pendingTaskViewportRestore = null;
 
 function getPdfLogPlatformDetails() {
   return {
@@ -1000,6 +494,17 @@ function getPdfLogPlatformDetails() {
 }
 
 function sendPdfLogEntry(prefix, step, details) {
+  const normalizedStep = normalizeValue(step).toLowerCase();
+  const isFailure = normalizedStep.includes('error')
+    || normalizedStep.includes('fail')
+    || normalizedStep.includes('ошиб')
+    || normalizedStep.includes('неполн')
+    || normalizedStep.includes('пусто')
+    || normalizedStep.includes('fallback');
+  if (!isFailure) {
+    return false;
+  }
+
   const now = Date.now();
   if (now - pdfLogThrottleAt < PDF_LOG_THROTTLE_MS) {
     return false;
@@ -1054,6 +559,9 @@ async function uploadPdfPreview(blob, fileName) {
     const formData = new FormData();
     formData.append('pdf', blob, fileName || 'document.pdf');
     formData.append('telegramId', (state && state.telegram && state.telegram.id) ? String(state.telegram.id) : '');
+    if (state.impersonation && state.impersonation.active && state.impersonation.targetTelegramId) {
+      formData.append('impersonate_user_id', state.impersonation.targetTelegramId);
+    }
 
     const initData = window && window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp.initData : '';
     if (typeof initData === 'string' && initData.trim() !== '') {
@@ -1128,24 +636,26 @@ function logViewerModeDecision(mode, reason, details = {}) {
   logViewerDebugDeep('mode:selected', payload);
 }
 
-let pdfDiagnosticThrottleAt = 0;
-
 function attachPdfDiagnostics() {
   if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') {
     return;
   }
 
   window.addEventListener(PDF_DIAGNOSTIC_EVENT, (event) => {
-    const now = Date.now();
-    if (now - pdfDiagnosticThrottleAt < PDF_DIAGNOSTIC_THROTTLE_MS) {
+    const detail = event && event.detail && typeof event.detail === 'object' ? event.detail : {};
+    const normalizedStep = normalizeValue(detail.step).toLowerCase();
+    const isFailure = normalizedStep.includes('error')
+      || normalizedStep.includes('fail')
+      || normalizedStep.includes('ошиб')
+      || normalizedStep.includes('неполн')
+      || normalizedStep.includes('пусто')
+      || normalizedStep.includes('fallback');
+    if (!isFailure) {
       return;
     }
-    pdfDiagnosticThrottleAt = now;
-
-    const detail = event && event.detail && typeof event.detail === 'object' ? event.detail : {};
     const entry = {
       prefix: VIEWER_LOG_PREFIX_DEEP,
-      step: normalizeValue(detail.step),
+      step: normalizedStep,
       details: detail.details && typeof detail.details === 'object'
         ? detail.details
         : (detail.details ?? ''),
@@ -1155,7 +665,6 @@ function attachPdfDiagnostics() {
     };
 
     sendPdfLogEntry(entry.prefix, entry.step, entry);
-    logClientEvent('task_view_pdf_diagnostics', entry, { keepalive: true });
   });
 }
 
@@ -1195,85 +704,7 @@ function collectResponseHeaders(response) {
   return result;
 }
 
-function getFetchResourceTimingSample(targetUrl) {
-  if (typeof performance === 'undefined' || !performance || typeof performance.getEntriesByType !== 'function') {
-    return null;
-  }
 
-  const normalizedUrl = normalizeValue(targetUrl);
-  if (!normalizedUrl) {
-    return null;
-  }
-
-  try {
-    const entries = performance.getEntriesByType('resource');
-    if (!Array.isArray(entries) || entries.length === 0) {
-      return null;
-    }
-
-    for (let index = entries.length - 1; index >= 0; index -= 1) {
-      const entry = entries[index];
-      if (!entry || typeof entry.name !== 'string') {
-        continue;
-      }
-      if (entry.name !== normalizedUrl) {
-        continue;
-      }
-
-      const protocol = typeof entry.nextHopProtocol === 'string' ? entry.nextHopProtocol : '';
-      const dnsMs = entry.domainLookupEnd > 0 && entry.domainLookupStart > 0
-        ? Math.max(0, entry.domainLookupEnd - entry.domainLookupStart)
-        : 0;
-      const tcpMs = entry.connectEnd > 0 && entry.connectStart > 0
-        ? Math.max(0, entry.connectEnd - entry.connectStart)
-        : 0;
-      const tlsMs = entry.connectEnd > 0 && entry.secureConnectionStart > 0
-        ? Math.max(0, entry.connectEnd - entry.secureConnectionStart)
-        : 0;
-      const ttfbMs = entry.responseStart > 0 && entry.requestStart > 0
-        ? Math.max(0, entry.responseStart - entry.requestStart)
-        : 0;
-      const downloadMs = entry.responseEnd > 0 && entry.responseStart > 0
-        ? Math.max(0, entry.responseEnd - entry.responseStart)
-        : 0;
-      const totalMs = entry.duration > 0 ? Math.max(0, entry.duration) : 0;
-
-      return {
-        initiatorType: normalizeValue(entry.initiatorType),
-        transferSize: Number.isFinite(entry.transferSize) ? Math.round(entry.transferSize) : 0,
-        encodedBodySize: Number.isFinite(entry.encodedBodySize) ? Math.round(entry.encodedBodySize) : 0,
-        decodedBodySize: Number.isFinite(entry.decodedBodySize) ? Math.round(entry.decodedBodySize) : 0,
-        protocol,
-        dnsMs: Math.round(dnsMs),
-        tcpMs: Math.round(tcpMs),
-        tlsMs: Math.round(tlsMs),
-        ttfbMs: Math.round(ttfbMs),
-        downloadMs: Math.round(downloadMs),
-        totalMs: Math.round(totalMs),
-      };
-    }
-  } catch (error) {
-    return {
-      error: error && error.message ? error.message : String(error),
-    };
-  }
-
-  return null;
-}
-
-function getConnectionDiagnostics() {
-  if (typeof navigator === 'undefined' || !navigator || !navigator.connection) {
-    return null;
-  }
-
-  const connection = navigator.connection;
-  return {
-    effectiveType: normalizeValue(connection.effectiveType),
-    rtt: Number.isFinite(connection.rtt) ? connection.rtt : null,
-    downlink: Number.isFinite(connection.downlink) ? connection.downlink : null,
-    saveData: Boolean(connection.saveData),
-  };
-}
 
 function createEmptyStatusCounters() {
   return {
@@ -1334,7 +765,6 @@ const viewerTabsState = {
   activeFile: null,
   switching: false,
   pendingIndex: null,
-  renderedCache: new Map(),
 };
 
 const docLoadTracker = {
@@ -1391,43 +821,11 @@ function docLoadStep(label) {
   });
 }
 
-function docLoadFinish(error) {
+function docLoadFinish() {
   if (!docLoadTracker.startTime) return;
-  const totalMs = Math.round(performance.now() - docLoadTracker.startTime);
-  docLoadStep(error ? 'ошибка' : 'готово');
-  const rawMeta = docLoadTracker.meta && typeof docLoadTracker.meta === 'object' ? docLoadTracker.meta : {};
-  const docMeta = ensurePdfTimingDiagnostics(rawMeta, rawMeta);
-  sendDocLoadLog({
-    eventName: 'mini_app_doc_load_timing',
-    event: error ? 'load_error' : 'load_complete',
-    fileName: docLoadTracker.fileName,
-    fileType: docLoadTracker.fileType,
-    timings: docLoadTracker.stepTimings,
-    totalMs,
-    error: error ? (error.message || String(error)) : undefined,
-    meta: docMeta,
-    source: docMeta.source,
-    requestId: docMeta.requestId,
-    traceId: docMeta.traceId,
-    fetchStartedAt: docMeta.fetchStartedAt,
-    responseReceivedAt: docMeta.responseReceivedAt,
-    arrayBufferReadyAt: docMeta.arrayBufferReadyAt,
-    cacheKey: docMeta.fetchCacheKey || docMeta.cacheKey || '',
-    cacheHitArrayBuffer: typeof docMeta.cacheHitArrayBuffer === 'boolean' ? docMeta.cacheHitArrayBuffer : undefined,
-    waitedExistingPromise: docMeta.waitedExistingPromise,
-    waitedExistingPromiseDurationMs: docMeta.waitedExistingPromiseDurationMs,
-    existingPromiseSource: docMeta.existingPromiseSource || '',
-    fetchDurationMs: typeof docMeta.fetchDurationMs === 'number' ? docMeta.fetchDurationMs : undefined,
-    ttfbMs: docMeta.ttfbMs,
-    downloadMs: docMeta.downloadMs,
-    responseUrl: docMeta.responseUrl,
-    'content-length': docMeta['content-length'] || docMeta.fetchContentLength || '',
-    requestStartedAt: typeof docMeta.requestStartedAt === 'number' ? docMeta.requestStartedAt : undefined,
-    telegramId: (state && state.telegram && state.telegram.id) ? String(state.telegram.id) : '',
-    platform: runtimeEnvironment.webAppPlatform || runtimeEnvironment.platform || '',
-    taskFilter: formatTaskFiltersForLog(state && state.taskFilter !== undefined ? state.taskFilter : []),
-  });
   docLoadTracker.startTime = 0;
+  docLoadTracker.stepTimings = [];
+  docLoadTracker.meta = {};
 }
 
 function docLoadSetMeta(partialMeta) {
@@ -1450,7 +848,7 @@ function docLoadSetMeta(partialMeta) {
   };
 }
 
-function applyViewerLoaderProgress(loader, progress) {
+function renderViewerLoaderProgress(loader, progress) {
   if (!(loader instanceof HTMLElement) || typeof progress !== 'number') {
     return;
   }
@@ -1473,6 +871,52 @@ function applyViewerLoaderProgress(loader, progress) {
   if (percentEl instanceof HTMLElement) {
     percentEl.textContent = `${normalized}%`;
   }
+}
+
+function applyViewerLoaderProgress(loader, progress, options = {}) {
+  if (!(loader instanceof HTMLElement) || typeof progress !== 'number') {
+    return;
+  }
+  const normalized = Math.min(100, Math.max(0, Math.round(progress)));
+  if (options.immediate === true) {
+    loader.dataset.viewerLoaderTargetProgress = String(normalized);
+    renderViewerLoaderProgress(loader, normalized);
+    return;
+  }
+  const current = Number.parseInt(loader.dataset.viewerLoaderProgress || '0', 10);
+  const previousTarget = Number.parseInt(loader.dataset.viewerLoaderTargetProgress || '0', 10);
+  loader.dataset.viewerLoaderTargetProgress = String(Math.max(
+    Number.isFinite(current) ? current : 0,
+    Number.isFinite(previousTarget) ? previousTarget : 0,
+    normalized,
+  ));
+}
+
+function advanceViewerLoaderProgress(loader) {
+  if (!(loader instanceof HTMLElement) || loader.hidden) {
+    return;
+  }
+  const current = Math.max(0, Number.parseInt(loader.dataset.viewerLoaderProgress || '0', 10) || 0);
+  let target = Math.min(100, Math.max(
+    current,
+    Number.parseInt(loader.dataset.viewerLoaderTargetProgress || '0', 10) || 0,
+  ));
+  if (current >= target && target < 100) {
+    const now = Date.now();
+    const lastAutoProgressAt = Number.parseInt(loader.dataset.viewerLoaderLastAutoProgressAt || '0', 10);
+    const autoCeiling = target >= 84 ? 98 : 82;
+    if (current < autoCeiling && now - lastAutoProgressAt >= 700) {
+      target = current + 1;
+      loader.dataset.viewerLoaderTargetProgress = String(target);
+      loader.dataset.viewerLoaderLastAutoProgressAt = String(now);
+    }
+  }
+  if (current >= target) {
+    return;
+  }
+  const distance = target - current;
+  const step = Math.max(1, Math.min(8, Math.ceil(distance * 0.22)));
+  renderViewerLoaderProgress(loader, Math.min(target, current + step));
 }
 
 function formatViewerLoaderBytes(bytes) {
@@ -1519,74 +963,152 @@ function buildViewerLoaderEstimateText(loader, elapsedMs) {
   return `${Math.round(elapsedMs / 1000)} сек · осталось ~${formatViewerLoaderDuration(etaMs)}`;
 }
 
-function updateViewerLoaderTransfer(progress, token = docLoadTracker.loaderToken) {
+function buildViewerLoaderTransferText(loader) {
+  if (!(loader instanceof HTMLElement)) {
+    return '';
+  }
+  const loaded = Math.max(0, Number(loader.dataset.viewerLoaderLoaded) || 0);
+  const total = Math.max(0, Number(loader.dataset.viewerLoaderTotal) || 0);
+  const transferStartedAt = Number.parseInt(loader.dataset.viewerLoaderTransferStartedAt || '0', 10);
+  if (loaded <= 0 || transferStartedAt <= 0) {
+    return '';
+  }
+  const transferElapsedMs = Math.max(1, Date.now() - transferStartedAt);
+  const speedBytesPerSecond = loaded / (transferElapsedMs / 1000);
+  const hasKnownTotal = total > 0 && loaded <= total;
+  const etaMs = hasKnownTotal && speedBytesPerSecond > 0
+    ? ((total - loaded) / speedBytesPerSecond) * 1000
+    : 0;
+  const amountText = hasKnownTotal
+    ? `${formatViewerLoaderBytes(loaded)} из ${formatViewerLoaderBytes(total)}`
+    : `загружено ${formatViewerLoaderBytes(loaded)}`;
+  const speedText = speedBytesPerSecond > 0
+    ? ` · ${formatViewerLoaderBytes(speedBytesPerSecond)}/с`
+    : '';
+  const etaText = etaMs > 500 ? ` · осталось ~${formatViewerLoaderDuration(etaMs)}` : '';
+  return `${amountText}${speedText}${etaText}`;
+}
+
+function updateViewerLoaderPdfProgress(progress, token = docLoadTracker.loaderToken) {
   const loader = document.querySelector('[data-viewer-loader]');
-  if (!loader || loader.hidden || (token && docLoadTracker.loaderToken && token !== docLoadTracker.loaderToken)) {
+  if (!(loader instanceof HTMLElement)
+    || loader.hidden
+    || (token && docLoadTracker.loaderToken && token !== docLoadTracker.loaderToken)
+    || !progress
+    || typeof progress !== 'object') {
     return;
   }
-  const now = Date.now();
-  const finished = Boolean(progress && progress.finished);
-  if (!finished && now - docLoadTracker.loaderTransferRenderAt < 250) {
-    return;
-  }
-  docLoadTracker.loaderTransferRenderAt = now;
 
-  const loadedBytes = Math.max(0, Number(progress && progress.loadedBytes) || 0);
-  const totalBytes = Math.max(0, Number(progress && progress.totalBytes) || 0);
-  const startedAt = Number(progress && progress.startedAt) || now;
-  const elapsedMs = Math.max(1, now - startedAt);
-  const speedBytesPerMs = loadedBytes > 0 ? loadedBytes / elapsedMs : 0;
+  const stage = normalizeValue(progress.stage);
+  const loaded = Math.max(0, Number(progress.loaded) || 0);
+  const total = Math.max(0, Number(progress.total) || 0);
+  const startedAt = Number.parseInt(loader.dataset.viewerLoaderStartedAt || '0', 10);
+  const elapsedMs = startedAt > 0 ? Math.max(1, Date.now() - startedAt) : 1;
   const timeEl = loader.querySelector('[data-viewer-loader-time]');
-  let text = '';
 
-  if (totalBytes > 0) {
-    const percent = Math.min(99, Math.max(0, (loadedBytes / totalBytes) * 100));
-    const mappedProgress = Math.min(62, Math.max(45, 45 + (percent * 0.17)));
-    applyViewerLoaderProgress(loader, finished ? 62 : mappedProgress);
-    const displayLoadedBytes = Math.min(loadedBytes, totalBytes);
-    const remainingBytes = Math.max(0, totalBytes - displayLoadedBytes);
-    const etaMs = speedBytesPerMs > 0 && remainingBytes > 0 ? remainingBytes / speedBytesPerMs : 0;
-    text = `Загружено ${formatViewerLoaderBytes(displayLoadedBytes)} из ${formatViewerLoaderBytes(totalBytes)}`;
-    if (!finished && etaMs > 0) {
-      text += ` · осталось ~${formatViewerLoaderDuration(etaMs)}`;
+  if (stage === 'download') {
+    const hasKnownTotal = total > 0 && loaded <= total;
+    const transferRatio = hasKnownTotal ? Math.min(1, loaded / total) : 0;
+    const progressValue = hasKnownTotal ? 45 + transferRatio * 35 : 58;
+    if (!loader.dataset.viewerLoaderTransferStartedAt) {
+      loader.dataset.viewerLoaderTransferStartedAt = String(Date.now());
     }
-  } else {
-    const speedText = speedBytesPerMs > 0
-      ? ` · скорость ${formatViewerLoaderBytes(speedBytesPerMs * 1000)}/с`
-      : '';
-    text = `Загружено ${formatViewerLoaderBytes(loadedBytes)}${speedText}`;
+    loader.dataset.viewerLoaderLoaded = String(loaded);
+    loader.dataset.viewerLoaderTotal = String(total);
+    updateViewerLoaderStep('Получение выбранного файла…', progressValue, token);
+    loader.dataset.viewerLoaderTransferText = buildViewerLoaderTransferText(loader);
+    loader.dataset.viewerLoaderTransferAt = String(Date.now());
+    if (timeEl instanceof HTMLElement) {
+      timeEl.textContent = loader.dataset.viewerLoaderTransferText;
+    }
+    return;
   }
 
-  if (timeEl instanceof HTMLElement && text !== '') {
-    timeEl.textContent = text;
+  if (stage === 'render_start') {
+    const totalPages = Math.max(0, Number(progress.totalPages) || 0);
+    loader.dataset.viewerLoaderTransferText = '';
+    delete loader.dataset.viewerLoaderTransferStartedAt;
+    delete loader.dataset.viewerLoaderLoaded;
+    delete loader.dataset.viewerLoaderTotal;
+    updateViewerLoaderStep(
+      totalPages > 0 ? `Подготовка всех страниц · всего ${totalPages}` : 'Подготовка всех страниц…',
+      84,
+      token,
+    );
+    return;
   }
-  loader.dataset.viewerLoaderTransferText = text;
-  loader.dataset.viewerLoaderTransferAt = String(now);
+
+  if (stage === 'render') {
+    const page = Math.max(0, Number(progress.page) || 0);
+    const totalPages = Math.max(0, Number(progress.totalPages) || 0);
+    const ratio = totalPages > 0 ? Math.min(1, page / totalPages) : 0;
+    updateViewerLoaderStep(`Отрисовка страницы ${page}${totalPages ? ` из ${totalPages}` : ''}`, 85 + ratio * 14, token);
+    return;
+  }
+
+  if (stage === 'ready') {
+    const totalPages = Math.max(0, Number(progress.totalPages) || 0);
+    updateViewerLoaderStep(
+      totalPages > 1 ? 'Первая страница готова · остальные загружаются' : 'Страница готова',
+      100,
+      token,
+    );
+    loader.dataset.viewerLoaderFinalText = `Отображено за ${formatViewerLoaderDuration(elapsedMs)}`;
+    if (timeEl instanceof HTMLElement) {
+      timeEl.textContent = loader.dataset.viewerLoaderFinalText;
+    }
+    return;
+  }
+
+  if (stage === 'fallback') {
+    loader.dataset.viewerLoaderTransferText = '';
+    delete loader.dataset.viewerLoaderTransferStartedAt;
+    delete loader.dataset.viewerLoaderLoaded;
+    delete loader.dataset.viewerLoaderTotal;
+    loader.dataset.viewerLoaderFallbackStartedAt = String(Date.now());
+    updateViewerLoaderStep('Восстановление файла из хранилища…', 90, token);
+    if (timeEl instanceof HTMLElement) {
+      timeEl.textContent = 'Сервер готовит выбранный файл · максимум 60 сек';
+    }
+    return;
+  }
+
+  if (stage === 'fallback_ready') {
+    delete loader.dataset.viewerLoaderFallbackStartedAt;
+    updateViewerLoaderStep('Файл готов к просмотру', 100, token);
+    loader.dataset.viewerLoaderFinalText = `Открыто за ${formatViewerLoaderDuration(elapsedMs)}`;
+    if (timeEl instanceof HTMLElement) {
+      timeEl.textContent = loader.dataset.viewerLoaderFinalText;
+    }
+    return;
+  }
+
+  if (stage === 'fallback_timeout' || stage === 'fallback_failed') {
+    delete loader.dataset.viewerLoaderFallbackStartedAt;
+    updateViewerLoaderStep('Файл не удалось подготовить', 100, token);
+    loader.dataset.viewerLoaderFinalText = 'Истекло время подготовки файла';
+    return;
+  }
+
+  if (stage === 'error') {
+    updateViewerLoaderStep('Основной просмотрщик недоступен, пробуем резервный…', 88, token);
+    return;
+  }
+
+  if (stage === 'load') {
+    updateViewerLoaderStep('Подключение к файлу…', 42, token);
+  }
 }
 
-function sendDocLoadLog(payload) {
-  if (!payload || typeof fetch !== 'function') return;
-  try {
-    const body = JSON.stringify(payload);
-    if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
-      const blob = new Blob([body], { type: 'application/json' });
-      if (navigator.sendBeacon(DOC_LOAD_LOG_ENDPOINT, blob)) return;
-    }
-    fetch(DOC_LOAD_LOG_ENDPOINT, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body,
-      credentials: 'include',
-      keepalive: true,
-    }).catch(() => {});
-  } catch (_) { /* ignore */ }
-}
 
 function showViewerLoader(fileName) {
   const loader = document.querySelector('[data-viewer-loader]');
   if (!loader) return null;
   const token = `loader_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
   docLoadTracker.loaderToken = token;
+  loader.setAttribute('role', 'status');
+  loader.setAttribute('aria-live', 'polite');
+  loader.setAttribute('aria-busy', 'true');
   const titleEl = loader.querySelector('[data-viewer-loader-title]');
   const stepEl = loader.querySelector('[data-viewer-loader-step]');
   const timeEl = loader.querySelector('[data-viewer-loader-time]');
@@ -1600,11 +1122,18 @@ function showViewerLoader(fileName) {
   loader.dataset.viewerLoaderStartedAt = String(Date.now());
   loader.dataset.viewerLoaderTransferText = '';
   loader.dataset.viewerLoaderTransferAt = '0';
+  delete loader.dataset.viewerLoaderTransferStartedAt;
+  delete loader.dataset.viewerLoaderLoaded;
+  delete loader.dataset.viewerLoaderTotal;
+  delete loader.dataset.viewerLoaderFallbackStartedAt;
+  delete loader.dataset.viewerLoaderFinalText;
   delete loader.dataset.viewerLoaderCompletedAt;
+  delete loader.dataset.viewerLoaderLastAutoProgressAt;
   docLoadTracker.loaderTransferRenderAt = 0;
-  applyViewerLoaderProgress(loader, 0);
+  applyViewerLoaderProgress(loader, 0, { immediate: true });
   loader.hidden = false;
   const start = performance.now();
+  let lastTimeRenderAt = 0;
   if (docLoadTracker.timerInterval) clearInterval(docLoadTracker.timerInterval);
   docLoadTracker.timerInterval = setInterval(() => {
     if (loader.hidden || docLoadTracker.loaderToken !== token) {
@@ -1612,13 +1141,30 @@ function showViewerLoader(fileName) {
       docLoadTracker.timerInterval = null;
       return;
     }
+    advanceViewerLoaderProgress(loader);
+    const now = performance.now();
+    if (now - lastTimeRenderAt < 400) {
+      return;
+    }
+    lastTimeRenderAt = now;
     const elapsed = Math.round((performance.now() - start) / 1000);
     if (timeEl) {
-      const transferAt = Number.parseInt(loader.dataset.viewerLoaderTransferAt || '0', 10);
-      const transferText = loader.dataset.viewerLoaderTransferText || '';
+      const fallbackStartedAt = Number.parseInt(loader.dataset.viewerLoaderFallbackStartedAt || '0', 10);
+      const finalText = loader.dataset.viewerLoaderFinalText || '';
+      const transferText = buildViewerLoaderTransferText(loader)
+        || loader.dataset.viewerLoaderTransferText
+        || '';
       const elapsedMs = Math.max(0, Math.round(performance.now() - start));
       const estimateText = buildViewerLoaderEstimateText(loader, elapsedMs);
-      if (transferText && Number.isFinite(transferAt) && Date.now() - transferAt < 1600) {
+      if (finalText) {
+        timeEl.textContent = finalText;
+      } else if (fallbackStartedAt > 0) {
+        const fallbackElapsedMs = Math.max(0, Date.now() - fallbackStartedAt);
+        const fallbackRemainingMs = Math.max(0, VIEWER_SERVER_FALLBACK_TIMEOUT_MS - fallbackElapsedMs);
+        timeEl.textContent = fallbackRemainingMs > 0
+          ? `Сервер восстанавливает файл · осталось не более ${formatViewerLoaderDuration(fallbackRemainingMs)}`
+          : 'Сервер завершает попытку восстановления…';
+      } else if (transferText) {
         timeEl.textContent = transferText;
       } else if (estimateText) {
         timeEl.textContent = estimateText;
@@ -1630,7 +1176,7 @@ function showViewerLoader(fileName) {
         timeEl.textContent = elapsed > 0 ? `${elapsed} сек` : '';
       }
     }
-  }, 500);
+  }, 40);
   return token;
 }
 
@@ -1640,28 +1186,6 @@ function updateViewerLoaderStep(step, progress, token = docLoadTracker.loaderTok
   const stepEl = loader.querySelector('[data-viewer-loader-step]');
   if (stepEl && step) stepEl.textContent = step;
   applyViewerLoaderProgress(loader, progress);
-}
-
-function openViewerLoadingShell(previewUrl, fileName, viewerOptions = {}, message = 'Файл загружается...') {
-  const viewer = pdfViewerInstance;
-  if (!viewer || typeof viewer.open !== 'function' || !previewUrl) {
-    return null;
-  }
-
-  const loadingOptions = {
-    ...viewerOptions,
-    isPdf: Boolean(viewerOptions && viewerOptions.isPdf),
-    forceCanvas: Boolean(viewerOptions && viewerOptions.forceCanvas),
-    skipPdfLoad: true,
-    loadingOnly: true,
-    loadingMessage: message,
-  };
-
-  try {
-    return viewer.open(previewUrl, fileName || 'Документ', loadingOptions);
-  } catch (_error) {
-    return null;
-  }
 }
 
 function hideViewerLoader(token = docLoadTracker.loaderToken) {
@@ -1674,9 +1198,17 @@ function hideViewerLoader(token = docLoadTracker.loaderToken) {
     docLoadTracker.loaderHideTimer = null;
   }
   if (loader instanceof HTMLElement && !loader.hidden) {
+    applyViewerLoaderProgress(loader, 100);
     const progress = Number.parseInt(loader.dataset.viewerLoaderProgress || '0', 10);
+    if (progress < 100) {
+      docLoadTracker.loaderHideTimer = window.setTimeout(() => {
+        docLoadTracker.loaderHideTimer = null;
+        hideViewerLoader(token);
+      }, 40);
+      return;
+    }
     const completedAt = Number.parseInt(loader.dataset.viewerLoaderCompletedAt || '0', 10);
-    const finishDelayMs = 360;
+    const finishDelayMs = 180;
     const elapsedAfterComplete = completedAt > 0 ? Date.now() - completedAt : finishDelayMs;
     if (progress >= 100 && elapsedAfterComplete < finishDelayMs) {
       docLoadTracker.loaderHideTimer = window.setTimeout(() => {
@@ -1688,9 +1220,17 @@ function hideViewerLoader(token = docLoadTracker.loaderToken) {
   }
   if (loader) {
     loader.hidden = true;
+    loader.setAttribute('aria-busy', 'false');
     loader.dataset.viewerLoaderTransferText = '';
     loader.dataset.viewerLoaderTransferAt = '0';
+    delete loader.dataset.viewerLoaderTransferStartedAt;
+    delete loader.dataset.viewerLoaderLoaded;
+    delete loader.dataset.viewerLoaderTotal;
+    delete loader.dataset.viewerLoaderFallbackStartedAt;
+    delete loader.dataset.viewerLoaderFinalText;
     delete loader.dataset.viewerLoaderCompletedAt;
+    delete loader.dataset.viewerLoaderTargetProgress;
+    delete loader.dataset.viewerLoaderLastAutoProgressAt;
   }
   if (docLoadTracker.timerInterval) { clearInterval(docLoadTracker.timerInterval); docLoadTracker.timerInterval = null; }
   docLoadTracker.loaderToken = null;
@@ -3025,6 +2565,17 @@ const state = {
     initDataSummary: null,
     startParam: '',
   },
+  impersonation: {
+    allowed: false,
+    active: false,
+    switching: false,
+    actorTelegramId: '',
+    targetTelegramId: '',
+    target: null,
+    users: [],
+    organizations: [],
+    actorProfile: null,
+  },
   stats: {
     total: 0,
     completed: 0,
@@ -3036,6 +2587,16 @@ const state = {
   organizationsChecked: 0,
   tasks: [],
   visibleTasks: [],
+  pagination: {
+    page: 0,
+    currentPage: 1,
+    pageSize: TASKS_PAGE_SIZE,
+    loaded: 0,
+    total: 0,
+    hasMore: false,
+    loadingMore: false,
+  },
+  taskDetailsRequests: new Map(),
   taskFilter: [],
   overdueNoticeShown: false,
   activeFilters: {
@@ -3095,6 +2656,7 @@ const state = {
     matched: false,
     expanded: false,
   },
+  entryTaskPageScheduled: false,
   assets: {
     version: '',
     updatedAt: '',
@@ -3362,15 +2924,46 @@ function safeRender(reason) {
   return true;
 }
 
-function refreshTasksInBackground() {
-  if (isTaskSearchBackgroundLocked()) {
-    logClientEvent('tasks_background_refresh_skipped', { reason: 'task_search_open' });
-    return;
+function refreshLoadedTaskPages(options = {}) {
+  if (taskPagesRefreshPromise) {
+    return taskPagesRefreshPromise;
   }
-  const refreshPromise = loadTasks(true, { silent: true });
-  if (refreshPromise && typeof refreshPromise.catch === 'function') {
-    refreshPromise.catch(() => {});
-  }
+
+  const force = options.force !== false;
+  const silent = options.silent !== false;
+  const pagesToRefresh = Math.max(1, Number.parseInt(state.pagination.page, 10) || 1);
+  const currentPage = Math.max(1, Number.parseInt(state.pagination.currentPage, 10) || 1);
+  const viewportSnapshot = captureTaskListViewport();
+
+  taskPagesRefreshPromise = (async () => {
+    const firstPageLoaded = await loadTasks(force, { silent, deferRender: true });
+    if (firstPageLoaded !== true) {
+      return firstPageLoaded;
+    }
+
+    while (state.pagination.hasMore && state.pagination.page < pagesToRefresh) {
+      // Уже открытые серверные страницы обновляются последовательно, чтобы
+      // текущая страница карточек не исчезала после изменения одной задачи.
+      // eslint-disable-next-line no-await-in-loop
+      const nextPageLoaded = await loadTasks(true, { append: true, silent: true, deferRender: true });
+      if (nextPageLoaded !== true) {
+        break;
+      }
+    }
+
+    state.pagination.currentPage = currentPage;
+    updateVisibleTasks();
+    const refreshedMeta = getTaskListPaginationMeta();
+    const maximumPage = refreshedMeta.totalPages || refreshedMeta.loadedPages;
+    state.pagination.currentPage = Math.min(currentPage, Math.max(1, maximumPage));
+    pendingTaskViewportRestore = viewportSnapshot;
+    safeRender('tasks_pages_refreshed');
+    return true;
+  })().finally(() => {
+    taskPagesRefreshPromise = null;
+  });
+
+  return taskPagesRefreshPromise;
 }
 
 function isTaskSearchBackgroundLocked() {
@@ -3396,6 +2989,9 @@ function attachPublicTaskHooks() {
     if (isTaskSearchBackgroundLocked()) {
       logClientEvent('public_load_tasks_skipped', { reason: 'task_search_open' });
       return Promise.resolve(false);
+    }
+    if (force && !(options && options.append)) {
+      return refreshLoadedTaskPages({ force: true, silent: Boolean(options && options.silent) });
     }
     return loadTasks(force, options);
   };
@@ -3975,6 +3571,15 @@ function initElements() {
   elements.settingsUserId = document.querySelector('[data-settings-user-id]');
   elements.settingsTelegramId = document.querySelector('[data-settings-telegram-id]');
   elements.settingsOrganizations = document.querySelector('[data-settings-organizations]');
+  elements.impersonationSection = document.querySelector('[data-impersonation-section]');
+  elements.impersonationPanel = document.querySelector('[data-impersonation-panel]');
+  elements.impersonationSelect = document.querySelector('[data-impersonation-select]');
+  elements.impersonationApply = document.querySelector('[data-impersonation-apply]');
+  elements.impersonationReset = document.querySelector('[data-impersonation-reset]');
+  elements.impersonationStatus = document.querySelector('[data-impersonation-status]');
+  elements.impersonationBanner = document.querySelector('[data-impersonation-banner]');
+  elements.impersonationBannerName = document.querySelector('[data-impersonation-banner-name]');
+  elements.impersonationExitButtons = Array.from(document.querySelectorAll('[data-impersonation-exit]'));
   elements.themeOptionButtons = Array.from(document.querySelectorAll('[data-theme-option]'));
   elements.listModeOptionButtons = Array.from(document.querySelectorAll('[data-list-mode-option]'));
   elements.userAvatarImage = document.querySelector('[data-user-avatar-image]');
@@ -4317,6 +3922,7 @@ async function persistThemeModePreference(mode) {
       cache: 'no-store',
       headers,
       body: JSON.stringify({
+        ...buildRequestBody({ includeInitData: false, includeNameTokens: false }),
         organization,
         themeMode: normalizedMode,
         taskListMode: normalizeTaskListMode(state.taskListMode),
@@ -4423,8 +4029,285 @@ function renderThemeToggle() {
   });
 }
 
+function cloneTelegramProfile(profile) {
+  const source = profile && typeof profile === 'object' ? profile : {};
+  return {
+    id: normalizeValue(source.id),
+    username: normalizeValue(source.username),
+    firstName: normalizeValue(source.firstName),
+    lastName: normalizeValue(source.lastName),
+    fullName: normalizeValue(source.fullName),
+    userId: normalizeValue(source.userId),
+    photoUrl: normalizeValue(source.photoUrl),
+    role: normalizeValue(source.role),
+    chatId: normalizeValue(source.chatId),
+    chatType: normalizeValue(source.chatType),
+    languageCode: normalizeValue(source.languageCode),
+    platform: normalizeValue(source.platform),
+    colorScheme: normalizeValue(source.colorScheme),
+    initData: normalizeValue(source.initData),
+    initDataSummary: source.initDataSummary && typeof source.initDataSummary === 'object'
+      ? { ...source.initDataSummary }
+      : null,
+    startParam: normalizeValue(source.startParam),
+  };
+}
+
+function normalizeImpersonationUser(entry) {
+  if (!entry || typeof entry !== 'object') {
+    return null;
+  }
+  const telegramId = normalizeTelegramUserId(entry.telegramId || entry.telegram_id || entry.telegram || entry.chatId);
+  if (!telegramId) {
+    return null;
+  }
+  const organizations = Array.isArray(entry.organizations)
+    ? entry.organizations.map((item) => normalizeValue(item)).filter(Boolean)
+    : [];
+  return {
+    telegramId,
+    userId: normalizeValue(entry.userId || entry.user_id || entry.id || entry.number || entry.login),
+    username: normalizeValue(entry.username).replace(/^@+/, ''),
+    fullName: normalizeValue(entry.fullName || entry.responsible || entry.name) || `Telegram ID ${telegramId}`,
+    position: normalizeValue(entry.position),
+    role: normalizeValue(entry.role),
+    organizations: Array.from(new Set(organizations)),
+  };
+}
+
+function getImpersonationUserLabel(user) {
+  if (!user) {
+    return 'Пользователь';
+  }
+  const details = [];
+  if (user.position) {
+    details.push(user.position);
+  }
+  if (Array.isArray(user.organizations) && user.organizations.length) {
+    details.push(user.organizations.join(', '));
+  }
+  return details.length ? `${user.fullName} — ${details.join(' · ')}` : user.fullName;
+}
+
+function getImpersonationUserRoleLabel(user) {
+  if (!user) {
+    return '';
+  }
+  if (user.position) {
+    return user.position;
+  }
+  const role = normalizeValue(user.role).toLowerCase();
+  const labels = {
+    director: 'Директор',
+    responsible: 'Ответственный',
+    subordinate: 'Подчинённый',
+  };
+  return labels[role] || normalizeValue(user.role);
+}
+
+function applyImpersonationUserProfile(user) {
+  if (!user) {
+    return;
+  }
+  state.telegram.id = user.telegramId;
+  state.telegram.chatId = user.telegramId;
+  state.telegram.username = user.username;
+  state.telegram.fullName = user.fullName;
+  state.telegram.firstName = user.fullName;
+  state.telegram.lastName = '';
+  state.telegram.userId = user.userId;
+  state.telegram.photoUrl = '';
+  state.telegram.role = getImpersonationUserRoleLabel(user);
+}
+
+function resetImpersonationViewState() {
+  state.taskFilter = [];
+  state.activeFilters.folderId = 'all';
+  state.activeFilters.searchQuery = '';
+  state.activeFilters.statusFilters = [];
+  state.activeFilters.quickPreset = '';
+  state.activeFilters.groupFilters = [{ type: '', value: '' }];
+  state.activeFilters.dateFrom = '';
+  state.activeFilters.dateTo = '';
+  state.activeFilters.overdue = false;
+  state.pagination.currentPage = 1;
+  state.selectedCardAnchor = '';
+  state.expandedCards = new Set();
+  state.overdueNoticeShown = false;
+  const directorState = ensureDirectorState();
+  directorState.selectedResponsibleToken = '';
+  directorState.selectedSubordinateToken = '';
+  directorState.responsiblePanelExpanded = false;
+  directorState.subordinatePanelExpanded = false;
+}
+
+function renderImpersonationControls() {
+  const impersonation = state.impersonation || {};
+  const allowed = impersonation.allowed === true;
+  const active = impersonation.active === true && Boolean(impersonation.targetTelegramId);
+  const users = Array.isArray(impersonation.users) ? impersonation.users : [];
+
+  if (elements.impersonationSection) {
+    elements.impersonationSection.hidden = !allowed;
+  }
+  if (elements.impersonationPanel) {
+    elements.impersonationPanel.hidden = !allowed;
+  }
+  if (elements.impersonationSelect) {
+    const previousValue = normalizeValue(elements.impersonationSelect.value)
+      || normalizeValue(impersonation.targetTelegramId);
+    elements.impersonationSelect.textContent = '';
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = users.length ? 'Выберите пользователя' : 'Пользователи не найдены';
+    elements.impersonationSelect.appendChild(placeholder);
+    users.forEach((user) => {
+      if (!user || user.telegramId === impersonation.actorTelegramId) {
+        return;
+      }
+      const option = document.createElement('option');
+      option.value = user.telegramId;
+      option.textContent = getImpersonationUserLabel(user);
+      elements.impersonationSelect.appendChild(option);
+    });
+    const hasPreviousValue = Array.from(elements.impersonationSelect.options)
+      .some((option) => option.value === previousValue);
+    elements.impersonationSelect.value = hasPreviousValue ? previousValue : '';
+    elements.impersonationSelect.disabled = impersonation.switching === true || users.length === 0;
+  }
+  if (elements.impersonationApply) {
+    const selectedId = elements.impersonationSelect ? normalizeValue(elements.impersonationSelect.value) : '';
+    elements.impersonationApply.disabled = impersonation.switching === true
+      || !selectedId
+      || selectedId === impersonation.targetTelegramId;
+  }
+  if (elements.impersonationReset) {
+    elements.impersonationReset.hidden = !active;
+    elements.impersonationReset.disabled = impersonation.switching === true;
+  }
+  if (elements.impersonationStatus) {
+    const targetName = impersonation.target && impersonation.target.fullName
+      ? impersonation.target.fullName
+      : 'выбранного пользователя';
+    elements.impersonationStatus.textContent = impersonation.switching
+      ? 'Переключаем профиль…'
+      : (active ? `Сейчас вы работаете от лица: ${targetName}.` : 'Режим тестирования выключен.');
+  }
+  if (elements.impersonationBanner) {
+    elements.impersonationBanner.hidden = !active;
+  }
+  if (elements.impersonationBannerName) {
+    elements.impersonationBannerName.textContent = active && impersonation.target
+      ? impersonation.target.fullName
+      : 'пользователя';
+  }
+}
+
+function syncImpersonationStateFromPayload(payload) {
+  const source = payload && typeof payload === 'object' ? payload : {};
+  const users = Array.isArray(source.users)
+    ? source.users.map(normalizeImpersonationUser).filter(Boolean)
+    : [];
+  const actorTelegramId = normalizeTelegramUserId(source.actorTelegramId);
+  const targetTelegramId = normalizeTelegramUserId(source.targetTelegramId);
+  const targetFromPayload = normalizeImpersonationUser(source.target);
+  const target = targetFromPayload
+    || users.find((user) => user.telegramId === targetTelegramId)
+    || null;
+
+  state.impersonation.allowed = source.allowed === true;
+  state.impersonation.active = source.active === true && Boolean(targetTelegramId);
+  state.impersonation.actorTelegramId = actorTelegramId;
+  state.impersonation.targetTelegramId = state.impersonation.active ? targetTelegramId : '';
+  state.impersonation.target = state.impersonation.active ? target : null;
+  state.impersonation.users = users;
+  state.impersonation.organizations = Array.isArray(source.organizations)
+    ? source.organizations.map((item) => normalizeValue(item)).filter(Boolean)
+    : [];
+  if (state.impersonation.allowed && !state.impersonation.actorProfile && !state.impersonation.active) {
+    state.impersonation.actorProfile = cloneTelegramProfile(state.telegram);
+  }
+  renderImpersonationControls();
+}
+
+async function activateImpersonationFromSettings() {
+  const selectedId = elements.impersonationSelect ? normalizeTelegramUserId(elements.impersonationSelect.value) : '';
+  const target = Array.isArray(state.impersonation.users)
+    ? state.impersonation.users.find((user) => user.telegramId === selectedId)
+    : null;
+  if (!selectedId || !target || state.impersonation.switching) {
+    return;
+  }
+
+  const previousTelegram = cloneTelegramProfile(state.telegram);
+  const previousTargetId = state.impersonation.targetTelegramId;
+  const previousTarget = state.impersonation.target;
+  const previousActive = state.impersonation.active;
+  if (!state.impersonation.actorProfile) {
+    state.impersonation.actorProfile = cloneTelegramProfile(state.telegram);
+  }
+
+  state.impersonation.switching = true;
+  state.impersonation.active = true;
+  state.impersonation.targetTelegramId = selectedId;
+  state.impersonation.target = target;
+  applyImpersonationUserProfile(target);
+  resetImpersonationViewState();
+  renderImpersonationControls();
+
+  const loaded = await loadTasks(true);
+  state.impersonation.switching = false;
+  if (loaded === true) {
+    renderImpersonationControls();
+    closeSettingsSheet();
+    setStatus('success', `Тестовый вход: ${target.fullName}.`);
+    return;
+  }
+
+  state.telegram = previousTelegram;
+  state.impersonation.active = previousActive;
+  state.impersonation.targetTelegramId = previousTargetId;
+  state.impersonation.target = previousTarget;
+  renderImpersonationControls();
+  safeRender('impersonation_activate_rollback');
+}
+
+async function resetImpersonation() {
+  if (!state.impersonation.active || state.impersonation.switching || !state.impersonation.actorProfile) {
+    return;
+  }
+
+  const previousTelegram = cloneTelegramProfile(state.telegram);
+  const previousTargetId = state.impersonation.targetTelegramId;
+  const previousTarget = state.impersonation.target;
+  state.impersonation.switching = true;
+  state.impersonation.active = false;
+  state.impersonation.targetTelegramId = '';
+  state.impersonation.target = null;
+  state.telegram = cloneTelegramProfile(state.impersonation.actorProfile);
+  resetImpersonationViewState();
+  renderImpersonationControls();
+
+  const loaded = await loadTasks(true);
+  state.impersonation.switching = false;
+  if (loaded === true) {
+    renderImpersonationControls();
+    closeSettingsSheet();
+    setStatus('success', 'Вы вернулись в свой профиль.');
+    return;
+  }
+
+  state.telegram = previousTelegram;
+  state.impersonation.active = true;
+  state.impersonation.targetTelegramId = previousTargetId;
+  state.impersonation.target = previousTarget;
+  renderImpersonationControls();
+  safeRender('impersonation_reset_rollback');
+}
+
 function openSettingsSheet() {
   updateSettingsProfileDetails();
+  renderImpersonationControls();
   if (elements.settingsSheet instanceof HTMLElement) {
     elements.settingsSheet.hidden = false;
   }
@@ -4719,6 +4602,12 @@ function buildRequestBody(options = {}) {
   if (state.telegram.initData && includeInitData) {
     payload.telegram_init_data = state.telegram.initData;
   }
+  if (state.impersonation
+    && state.impersonation.active === true
+    && state.impersonation.targetTelegramId
+  ) {
+    payload.impersonate_user_id = state.impersonation.targetTelegramId;
+  }
   if (!payload.identity) {
     if (payload.telegram_user_id) {
       payload.identity = `telegram:${payload.telegram_user_id}`;
@@ -4735,6 +4624,11 @@ function buildRequestBody(options = {}) {
 async function loadTasks(force = false, options = {}) {
   const silent = Boolean(options && options.silent);
   const allowDuringTaskSearch = Boolean(options && options.allowDuringTaskSearch);
+  const append = Boolean(options && options.append);
+  const deferRender = Boolean(options && options.deferRender);
+  if (append && (!state.pagination.hasMore || state.pagination.loadingMore)) {
+    return false;
+  }
   if (isTaskSearchBackgroundLocked() && !allowDuringTaskSearch) {
     logClientEvent('tasks_load_skipped', { force, silent, reason: 'task_search_open' });
     return false;
@@ -4754,7 +4648,9 @@ async function loadTasks(force = false, options = {}) {
   loadTasksAbortController = typeof AbortController !== 'undefined' ? new AbortController() : null;
   const signal = loadTasksAbortController ? loadTasksAbortController.signal : undefined;
 
-  if (!silent) {
+  if (append) {
+    state.pagination.loadingMore = true;
+  } else if (!silent) {
     setLoading(true);
     clearStatus();
   }
@@ -4774,7 +4670,12 @@ async function loadTasks(force = false, options = {}) {
       headers,
       credentials: 'include',
       cache: 'no-store',
-      body: JSON.stringify(buildRequestBody()),
+      body: JSON.stringify({
+        ...buildRequestBody(),
+        page: append ? state.pagination.page + 1 : 1,
+        pageSize: state.pagination.pageSize || TASKS_PAGE_SIZE,
+        compactAll: !append,
+      }),
     };
     if (signal) {
       fetchOptions.signal = signal;
@@ -4803,8 +4704,8 @@ async function loadTasks(force = false, options = {}) {
       throw new Error(message);
     }
 
-    updateStateFromPayload(data);
-    if (!safeRender('tasks_payload_update')) {
+    updateStateFromPayload(data, { append });
+    if (!deferRender && !safeRender('tasks_payload_update')) {
       const message = state.error || 'Отрисовка карточек завершилась ошибкой';
       throw new Error(message);
     }
@@ -4816,9 +4717,10 @@ async function loadTasks(force = false, options = {}) {
       organizations: state.organizations.length,
       organizationsChecked: state.organizationsChecked,
       tasks: state.tasks.length,
+      page: state.pagination.page,
+      hasMore: state.pagination.hasMore,
       durationMs: Date.now() - startedAt,
     });
-    preGenerateTaskSummaries();
     maybeShowOverdueOpenNotice();
     return true;
   } catch (error) {
@@ -4839,7 +4741,9 @@ async function loadTasks(force = false, options = {}) {
     return false;
   } finally {
     lastTasksLoadAt = Date.now();
-    if (!silent) {
+    if (append) {
+      state.pagination.loadingMore = false;
+    } else if (!silent) {
       setLoading(false);
     }
   }
@@ -4882,7 +4786,11 @@ async function refreshFileBriefSnapshotForSearch() {
   return state.fileBriefSnapshotRefreshPromise;
 }
 
-function updateStateFromPayload(payload) {
+function updateStateFromPayload(payload, options = {}) {
+  const append = Boolean(options && options.append);
+  if (payload && payload.impersonation && typeof payload.impersonation === 'object') {
+    syncImpersonationStateFromPayload(payload.impersonation);
+  }
   const directorState = ensureDirectorState();
   const wasDirectorActive = directorState.isActive === true;
   const previousDirectorKeys = new Set(directorState.knownTaskKeys);
@@ -4932,8 +4840,24 @@ function updateStateFromPayload(payload) {
   }
 
   const previousPreviewEntries = collectTaskAttachmentPreviewCache(state.tasks);
-  state.tasks = sanitizedTasks;
-  extractFoldersFromTasks(sanitizedTasks);
+  if (append) {
+    const existingIndexes = new Map();
+    state.tasks.forEach((task, index) => {
+      existingIndexes.set(`${getTaskOrganization(task)}|${getTaskUniqueKey(task)}`, index);
+    });
+    sanitizedTasks.forEach((task) => {
+      const key = `${getTaskOrganization(task)}|${getTaskUniqueKey(task)}`;
+      if (existingIndexes.has(key)) {
+        state.tasks[existingIndexes.get(key)] = task;
+      } else {
+        existingIndexes.set(key, state.tasks.length);
+        state.tasks.push(task);
+      }
+    });
+  } else {
+    state.tasks = sanitizedTasks;
+  }
+  extractFoldersFromTasks(state.tasks);
   if (rangeCalendarInstance && typeof rangeCalendarInstance.setTaskCounts === 'function') {
     const payloadTaskCounts = normalizeTaskCounts(payload?.taskDateStats?.items);
     const fallbackTaskCounts = normalizeTaskCounts(buildTaskCountItemsFromTasks(state.tasks));
@@ -4942,23 +4866,38 @@ function updateStateFromPayload(payload) {
   const activePreviewKeys = applyTaskAttachmentPreviewCache(state.tasks, previousPreviewEntries);
   cleanupTaskAttachmentPreviewCache(activePreviewKeys);
   updateVisibleTasks();
+  const paginationPayload = isPlainObject(payload?.pagination) ? payload.pagination : null;
+  if (paginationPayload) {
+    state.pagination.page = Math.max(1, Number.parseInt(paginationPayload.page, 10) || 1);
+    state.pagination.pageSize = Math.max(1, Number.parseInt(paginationPayload.pageSize, 10) || TASKS_PAGE_SIZE);
+    state.pagination.loaded = Math.max(state.tasks.length, Number.parseInt(paginationPayload.loaded, 10) || 0);
+    state.pagination.total = Math.max(state.pagination.loaded, Number.parseInt(paginationPayload.total, 10) || 0);
+    state.pagination.hasMore = Boolean(paginationPayload.hasMore);
+  } else {
+    state.pagination.page = 1;
+    state.pagination.loaded = state.tasks.length;
+    state.pagination.total = state.tasks.length;
+    state.pagination.hasMore = false;
+  }
+
   if (state.entryTaskId) {
-    const matchCount = Array.isArray(state.visibleTasks) ? state.visibleTasks.length : 0;
+    const entryMatched = state.tasks.some((task) => taskMatchesEntryTask(task, state.entryTaskId));
     if (!state.entryTaskLog || typeof state.entryTaskLog !== 'object') {
       state.entryTaskLog = { resolved: false, matched: false, expanded: false };
     }
-    if (!state.entryTaskLog.matched) {
-      logEntryTaskEvent(matchCount ? 'entry_task_matched' : 'entry_task_missing', {
-        matchCount,
+    if (!state.entryTaskLog.matched && (entryMatched || !state.pagination.hasMore)) {
+      logEntryTaskEvent(entryMatched ? 'entry_task_matched' : 'entry_task_missing', {
+        matchCount: entryMatched ? 1 : 0,
         tasksCount: state.tasks.length,
       });
       state.entryTaskLog.matched = true;
     }
+    scheduleNextEntryTaskPage();
   }
 
   const computedStats = computeStatsFromTasks(state.tasks);
   const payloadStats = isPlainObject(payload?.stats) ? payload.stats : null;
-  const statsMismatch = hasStatsMismatch(payloadStats, computedStats);
+  const statsMismatch = !paginationPayload && hasStatsMismatch(payloadStats, computedStats);
 
   if (statsMismatch) {
     logClientEvent('tasks_stats_mismatch', {
@@ -4967,9 +4906,16 @@ function updateStateFromPayload(payload) {
     });
   }
 
-  state.stats = statsMismatch
-    ? computedStats
-    : mergeStats(payloadStats, computedStats);
+  if (paginationPayload && payloadStats) {
+    const normalizedPayloadStats = mergeStats(payloadStats, payloadStats);
+    normalizedPayloadStats.total = toSafeInteger(payloadStats.total) ?? state.pagination.total;
+    normalizedPayloadStats.active = toSafeInteger(payloadStats.active) ?? normalizedPayloadStats.active;
+    state.stats = normalizedPayloadStats;
+  } else {
+    state.stats = statsMismatch
+      ? computedStats
+      : mergeStats(payloadStats, computedStats);
+  }
   state.organizations = Array.isArray(payload.organizations) ? payload.organizations : [];
   updateOrganizationAccessMaps();
   updateDirectorTracking(previousDirectorKeys);
@@ -5336,7 +5282,20 @@ function updateStats() {
   const directorActive = directorState.isActive === true;
   const usingResponsibleFilter = directorActive
     && normalizedFilters.some((filter) => isResponsibleFilter(filter));
-  const overallStats = computeStatsFromTasks(folderScopedTasks, { useDirectorDeadlines: directorActive });
+  const computedOverallStats = computeStatsFromTasks(folderScopedTasks, { useDirectorDeadlines: directorActive });
+  const allUserTasks = Array.isArray(state.tasks)
+    ? state.tasks.filter((task) => currentUserParticipatesInTask(task))
+    : [];
+  const computedGlobalStats = computeStatsFromTasks(allUserTasks, { useDirectorDeadlines: directorActive });
+  const allTasksLoaded = !state.pagination.hasMore
+    && state.tasks.length >= state.pagination.total;
+  const globalStats = allTasksLoaded
+    ? computedGlobalStats
+    : (isPlainObject(state.stats) ? state.stats : computedGlobalStats);
+  const globalFolderSelected = normalizeValue(state.activeFilters.folderId || activeFolderId) === 'all';
+  const overallStats = globalFolderSelected
+    ? globalStats
+    : computedOverallStats;
 
   let statsSource = 'global';
   let displayStats = overallStats;
@@ -5370,7 +5329,10 @@ function updateStats() {
     }
   }
 
-  const statusStatsSource = overallStats;
+  // При compactAll state.tasks содержит весь облегчённый набор без файлов и
+  // ответов, поэтому персональные статусы считаются по всем доступным задачам.
+  // Серверная сводка остаётся fallback для старого постраничного контракта.
+  const statusStatsSource = globalStats;
 
   const resolvedStatusCounts = isPlainObject(statusStatsSource.statuses)
     ? statusStatsSource.statuses
@@ -5859,6 +5821,7 @@ function applyCompactQuickPreset(preset) {
 }
 
 function resetCompactFilters(mode = 'all') {
+  state.pagination.currentPage = 1;
   if (mode === 'statuses') {
     state.activeFilters.statusFilters = [];
     return;
@@ -6322,6 +6285,7 @@ function initCompactRangeCalendar() {
       state.activeFilters.dateFrom = normalizeDateInputValue(startDate);
       state.activeFilters.dateTo = normalizeDateInputValue(endDate);
       state.activeFilters.quickPreset = '';
+      state.pagination.currentPage = 1;
       updateVisibleTasks();
       safeRender('compact_filter_period');
     },
@@ -6367,10 +6331,29 @@ function pruneExpandedCardAnchors(validAnchors) {
   });
 }
 
+function cancelPendingCardRender() {
+  cardRenderGeneration += 1;
+  activeCardRenderSignature = '';
+  if (cardRenderTimer !== null) {
+    window.clearTimeout(cardRenderTimer);
+    cardRenderTimer = null;
+  }
+}
+
+function isDocumentViewerOpen() {
+  const viewer = document.querySelector('[data-viewer]');
+  return Boolean(
+    viewer
+    && !viewer.hidden
+    && viewer.getAttribute('data-active') === 'true'
+  );
+}
+
 function clearCards() {
   if (!elements.cardsContainer) {
     return;
   }
+  cancelPendingCardRender();
   const cards = Array.from(elements.cardsContainer.querySelectorAll('[data-card]'));
   for (const card of cards) {
     card.remove();
@@ -6418,20 +6401,276 @@ function focusEntryTaskCard(visibleItems) {
   }
 }
 
+function scheduleNextEntryTaskPage() {
+  const targetId = normalizeValue(state.entryTaskId);
+  const matched = targetId && state.tasks.some((task) => taskMatchesEntryTask(task, targetId));
+  if (!targetId || matched || !state.pagination.hasMore || state.entryTaskPageScheduled) {
+    return;
+  }
+
+  state.entryTaskPageScheduled = true;
+  window.setTimeout(async () => {
+    state.entryTaskPageScheduled = false;
+    const loaded = await loadTasks(true, { append: true, silent: true });
+    if (loaded !== false) {
+      safeRender('entry_task_page_loaded');
+    }
+  }, 0);
+}
+
+function getTaskListPaginationMeta(visibleItems = getVisibleTaskItems()) {
+  const items = Array.isArray(visibleItems) ? visibleItems : [];
+  const pageSize = Math.max(1, Number.parseInt(state.pagination.pageSize, 10) || TASKS_PAGE_SIZE);
+  const currentPage = Math.max(1, Number.parseInt(state.pagination.currentPage, 10) || 1);
+  const locallyFiltered = items.length !== state.tasks.length;
+  const exactTotalKnown = !state.pagination.hasMore || !locallyFiltered;
+  const totalItems = exactTotalKnown
+    ? (locallyFiltered ? items.length : Math.max(items.length, state.pagination.total))
+    : items.length;
+  const totalPages = exactTotalKnown
+    ? Math.max(1, Math.ceil(totalItems / pageSize))
+    : null;
+  const loadedPages = Math.max(1, Math.ceil(items.length / pageSize));
+
+  return {
+    pageSize,
+    currentPage,
+    totalItems,
+    totalPages,
+    loadedPages,
+    exactTotalKnown,
+    hasPrevious: currentPage > 1,
+    hasNext: currentPage < loadedPages || state.pagination.hasMore,
+  };
+}
+
+function getCurrentTaskPageItems(visibleItems = getVisibleTaskItems()) {
+  const items = Array.isArray(visibleItems) ? visibleItems : [];
+  let meta = getTaskListPaginationMeta(items);
+  const maximumPage = meta.totalPages || meta.loadedPages;
+  if (meta.currentPage > maximumPage) {
+    state.pagination.currentPage = Math.max(1, maximumPage);
+    meta = getTaskListPaginationMeta(items);
+  }
+  const offset = (meta.currentPage - 1) * meta.pageSize;
+  return items.slice(offset, offset + meta.pageSize);
+}
+
+function captureTaskListViewport() {
+  if (!elements.cardsContainer) {
+    return null;
+  }
+  const cards = Array.from(elements.cardsContainer.querySelectorAll('[data-card]'));
+  const anchorCard = cards.find((card) => card.getBoundingClientRect().bottom > 0) || cards[0] || null;
+  if (!(anchorCard instanceof HTMLElement)) {
+    return null;
+  }
+  const anchorId = anchorCard.id || anchorCard.dataset.anchorId || '';
+  if (!anchorId) {
+    return null;
+  }
+  return {
+    anchorId,
+    top: anchorCard.getBoundingClientRect().top,
+  };
+}
+
+function restoreTaskListViewport() {
+  const snapshot = pendingTaskViewportRestore;
+  pendingTaskViewportRestore = null;
+  if (!snapshot || !snapshot.anchorId) {
+    return;
+  }
+  const card = document.getElementById(snapshot.anchorId);
+  if (!(card instanceof HTMLElement)) {
+    return;
+  }
+  const offset = card.getBoundingClientRect().top - snapshot.top;
+  if (Math.abs(offset) < 1) {
+    return;
+  }
+  try {
+    window.scrollBy({ top: offset, left: 0, behavior: 'auto' });
+  } catch (_) {
+    window.scrollBy(0, offset);
+  }
+}
+
+async function ensureTaskListPageLoaded(targetPage) {
+  const normalizedTarget = Math.max(1, Number.parseInt(targetPage, 10) || 1);
+  while (state.pagination.hasMore) {
+    const meta = getTaskListPaginationMeta();
+    if (meta.loadedPages >= normalizedTarget) {
+      return true;
+    }
+    // При локальном фильтре одна серверная страница может не дать достаточно
+    // совпадений, поэтому догружаем до заполнения выбранной страницы.
+    // eslint-disable-next-line no-await-in-loop
+    const loaded = await loadTasks(true, { append: true, silent: true, deferRender: true });
+    if (loaded !== true) {
+      return false;
+    }
+    updateVisibleTasks();
+  }
+  return getTaskListPaginationMeta().loadedPages >= normalizedTarget;
+}
+
+function scrollToTaskListStart() {
+  const panel = elements.cardsContainer && elements.cardsContainer.closest('.tasks-panel');
+  const target = panel || elements.cardsContainer;
+  if (!(target instanceof HTMLElement)) {
+    return;
+  }
+  try {
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (_) {
+    target.scrollIntoView(true);
+  }
+}
+
+async function openTaskListPage(targetPage, navigation) {
+  // При явной навигации заново применяем выбранные сверху статусы. Сразу после
+  // сохранения этого не делаем, чтобы текущая карточка и экран не прыгали.
+  updateVisibleTasks();
+  const meta = getTaskListPaginationMeta();
+  const maximumPage = meta.totalPages || Math.max(meta.loadedPages, targetPage);
+  const normalizedTarget = Math.max(1, Math.min(maximumPage, Number.parseInt(targetPage, 10) || 1));
+  if (normalizedTarget === meta.currentPage) {
+    return;
+  }
+
+  const controls = navigation instanceof HTMLElement
+    ? Array.from(navigation.querySelectorAll('button, select'))
+    : [];
+  controls.forEach((control) => {
+    control.disabled = true;
+  });
+
+  const loaded = normalizedTarget <= meta.loadedPages
+    ? true
+    : await ensureTaskListPageLoaded(normalizedTarget);
+  if (!loaded) {
+    setStatus('error', `Не удалось загрузить страницу ${normalizedTarget}. Попробуйте ещё раз.`);
+    lastRenderedTasksSignature = '';
+    renderCards();
+    return;
+  }
+
+  state.pagination.currentPage = normalizedTarget;
+  state.selectedCardAnchor = '';
+  lastRenderedTasksSignature = '';
+  renderCards();
+  scrollToTaskListStart();
+}
+
+function appendTasksPaginationControl(allVisibleItems = getVisibleTaskItems()) {
+  if (!elements.cardsContainer) {
+    return;
+  }
+
+  const meta = getTaskListPaginationMeta(allVisibleItems);
+  if (!meta.hasPrevious && !meta.hasNext && meta.totalItems <= meta.pageSize) {
+    return;
+  }
+
+  const navigation = document.createElement('nav');
+  navigation.className = 'appdosc-pagination';
+  navigation.dataset.tasksPagination = 'true';
+  navigation.setAttribute('aria-label', 'Страницы задач');
+
+  const previousButton = document.createElement('button');
+  previousButton.type = 'button';
+  previousButton.className = 'appdosc-pagination__button';
+  previousButton.textContent = 'Назад';
+  previousButton.disabled = !meta.hasPrevious;
+
+  const pages = document.createElement('div');
+  pages.className = 'appdosc-pagination__pages';
+  pages.setAttribute('aria-label', 'Доступные страницы задач');
+  const selectablePages = meta.totalPages || meta.loadedPages;
+  for (let page = 1; page <= selectablePages; page += 1) {
+    const pageButton = document.createElement('button');
+    pageButton.type = 'button';
+    pageButton.className = 'appdosc-pagination__page';
+    pageButton.textContent = String(page);
+    pageButton.setAttribute('aria-label', `Страница ${page}`);
+    pageButton.setAttribute('aria-current', page === meta.currentPage ? 'page' : 'false');
+    pageButton.addEventListener('click', () => {
+      void openTaskListPage(page, navigation);
+    });
+    pages.appendChild(pageButton);
+  }
+
+  const summary = document.createElement('span');
+  summary.className = 'appdosc-pagination__summary';
+  const firstItem = meta.totalItems > 0 ? ((meta.currentPage - 1) * meta.pageSize) + 1 : 0;
+  const lastItem = Math.min(meta.currentPage * meta.pageSize, meta.totalItems);
+  summary.textContent = meta.exactTotalKnown
+    ? `${firstItem}–${lastItem} из ${meta.totalItems} ${formatTaskCountLabel(meta.totalItems)}`
+    : `Загружено ${allVisibleItems.length} ${formatTaskCountLabel(allVisibleItems.length)}`;
+
+  const nextButton = document.createElement('button');
+  nextButton.type = 'button';
+  nextButton.className = 'appdosc-pagination__button';
+  nextButton.textContent = 'Далее';
+  nextButton.disabled = !meta.hasNext || state.pagination.loadingMore;
+
+  previousButton.addEventListener('click', () => {
+    void openTaskListPage(meta.currentPage - 1, navigation);
+  });
+
+  nextButton.addEventListener('click', () => {
+    void openTaskListPage(meta.currentPage + 1, navigation);
+  });
+
+  navigation.append(previousButton, pages, nextButton, summary);
+  elements.cardsContainer.appendChild(navigation);
+  const activePage = pages.querySelector('[aria-current="page"]');
+  if (activePage instanceof HTMLElement) {
+    window.requestAnimationFrame(() => {
+      pages.scrollLeft = Math.max(0, activePage.offsetLeft - ((pages.clientWidth - activePage.offsetWidth) / 2));
+    });
+  }
+}
+
 function renderCards() {
   if (!elements.cardsContainer) {
     return;
   }
 
-  const visibleItems = getVisibleTaskItems();
+  // Пока пользователь открывает или смотрит документ, не запускаем даже
+  // фильтрацию и построение сигнатуры большого списка задач.
+  if (cardRenderPausedForViewer || isDocumentViewerOpen()) {
+    cancelPendingCardRender();
+    const deferredGeneration = cardRenderGeneration;
+    cardRenderTimer = window.setTimeout(() => {
+      cardRenderTimer = null;
+      if (deferredGeneration === cardRenderGeneration) {
+        renderCards();
+      }
+    }, CARD_RENDER_VIEWER_PAUSE_MS);
+    return;
+  }
+
+  const allVisibleItems = getVisibleTaskItems();
+  const visibleItems = getCurrentTaskPageItems(allVisibleItems);
+  const pageMeta = getTaskListPaginationMeta(allVisibleItems);
+  const pageOffset = (pageMeta.currentPage - 1) * pageMeta.pageSize;
   const hasTasks = Array.isArray(state.tasks) && state.tasks.length > 0;
   const hasSkeletonLoader = Boolean(elements.cardsContainer.querySelector('.appdosc-skeleton-list'));
 
   const newSignature = buildTasksSignature(visibleItems);
   if (!hasSkeletonLoader && newSignature && newSignature === lastRenderedTasksSignature) {
+    pendingTaskViewportRestore = null;
     return;
   }
-  lastRenderedTasksSignature = newSignature;
+  if (!hasSkeletonLoader && newSignature && newSignature === activeCardRenderSignature && cardRenderTimer !== null) {
+    return;
+  }
+
+  cancelPendingCardRender();
+  const renderGeneration = cardRenderGeneration;
+  activeCardRenderSignature = newSignature;
   elements.cardsContainer.innerHTML = '';
 
   if (!visibleItems.length) {
@@ -6440,56 +6679,101 @@ function renderCards() {
       ? `По запросу «${searchQuery}» ${getTaskSearchScopeLabel()} задачи не найдены`
       : (hasTasks ? FILTER_PLACEHOLDER_MESSAGE : DEFAULT_PLACEHOLDER_MESSAGE));
     togglePlaceholder(true);
+    lastRenderedTasksSignature = newSignature;
+    activeCardRenderSignature = '';
     updateTaskSelector();
     pruneExpandedCardAnchors(new Set());
+    appendTasksPaginationControl(allVisibleItems);
+    restoreTaskListViewport();
     return;
   }
 
   setPlaceholderMessage(DEFAULT_PLACEHOLDER_MESSAGE);
   togglePlaceholder(false);
 
-  const fragment = document.createDocumentFragment();
   const anchorRegistry = new Set();
   const visibleAnchors = new Set();
-  visibleItems.forEach((item, position) => {
-    const source = item && typeof item === 'object' ? item : {};
-    const task = isPlainObject(source.task) ? source.task : {};
-    const referenceIndex = Number.isInteger(source.originalIndex)
-      ? source.originalIndex
-      : position;
-    const card = createCard(task, referenceIndex, anchorRegistry);
-    card.dataset.visibleIndex = String(position);
-    if (Number.isInteger(referenceIndex)) {
-      card.dataset.originalIndex = String(referenceIndex);
-    } else if ('originalIndex' in card.dataset) {
-      delete card.dataset.originalIndex;
+  let nextPosition = 0;
+
+  const finishCardRender = () => {
+    if (renderGeneration !== cardRenderGeneration) {
+      return;
     }
-    if (source && typeof source === 'object') {
+    cardRenderTimer = null;
+    lastRenderedTasksSignature = newSignature;
+    activeCardRenderSignature = '';
+    const entryAnchorId = resolveEntryTaskAnchor(visibleItems);
+    if (entryAnchorId) {
+      state.selectedCardAnchor = entryAnchorId;
+    }
+    pruneExpandedCardAnchors(visibleAnchors);
+    updateTaskSelector();
+    focusEntryTaskCard(visibleItems);
+    appendTasksPaginationControl(allVisibleItems);
+    restoreTaskListViewport();
+    logIosStage('render_cards', {
+      tasks: state.tasks.length,
+      visible: visibleItems.length,
+      filter: formatTaskFiltersForLog(state.taskFilter),
+      renderedCards: nextPosition,
+      selectedAnchor: state.selectedCardAnchor || '',
+    });
+  };
+
+  const scheduleNextBatch = (delay = 16) => {
+    cardRenderTimer = window.setTimeout(() => {
+      cardRenderTimer = null;
+      appendCardBatch(CARD_RENDER_BATCH_SIZE);
+    }, delay);
+  };
+
+  const appendCardBatch = (batchSize) => {
+    if (renderGeneration !== cardRenderGeneration) {
+      return;
+    }
+    if (cardRenderPausedForViewer || isDocumentViewerOpen()) {
+      scheduleNextBatch(CARD_RENDER_VIEWER_PAUSE_MS);
+      return;
+    }
+
+    const endPosition = Math.min(visibleItems.length, nextPosition + batchSize);
+    const fragment = document.createDocumentFragment();
+    for (let position = nextPosition; position < endPosition; position += 1) {
+      const item = visibleItems[position];
+      const source = item && typeof item === 'object' ? item : {};
+      const task = isPlainObject(source.task) ? source.task : {};
+      const referenceIndex = Number.isInteger(source.originalIndex)
+        ? source.originalIndex
+        : position;
+      const card = createCard(task, referenceIndex, anchorRegistry);
+      card.dataset.visibleIndex = String(pageOffset + position);
+      if (Number.isInteger(referenceIndex)) {
+        card.dataset.originalIndex = String(referenceIndex);
+      } else if ('originalIndex' in card.dataset) {
+        delete card.dataset.originalIndex;
+      }
       source.anchorId = card.dataset.anchorId || card.id || '';
+      const anchorKey = getCardAnchorKey(card);
+      if (anchorKey) {
+        visibleAnchors.add(anchorKey);
+      }
+      fragment.appendChild(card);
     }
-    const anchorKey = getCardAnchorKey(card);
-    if (anchorKey) {
-      visibleAnchors.add(anchorKey);
+    elements.cardsContainer.appendChild(fragment);
+    nextPosition = endPosition;
+
+    if (nextPosition === Math.min(visibleItems.length, CARD_RENDER_INITIAL_BATCH_SIZE)) {
+      updateTaskSelector();
+      focusEntryTaskCard(visibleItems);
     }
-    fragment.appendChild(card);
-  });
-  elements.cardsContainer.appendChild(fragment);
-  const entryAnchorId = resolveEntryTaskAnchor(visibleItems);
-  if (entryAnchorId) {
-    state.selectedCardAnchor = entryAnchorId;
-  }
-  pruneExpandedCardAnchors(visibleAnchors);
-  updateTaskSelector();
-  focusEntryTaskCard(visibleItems);
-  logIosStage('render_cards', {
-    tasks: state.tasks.length,
-    visible: visibleItems.length,
-    filter: formatTaskFiltersForLog(state.taskFilter),
-    renderedCards: elements.cardsContainer
-      ? elements.cardsContainer.querySelectorAll('[data-card]').length
-      : visibleItems.length,
-    selectedAnchor: state.selectedCardAnchor || '',
-  });
+    if (nextPosition >= visibleItems.length) {
+      finishCardRender();
+      return;
+    }
+    scheduleNextBatch();
+  };
+
+  appendCardBatch(CARD_RENDER_INITIAL_BATCH_SIZE);
 }
 
 function sanitizeAnchorSegment(value) {
@@ -6546,6 +6830,73 @@ function buildCardAnchorId(task, index, registry) {
   return `${CARD_ANCHOR_PREFIX}${candidate}`;
 }
 
+function populateCardAiBrief(card, task) {
+  const container = card instanceof HTMLElement
+    ? card.querySelector('[data-field="aiBriefText"]')
+    : null;
+  if (!container) {
+    return;
+  }
+
+  const files = Array.isArray(task?.files) ? task.files : [];
+  container.textContent = '';
+  if (!files.length) {
+    container.textContent = task?.detailsLoaded === false && Number(task?.filesCount) > 0
+      ? 'Загрузится при раскрытии задачи'
+      : '—';
+    return;
+  }
+
+  files.forEach((file, index) => {
+    const fileName = normalizeValue(file && (file.originalName || file.storedName)) || `Файл ${index + 1}`;
+    const aiBriefText = normalizeBriefText(file && file.aiBrief);
+    const row = document.createElement('div');
+    row.className = 'appdosc-ai-brief-row';
+    const label = document.createElement('span');
+    label.className = 'appdosc-ai-brief-row__label';
+    label.textContent = fileName;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'appdosc-card__action';
+    button.style.cssText = 'padding:6px 10px;font-size:12px;min-width:86px;';
+    button.textContent = '🤖 Кратко';
+    button.disabled = !aiBriefText;
+    if (!aiBriefText) {
+      button.title = 'Кратко ИИ пока отсутствует';
+    }
+    button.addEventListener('click', () => openTelegramFileAiBriefModal(fileName, aiBriefText || '—'));
+    row.appendChild(label);
+    row.appendChild(button);
+    container.appendChild(row);
+  });
+}
+
+function applyTaskCardStatusState(card, task) {
+  const statusText = getTaskStatusValue(task);
+  const normalizedStatus = statusText.toLowerCase();
+  const completed = isTaskCompleted(task);
+
+  card.classList.remove('appdosc-card--done', 'appdosc-card--control', 'appdosc-card--overdue');
+  card.classList.remove('appdosc-card--tone-done', 'appdosc-card--tone-control', 'appdosc-card--tone-overdue');
+
+  if (completed) {
+    card.classList.add('appdosc-card--done', 'appdosc-card--tone-done');
+  } else if (normalizedStatus.includes('контрол')) {
+    card.classList.add('appdosc-card--control', 'appdosc-card--tone-control');
+  }
+
+  const personalDueDateInfo = resolvePersonalTaskDueDateInfo(task);
+  const taskOverdue = personalDueDateInfo.overdue === true;
+  if (taskOverdue) {
+    card.classList.add('appdosc-card--overdue');
+    card.classList.remove('appdosc-card--tone-control');
+    card.classList.add('appdosc-card--tone-overdue');
+  }
+
+  applyStatusBadge(card, statusText, normalizedStatus, task);
+  return { statusText, normalizedStatus, completed, personalDueDateInfo, taskOverdue };
+}
+
 function createCard(task, index, anchorRegistry) {
   const template = elements.cardTemplate;
   let card = null;
@@ -6585,29 +6936,11 @@ function createCard(task, index, anchorRegistry) {
     card.dataset.anchorId = anchorId;
   }
 
-  const statusText = getTaskStatusValue(task);
-  const normalizedStatus = statusText.toLowerCase();
-  const completed = isTaskCompleted(task);
-
-  card.classList.remove('appdosc-card--done', 'appdosc-card--control', 'appdosc-card--overdue');
-  card.classList.remove('appdosc-card--tone-done', 'appdosc-card--tone-control', 'appdosc-card--tone-overdue');
-
-  if (completed) {
-    card.classList.add('appdosc-card--done');
-    card.classList.add('appdosc-card--tone-done');
-  } else if (normalizedStatus.includes('контрол')) {
-    card.classList.add('appdosc-card--control');
-    card.classList.add('appdosc-card--tone-control');
-  }
-
-  const personalDueDateInfo = resolvePersonalTaskDueDateInfo(task);
-  const taskOverdue = personalDueDateInfo.overdue === true;
-
-  if (taskOverdue) {
-    card.classList.add('appdosc-card--overdue');
-    card.classList.remove('appdosc-card--tone-control');
-    card.classList.add('appdosc-card--tone-overdue');
-  }
+  const {
+    completed,
+    personalDueDateInfo,
+    taskOverdue,
+  } = applyTaskCardStatusState(card, task);
   applyTaskFolderCardAccent(card, task);
 
   const hasEntry = setCardField(card, '[data-field="entryNumber"]', task.entryNumber ?? index + 1, {
@@ -6681,7 +7014,12 @@ function createCard(task, index, anchorRegistry) {
   setCardField(card, '[data-field="direction"]', task.direction);
   setCardField(card, '[data-field="correspondent"]', formatEntityDisplay(task.correspondent, 'Корреспондент'));
   const executorDisplay = formatEntityDisplay(resolveExecutor(task), 'Исполнитель');
-  const responseSummaryText = buildTaskResponseSummary(task);
+  const lazyResponsesCount = task.detailsLoaded === false
+    ? Math.max(0, Number(task.responsesCount) || 0)
+    : 0;
+  const responseSummaryText = lazyResponsesCount > 0
+    ? `Ответ: ${lazyResponsesCount} · подробности загрузятся при раскрытии`
+    : buildTaskResponseSummary(task);
   setCardField(card, '[data-field="executor"]', executorDisplay);
   setCardField(card, '[data-field="instruction"]', resolveInstructionSummary(task));
   setCardField(card, '[data-field="responseSummary"]', responseSummaryText, {
@@ -6701,37 +7039,7 @@ function createCard(task, index, anchorRegistry) {
   });
   toggleSection(card, '[data-field="resolution"]', hasResolution);
 
-  const aiBriefContainer = card.querySelector('[data-field="aiBriefText"]');
-  const aiBriefFiles = Array.isArray(task.files) ? task.files : [];
-  if (aiBriefContainer) {
-    aiBriefContainer.textContent = '';
-    if (aiBriefFiles.length) {
-      aiBriefFiles.forEach((file, index) => {
-        const fileName = normalizeValue(file && (file.originalName || file.storedName)) || `Файл ${index + 1}`;
-        const aiBriefText = normalizeBriefText(file && file.aiBrief);
-        const row = document.createElement('div');
-        row.className = 'appdosc-ai-brief-row';
-        const label = document.createElement('span');
-        label.className = 'appdosc-ai-brief-row__label';
-        label.textContent = fileName;
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'appdosc-card__action';
-        btn.style.cssText = 'padding:6px 10px;font-size:12px;min-width:86px;';
-        btn.textContent = '🤖 Кратко';
-        btn.disabled = !aiBriefText;
-        if (!aiBriefText) {
-          btn.title = 'Кратко ИИ пока отсутствует';
-        }
-        btn.addEventListener('click', () => openTelegramFileAiBriefModal(fileName, aiBriefText || '—'));
-        row.appendChild(label);
-        row.appendChild(btn);
-        aiBriefContainer.appendChild(row);
-      });
-    } else {
-      aiBriefContainer.textContent = '—';
-    }
-  }
+  populateCardAiBrief(card, task);
   toggleSection(card, '[data-field="aiBrief"]', true);
 
   const compactDueDateInfo = formatCompactDueDate(task, completed, personalDueDateInfo);
@@ -6754,8 +7062,10 @@ function createCard(task, index, anchorRegistry) {
       : (dueDate ? `До ${dueDateLabel}` : 'Срок не указан'));
   const executorInsight = formatEntityDisplay(resolveExecutor(task), 'Исполнитель');
   const senderInsight = senderCompact === 'не указан' ? 'Не указан' : senderCompact;
-  const responseCount = countResponsesFromSummary(responseSummaryText);
-  const filesCount = Array.isArray(task.files) ? task.files.length : 0;
+  const responseCount = countResponsesFromSummary(responseSummaryText) || lazyResponsesCount;
+  const filesCount = task.detailsLoaded === false
+    ? Math.max(0, Number(task.filesCount) || 0)
+    : (Array.isArray(task.files) ? task.files.length : 0);
   const responseLabel = responseCount > 0 ? formatResponseCountLabel(responseCount) : '';
   const filesLabel = filesCount === 1 ? '1 файл' : (filesCount > 1 && filesCount < 5 ? `${filesCount} файла` : `${filesCount} файлов`);
 
@@ -6786,9 +7096,6 @@ function createCard(task, index, anchorRegistry) {
   });
   toggleSection(card, '[data-field="insight"]', taskListMode === 'insight');
 
-  applyStatusBadge(card, statusText, normalizedStatus, task);
-  populateCardFiles(card, task.files);
-
   const organization = getTaskOrganization(task);
   const directorView = organization && userIsDirectorForOrganization(organization);
 
@@ -6806,9 +7113,8 @@ function createCard(task, index, anchorRegistry) {
   setupStatusControls(card, task);
   setupInstructionControl(card, task);
   setupDueDateEditor(card, task);
-  setupAssignmentControls(card, task);
-  setupSubordinateControls(card, task);
   movePeopleBlockIntoDisclosure(card, task, executorDisplay, responseLabel);
+  setupPeopleControlsOnDemand(card, task);
 
   initializeCardExpansion(card);
 
@@ -6887,6 +7193,7 @@ function openTaskFromAiSearchResult(result) {
     closeBottomSheet();
     state.activeFilters.searchQuery = '';
     state.activeFilters.searchScope = TASK_SEARCH_SCOPE_ACTIVE;
+    state.pagination.currentPage = 1;
     clearEntryTaskFocusForInteractiveSearch('ai_task_search_result');
     applyEntryTaskId(targetId, 'ai_task_search', `task:${targetId}`);
     updateVisibleTasks();
@@ -6897,6 +7204,9 @@ function openTaskFromAiSearchResult(result) {
     window.setTimeout(() => {
       focusEntryTaskCard(getVisibleTaskItems());
     }, 90);
+    if (!matchedTask) {
+      scheduleNextEntryTaskPage();
+    }
     return;
   }
 
@@ -7433,7 +7743,13 @@ function appendTaskAiSearchMessage(container, role, text, results = []) {
 
   const header = document.createElement('div');
   header.className = 'appdosc-ai-task-search__message-header';
-  header.textContent = normalizedRole === 'user' ? 'Вы' : 'Помощник';
+  const headerIcon = document.createElement('span');
+  headerIcon.className = 'appdosc-ai-task-search__message-header-icon';
+  headerIcon.setAttribute('aria-hidden', 'true');
+  headerIcon.textContent = normalizedRole === 'user' ? 'В' : '✦';
+  const headerLabel = document.createElement('span');
+  headerLabel.textContent = normalizedRole === 'user' ? 'Вы' : 'Поиск ИИ';
+  header.append(headerIcon, headerLabel);
 
   const body = document.createElement('div');
   body.className = 'appdosc-ai-task-search__message-body';
@@ -7444,6 +7760,16 @@ function appendTaskAiSearchMessage(container, role, text, results = []) {
     message.classList.add('appdosc-ai-task-search__message--with-results');
     const links = document.createElement('div');
     links.className = 'appdosc-ai-task-search__message-results';
+    const resultsHeader = document.createElement('div');
+    resultsHeader.className = 'appdosc-ai-task-search__results-head';
+    const resultsLabel = document.createElement('span');
+    resultsLabel.textContent = 'Результаты поиска';
+    const resultsCount = document.createElement('span');
+    resultsCount.className = 'appdosc-ai-task-search__results-count';
+    resultsCount.textContent = String(results.length);
+    resultsCount.setAttribute('aria-label', `Количество результатов: ${results.length}`);
+    resultsHeader.append(resultsLabel, resultsCount);
+    links.appendChild(resultsHeader);
     const initiallyVisibleResults = 2;
     const additionalCards = [];
     results.forEach((result, index) => {
@@ -7454,14 +7780,25 @@ function appendTaskAiSearchMessage(container, role, text, results = []) {
       }
       links.appendChild(card);
     });
-    if (additionalCards.length) {
+    const additionalResultsCount = Math.max(0, results.length - initiallyVisibleResults);
+    if (additionalResultsCount > 0) {
       const toggle = document.createElement('button');
       toggle.type = 'button';
       toggle.className = 'appdosc-ai-task-search__results-toggle';
       toggle.setAttribute('aria-expanded', 'false');
+      toggle.setAttribute('aria-label', `Показать остальные задачи: ${additionalResultsCount}`);
+      toggle.dataset.additionalCount = String(additionalResultsCount);
 
       const toggleText = document.createElement('span');
-      toggleText.textContent = `Показать ещё ${additionalCards.length}`;
+      const getToggleCollapsedText = () => {
+        const remainder = additionalResultsCount % 10;
+        const lastTwoDigits = additionalResultsCount % 100;
+        const taskWord = lastTwoDigits >= 11 && lastTwoDigits <= 14
+          ? 'задач'
+          : (remainder === 1 ? 'задачу' : (remainder >= 2 && remainder <= 4 ? 'задачи' : 'задач'));
+        return `Показать ещё ${additionalResultsCount} ${taskWord}`;
+      };
+      toggleText.textContent = getToggleCollapsedText();
       const toggleIcon = document.createElement('span');
       toggleIcon.className = 'appdosc-ai-task-search__results-toggle-icon';
       toggleIcon.setAttribute('aria-hidden', 'true');
@@ -7477,7 +7814,11 @@ function appendTaskAiSearchMessage(container, role, text, results = []) {
           card.hidden = expanded;
         });
         toggle.setAttribute('aria-expanded', expanded ? 'false' : 'true');
-        toggleText.textContent = expanded ? `Показать ещё ${additionalCards.length}` : 'Скрыть';
+        toggle.setAttribute(
+          'aria-label',
+          expanded ? `Показать остальные задачи: ${additionalResultsCount}` : 'Скрыть дополнительные задачи',
+        );
+        toggleText.textContent = expanded ? getToggleCollapsedText() : 'Скрыть дополнительные задачи';
         if (expanded) {
           toggle.scrollIntoView({ block: 'nearest' });
         }
@@ -7623,10 +7964,10 @@ function cleanTaskAiSearchVisibleText(value, result = null) {
     .trim();
 }
 
-function getTaskAiSearchDisplayTitle(result) {
-  const matchedTask = getTaskAiSearchDisplayTask(result);
+function getTaskAiSearchDisplayTitle(result, matchedTask = undefined) {
+  const displayTask = matchedTask === undefined ? getTaskAiSearchDisplayTask(result) : matchedTask;
   const matchedTitle = cleanTaskAiSearchVisibleText(
-    matchedTask && (matchedTask.document || matchedTask.summary),
+    displayTask && (displayTask.document || displayTask.summary),
     result,
   );
   if (matchedTitle && normalizeTaskSearchText(matchedTitle) !== 'задача') {
@@ -7658,9 +7999,130 @@ function getTaskAiSearchDisplayTask(result) {
   )) || null;
 }
 
+function getTaskAiSearchDisplayNumber(result, matchedTask = undefined) {
+  const displayTask = matchedTask === undefined ? getTaskAiSearchDisplayTask(result) : matchedTask;
+  const candidates = [
+    displayTask && displayTask.entryNumber,
+    result && result.entryNumber,
+    displayTask && displayTask.registryNumber,
+    result && result.registryNumber,
+    displayTask && displayTask.documentNumber,
+    result && result.documentNumber,
+    displayTask && displayTask.id,
+    result && result.id,
+  ];
+
+  for (const candidate of candidates) {
+    const normalized = normalizeValue(candidate);
+    if (!normalized || isTaskAiSearchInternalIdentifier(normalized)) {
+      continue;
+    }
+    const visibleNumber = cleanTaskAiSearchVisibleText(normalized, result)
+      .replace(/^(?:(?:задача|запись|рег(?:истрационный)?|док(?:умент)?)\.?\s*)?№\s*/iu, '')
+      .replace(/^(?:задача|запись|рег(?:истрационный)?|док(?:умент)?)\.?\s*/iu, '')
+      .trim();
+    if (visibleNumber) {
+      return visibleNumber;
+    }
+  }
+
+  return '';
+}
+
+function normalizeTaskAiSearchFileName(value) {
+  let fileName = normalizeValue(value);
+  if (!fileName) {
+    return '';
+  }
+  try {
+    fileName = decodeURIComponent(fileName);
+  } catch (error) {
+    // Некорректное URL-кодирование не должно скрывать доступный файл.
+  }
+  fileName = fileName.split(/[?#]/u)[0];
+  const pathParts = fileName.split(/[\\/]/u).filter(Boolean);
+  fileName = pathParts.length ? pathParts[pathParts.length - 1] : fileName;
+  return normalizeValue(fileName)
+    .normalize('NFKC')
+    .toLocaleLowerCase('ru-RU');
+}
+
+function findTaskAiSearchMatchedViewerFile(files, sourceFileName) {
+  const expectedName = normalizeTaskAiSearchFileName(sourceFileName);
+  if (!expectedName || !Array.isArray(files)) {
+    return null;
+  }
+  return files.find((file) => {
+    if (!file || file.isSummary === true || file.kind === 'summary') {
+      return false;
+    }
+    return [file.name, file.originalName, file.storedName, file.sourceUrl]
+      .some((candidate) => normalizeTaskAiSearchFileName(candidate) === expectedName);
+  }) || null;
+}
+
+function setTaskAiSearchActionStatus(element, message = '', tone = '') {
+  if (!(element instanceof HTMLElement)) {
+    return;
+  }
+  const text = normalizeValue(message);
+  element.textContent = text;
+  element.dataset.tone = normalizeValue(tone);
+  element.hidden = text === '';
+}
+
+async function openTaskAiSearchMatchedFile(button, result, statusElement) {
+  if (!(button instanceof HTMLButtonElement) || button.dataset.loading === 'true') {
+    return;
+  }
+  const matchedTask = getTaskAiSearchDisplayTask(result);
+  const sourceFileName = normalizeValue(result && result.sourceFileName);
+  if (!matchedTask || !sourceFileName) {
+    setTaskAiSearchActionStatus(statusElement, 'Не удалось определить найденный файл.', 'error');
+    return;
+  }
+
+  button.dataset.loading = 'true';
+  button.disabled = true;
+  button.setAttribute('aria-busy', 'true');
+  setTaskAiSearchActionStatus(statusElement, `Открываю файл «${truncateText(sourceFileName, 48)}»…`, 'loading');
+
+  try {
+    const detailsReady = await ensureTaskDetails(matchedTask);
+    if (!detailsReady) {
+      throw new Error('task_details_unavailable');
+    }
+    const viewerFiles = resolveTaskViewerFiles(matchedTask);
+    const matchedFile = findTaskAiSearchMatchedViewerFile(viewerFiles, sourceFileName);
+    if (!matchedFile) {
+      throw new Error('matched_file_unavailable');
+    }
+    const orderedFiles = [
+      matchedFile,
+      ...viewerFiles.filter((file) => file !== matchedFile),
+    ];
+    await openFilesViaStandardViewer(orderedFiles, matchedTask, {
+      source: 'ai_task_search_file',
+    });
+    setTaskAiSearchActionStatus(statusElement);
+  } catch (error) {
+    setTaskAiSearchActionStatus(
+      statusElement,
+      'Файл сейчас недоступен. Откройте задачу и выберите его во вложениях.',
+      'error',
+    );
+  } finally {
+    button.dataset.loading = 'false';
+    button.disabled = false;
+    button.setAttribute('aria-busy', 'false');
+  }
+}
+
 function createTaskAiSearchResultCard(result) {
   const card = document.createElement('article');
   card.className = 'appdosc-ai-task-search__result';
+  const matchedTask = getTaskAiSearchDisplayTask(result);
+  const taskNumber = getTaskAiSearchDisplayNumber(result, matchedTask);
 
   const header = document.createElement('div');
   header.className = 'appdosc-ai-task-search__result-head';
@@ -7670,7 +8132,14 @@ function createTaskAiSearchResultCard(result) {
 
   const title = document.createElement('h4');
   title.className = 'appdosc-ai-task-search__result-title';
-  title.textContent = getTaskAiSearchDisplayTitle(result);
+  title.textContent = getTaskAiSearchDisplayTitle(result, matchedTask);
+
+  if (taskNumber) {
+    const number = document.createElement('span');
+    number.className = 'appdosc-ai-task-search__result-number';
+    number.textContent = `Задача № ${taskNumber}`;
+    heading.appendChild(number);
+  }
 
   const metaParts = [
     { value: normalizeValue(result && result.organization), tone: 'organization' },
@@ -7704,8 +8173,9 @@ function createTaskAiSearchResultCard(result) {
     result && result.sourceLabel,
     result,
   );
+  const sourceFileNameRaw = normalizeValue(result && result.sourceFileName);
   const sourceFileName = cleanTaskAiSearchVisibleText(
-    result && result.sourceFileName,
+    sourceFileNameRaw,
     result,
   );
   const sourceLine = document.createElement('p');
@@ -7743,39 +8213,84 @@ function createTaskAiSearchResultCard(result) {
   if (reasonText && normalizeTaskSearchText(reasonText) !== normalizeTaskSearchText(summaryText)) {
     const reasonLabel = document.createElement('span');
     reasonLabel.className = 'appdosc-ai-task-search__result-note-label';
-    reasonLabel.textContent = 'Почему:';
+    reasonLabel.textContent = 'Почему подходит:';
     reason.append(reasonLabel, document.createTextNode(` ${reasonText}`));
   }
 
-  const action = document.createElement('a');
-  action.className = 'appdosc-ai-task-search__result-link';
-  action.href = normalizeValue(result && result.openUrl) || '#';
-  action.setAttribute(
+  const actions = document.createElement('div');
+  actions.className = 'appdosc-ai-task-search__result-actions';
+
+  const taskAction = document.createElement('a');
+  taskAction.className = 'appdosc-ai-task-search__result-link';
+  taskAction.href = normalizeValue(result && result.openUrl) || '#';
+  taskAction.setAttribute(
     'aria-label',
-    `Открыть задачу: ${title.textContent}`,
+    taskNumber
+      ? `Открыть задачу № ${taskNumber}: ${title.textContent}`
+      : `Открыть задачу: ${title.textContent}`,
   );
-  const actionText = document.createElement('span');
-  actionText.className = 'appdosc-ai-task-search__result-link-text';
-  actionText.textContent = 'Открыть задачу';
-  const actionIcon = document.createElement('span');
-  actionIcon.className = 'appdosc-ai-task-search__result-link-icon';
-  actionIcon.setAttribute('aria-hidden', 'true');
-  actionIcon.innerHTML = `
+  const taskActionText = document.createElement('span');
+  taskActionText.className = 'appdosc-ai-task-search__result-link-text';
+  taskActionText.textContent = taskNumber ? `Открыть задачу № ${taskNumber}` : 'Открыть задачу';
+  const taskActionIcon = document.createElement('span');
+  taskActionIcon.className = 'appdosc-ai-task-search__result-link-icon';
+  taskActionIcon.setAttribute('aria-hidden', 'true');
+  taskActionIcon.innerHTML = `
     <svg viewBox="0 0 20 20" focusable="false">
       <path d="m7.5 5 5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
     </svg>
   `;
-  action.append(actionText, actionIcon);
-  action.addEventListener('click', (event) => {
+  taskAction.append(taskActionText, taskActionIcon);
+  taskAction.addEventListener('click', (event) => {
     event.preventDefault();
     openTaskFromAiSearchResult(result);
   });
+  actions.appendChild(taskAction);
+
+  const actionStatus = document.createElement('p');
+  actionStatus.className = 'appdosc-ai-task-search__result-action-status';
+  actionStatus.setAttribute('role', 'status');
+  actionStatus.setAttribute('aria-live', 'polite');
+  actionStatus.hidden = true;
+
+  const canOpenMatchedFile = Boolean(
+    matchedTask
+    && sourceFileNameRaw
+    && TASK_AI_SEARCH_FILE_SOURCE_TYPES.has(sourceType.toLowerCase()),
+  );
+  if (canOpenMatchedFile) {
+    const fileAction = document.createElement('button');
+    fileAction.type = 'button';
+    fileAction.className = 'appdosc-ai-task-search__result-link appdosc-ai-task-search__result-link--file';
+    fileAction.dataset.loading = 'false';
+    fileAction.setAttribute('aria-busy', 'false');
+    fileAction.setAttribute('aria-label', `Открыть найденный файл «${sourceFileNameRaw}»`);
+    fileAction.title = `Открыть найденный файл «${sourceFileNameRaw}»`;
+    const fileActionText = document.createElement('span');
+    fileActionText.className = 'appdosc-ai-task-search__result-link-text';
+    fileActionText.textContent = `Открыть файл «${truncateText(sourceFileNameRaw, 36)}»`;
+    const fileActionIcon = document.createElement('span');
+    fileActionIcon.className = 'appdosc-ai-task-search__result-link-icon';
+    fileActionIcon.setAttribute('aria-hidden', 'true');
+    fileActionIcon.innerHTML = `
+      <svg viewBox="0 0 20 20" focusable="false">
+        <path d="M5.5 2.75h5l4 4v10.5h-9z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"></path>
+        <path d="M10.5 2.75v4h4M7.75 11.25h4.5M7.75 14h3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
+      </svg>
+    `;
+    fileAction.append(fileActionText, fileActionIcon);
+    fileAction.addEventListener('click', () => {
+      void openTaskAiSearchMatchedFile(fileAction, result, actionStatus);
+    });
+    actions.appendChild(fileAction);
+  }
+  actions.dataset.actions = canOpenMatchedFile ? 'multiple' : 'single';
 
   card.append(header, sourceLine, summary);
   if (reason.childNodes.length) {
     card.appendChild(reason);
   }
-  card.appendChild(action);
+  card.append(actions, actionStatus);
 
   return card;
 }
@@ -8042,6 +8557,8 @@ function getTaskRagSyncState() {
     state.taskRagSync = {
       status: 'idle',
       promise: null,
+      promiseScopeKey: '',
+      promiseSourceRevision: '',
       readyToken: '',
       readyUntil: 0,
       sourceRevision: '',
@@ -8134,6 +8651,8 @@ async function ensureTaskAiSearchSync(options = {}) {
     startedAt: Date.now(),
   };
   const syncState = getTaskRagSyncState();
+  const sourceRevision = buildTaskRagSourceRevision(syncOptions);
+  const scopeKey = buildTaskRagScopeKey(syncOptions);
   if (!force) {
     const reusableState = readReusableTaskRagReadyState(syncOptions);
     if (reusableState) {
@@ -8149,11 +8668,16 @@ async function ensureTaskAiSearchSync(options = {}) {
     }
   }
   if (syncState.promise) {
-    return syncState.promise;
+    if (syncState.promiseScopeKey === scopeKey
+      && syncState.promiseSourceRevision === sourceRevision) {
+      return syncState.promise;
+    }
+    const pendingSync = syncState.promise;
+    return pendingSync
+      .catch(() => null)
+      .then(() => ensureTaskAiSearchSync(options));
   }
 
-  const sourceRevision = buildTaskRagSourceRevision(syncOptions);
-  const scopeKey = buildTaskRagScopeKey(syncOptions);
   syncState.status = 'loading';
   syncState.error = '';
   syncState.scopeKey = scopeKey;
@@ -8180,7 +8704,7 @@ async function ensureTaskAiSearchSync(options = {}) {
       pollAfterMs: 1200,
     })
     : requestTaskAiSearchSync(syncOptions);
-  syncState.promise = startPromise
+  const syncPromise = startPromise
     .then((data) => {
       if (normalizeValue(data && data.status).toLowerCase() !== 'processing') {
         return data;
@@ -8253,10 +8777,17 @@ async function ensureTaskAiSearchSync(options = {}) {
       throw error;
     })
     .finally(() => {
-      syncState.promise = null;
+      if (syncState.promise === syncPromise) {
+        syncState.promise = null;
+        syncState.promiseScopeKey = '';
+        syncState.promiseSourceRevision = '';
+      }
     });
 
-  return syncState.promise;
+  syncState.promise = syncPromise;
+  syncState.promiseScopeKey = scopeKey;
+  syncState.promiseSourceRevision = sourceRevision;
+  return syncPromise;
 }
 
 async function requestTaskAiSearch(query, options = {}) {
@@ -8677,6 +9208,7 @@ function openTaskSearchModal() {
     let aiSearchBusy = false;
     let aiSearchRequestSeq = 0;
     let aiSearchAbortController = null;
+    let aiSyncPrewarmTimer = 0;
     const taskSearchSession = getTaskAiSearchSession();
     const initialFolderScope = normalizeTaskSearchScope(taskSearchSession.folderScope || TASK_SEARCH_SCOPE_ALL);
     const initialOrganization = normalizeTaskAiSearchOrganization(taskSearchSession.organization);
@@ -8906,6 +9438,81 @@ function openTaskSearchModal() {
       }
     };
 
+    const prewarmTaskAiSearch = () => {
+      if (cleanedUp || normalizeTaskAiSearchMode(state.taskSearchMode) !== 'ai') {
+        return;
+      }
+      const folderScope = aiFolderScope instanceof HTMLSelectElement
+        ? normalizeTaskSearchScope(aiFolderScope.value)
+        : normalizeTaskSearchScope(getTaskAiSearchSession().folderScope || initialFolderScope);
+      const organization = aiOrganization instanceof HTMLSelectElement
+        ? normalizeTaskAiSearchOrganization(aiOrganization.value)
+        : normalizeTaskAiSearchOrganization(getTaskAiSearchSession().organization || initialOrganization);
+      const prewarmScopeKey = buildTaskRagScopeKey({ folderScope, organization });
+      const isCurrentPrewarmScope = () => {
+        const currentFolderScope = aiFolderScope instanceof HTMLSelectElement
+          ? normalizeTaskSearchScope(aiFolderScope.value)
+          : normalizeTaskSearchScope(getTaskAiSearchSession().folderScope || initialFolderScope);
+        const currentOrganization = aiOrganization instanceof HTMLSelectElement
+          ? normalizeTaskAiSearchOrganization(aiOrganization.value)
+          : normalizeTaskAiSearchOrganization(getTaskAiSearchSession().organization || initialOrganization);
+        return buildTaskRagScopeKey({
+          folderScope: currentFolderScope,
+          organization: currentOrganization,
+        }) === prewarmScopeKey;
+      };
+      const reusableState = readReusableTaskRagReadyState({ folderScope, organization });
+      if (reusableState) {
+        taskRagReadyToken = normalizeValue(reusableState.readyToken);
+        aiSyncReady = taskRagReadyToken !== '';
+        aiSyncHasTasks = Math.max(0, Number.parseInt(reusableState.indexedTasks, 10) || 0) > 0;
+        setAiSyncVisualState(aiSyncReady ? 'success' : 'idle');
+        updateModalControls();
+        return;
+      }
+
+      setAiSyncVisualState('loading');
+      updateModalControls();
+      ensureTaskAiSearchSync({ folderScope, organization })
+        .then((data) => {
+          if (cleanedUp || !isCurrentPrewarmScope()) {
+            return;
+          }
+          taskRagReadyToken = normalizeValue(data && data.readyToken);
+          aiSyncReady = data && data.ok === true
+            && normalizeValue(data.status).toLowerCase() === 'ready'
+            && taskRagReadyToken !== '';
+          aiSyncHasTasks = Math.max(0, Number.parseInt(data && data.indexedTasks, 10) || 0) > 0;
+          setAiSyncVisualState(aiSyncReady ? 'success' : 'loading');
+          updateModalControls();
+        })
+        .catch((error) => {
+          if (cleanedUp || !isCurrentPrewarmScope()) {
+            return;
+          }
+          aiSyncReady = false;
+          aiSyncHasTasks = false;
+          taskRagReadyToken = '';
+          setAiSyncVisualState('idle');
+          setTaskAiServerResponse(
+            error && typeof error.serverResponse === 'string' ? error.serverResponse : '',
+            false,
+            error && typeof error.transportDiagnostic === 'string' ? error.transportDiagnostic : '',
+          );
+          updateModalControls();
+        });
+    };
+
+    const scheduleTaskAiSearchPrewarm = (delayMs = 0) => {
+      if (aiSyncPrewarmTimer) {
+        window.clearTimeout(aiSyncPrewarmTimer);
+      }
+      aiSyncPrewarmTimer = window.setTimeout(() => {
+        aiSyncPrewarmTimer = 0;
+        prewarmTaskAiSearch();
+      }, Math.max(0, Number(delayMs) || 0));
+    };
+
     const setVoiceButtonActive = (active) => {
       if (!(aiVoiceButton instanceof HTMLButtonElement)) {
         return;
@@ -8992,67 +9599,62 @@ function openTaskSearchModal() {
       }
 
       try {
-        let useLocalBecauseAiIndexEmpty = false;
+        let useImmediateLocalSearch = false;
         if (searchMode === 'ai') {
-          aiSyncReady = false;
-          aiSyncHasTasks = false;
-          taskRagReadyToken = '';
-          setAiSyncVisualState('loading');
-          updateModalControls();
-          const syncData = await ensureTaskAiSearchSync({
+          const reusableSync = readReusableTaskRagReadyState({
             folderScope: searchFolderPayload.folderScope,
             organization: searchOrganization,
-            onProgress(progress) {
+          });
+          if (reusableSync) {
+            taskRagReadyToken = normalizeValue(reusableSync.readyToken);
+            aiSyncReady = taskRagReadyToken !== '';
+            aiSyncHasTasks = Math.max(0, Number.parseInt(reusableSync.indexedTasks, 10) || 0) > 0;
+            useImmediateLocalSearch = !aiSyncReady || !aiSyncHasTasks
+              || reusableSync.localFallback === true
+              || normalizeValue(reusableSync.searchMode).toLowerCase() === 'local';
+            setAiSyncVisualState(aiSyncReady ? 'success' : 'loading');
+          } else {
+            // Пользовательский запрос не ждёт embeddings. Пока delta-индекс
+            // обновляется в фоне, тот же запрос сразу выполняется по живому JSON.
+            useImmediateLocalSearch = true;
+            aiSyncReady = false;
+            aiSyncHasTasks = false;
+            taskRagReadyToken = '';
+            setAiSyncVisualState('loading');
+            ensureTaskAiSearchSync({
+              folderScope: searchFolderPayload.folderScope,
+              organization: searchOrganization,
+            }).then((syncData) => {
               if (cleanedUp || requestSeq !== aiSearchRequestSeq) {
                 return;
               }
-              const taskCount = Math.max(0, Number.parseInt(progress && progress.tasksCount, 10) || 0);
-              const elapsedSeconds = Math.max(0, Math.floor((Number(progress && progress.elapsedMs) || 0) / 1000));
-              if (progress && progress.stage === 'snapshot') {
-                showAiThinkingProgress(
-                  0,
-                  'Отбираю нужные задачи',
-                  'Применяю выбранные фильтры.',
-                );
-              } else if (progress && progress.stage === 'indexing') {
-                showAiThinkingProgress(
-                  1,
-                  'Читаю задачи и документы',
-                  `${taskCount ? `Проверяю задач: ${taskCount}. ` : ''}Прошло: ${elapsedSeconds} сек.`,
-                );
-              } else if (progress && progress.stage === 'ready') {
-                showAiThinkingProgress(
-                  2,
-                  'Уточняю смысл запроса',
-                  progress.cached
-                    ? 'Данные уже готовы — сразу перехожу к поиску.'
-                    : 'Ищу точную фразу и близкие формулировки.',
-                );
+              taskRagReadyToken = normalizeValue(syncData && syncData.readyToken);
+              aiSyncReady = syncData && syncData.ok === true
+                && normalizeValue(syncData.status).toLowerCase() === 'ready'
+                && taskRagReadyToken !== '';
+              aiSyncHasTasks = Math.max(0, Number.parseInt(syncData && syncData.indexedTasks, 10) || 0) > 0;
+              setAiSyncVisualState(aiSyncReady ? 'success' : 'loading');
+              updateModalControls();
+            }).catch((syncError) => {
+              if (cleanedUp || requestSeq !== aiSearchRequestSeq) {
+                return;
               }
-            },
-          });
-          if (cleanedUp || requestSeq !== aiSearchRequestSeq) {
-            return;
+              setAiSyncVisualState('idle');
+              setTaskAiServerResponse(
+                syncError && typeof syncError.serverResponse === 'string' ? syncError.serverResponse : '',
+                false,
+                syncError && typeof syncError.transportDiagnostic === 'string'
+                  ? syncError.transportDiagnostic
+                  : '',
+              );
+            });
           }
-          taskRagReadyToken = normalizeValue(syncData.readyToken);
-          aiSyncReady = syncData.ok === true
-            && normalizeValue(syncData.status).toLowerCase() === 'ready'
-            && taskRagReadyToken !== '';
-          if (!aiSyncReady) {
-            throw new Error('Сервер не подтвердил готовность ИИ-поиска.');
-          }
-          aiSyncHasTasks = Math.max(0, Number.parseInt(syncData.indexedTasks, 10) || 0) > 0;
-          const usesDirectJsonSearch = syncData.localFallback === true
-            || normalizeValue(syncData.searchMode).toLowerCase() === 'local';
-          setAiSyncVisualState('success');
-          if (!aiSyncHasTasks) {
-            useLocalBecauseAiIndexEmpty = true;
+          updateModalControls();
+          if (useImmediateLocalSearch) {
             showAiThinkingProgress(
               3,
-              'Проверяю документы напрямую',
-              usesDirectJsonSearch
-                ? (normalizeValue(syncData.message) || 'Ищу по полному Telegram JSON без обрезки текста.')
-                : 'Перепроверяю актуальные задачи с теми же фильтрами.',
+              'Ищу совпадение в документах',
+              'Первый ответ выполняю сразу, пока быстрый индекс обновляется в фоне.',
             );
           } else {
             showAiThinkingProgress(
@@ -9063,10 +9665,10 @@ function openTaskSearchModal() {
           }
         }
         const runCurrentTaskSearch = () => requestTaskAiSearch(query, {
-          mode: useLocalBecauseAiIndexEmpty ? 'local' : searchMode,
+          mode: useImmediateLocalSearch ? 'local' : searchMode,
           folderScope: searchFolderPayload.folderScope,
           organization: searchOrganization,
-          readyToken: searchMode === 'ai' && !useLocalBecauseAiIndexEmpty ? taskRagReadyToken : '',
+          readyToken: searchMode === 'ai' && !useImmediateLocalSearch ? taskRagReadyToken : '',
           signal: aiSearchAbortController ? aiSearchAbortController.signal : undefined,
         });
         let data = null;
@@ -9074,7 +9676,7 @@ function openTaskSearchModal() {
           data = await runCurrentTaskSearch();
         } catch (searchError) {
           if (!(searchMode === 'ai'
-            && !useLocalBecauseAiIndexEmpty
+            && !useImmediateLocalSearch
             && searchError
             && searchError.requiresTaskRagSync === true
           )) {
@@ -9084,33 +9686,23 @@ function openTaskSearchModal() {
           taskRagReadyToken = '';
           aiSyncReady = false;
           aiSyncHasTasks = false;
+          useImmediateLocalSearch = true;
           showAiThinkingProgress(
-            1,
-            'Обновляю тексты документов',
-            'Сервер обнаружил более свежий OCR-снимок и пересобирает поиск.',
+            3,
+            'Ищу совпадение в документах',
+            'Актуальный индекс обновляется в фоне, ответ будет найден по живым данным.',
           );
-          const refreshedSync = await ensureTaskAiSearchSync({
+          ensureTaskAiSearchSync({
             force: true,
             folderScope: searchFolderPayload.folderScope,
             organization: searchOrganization,
-          });
-          taskRagReadyToken = normalizeValue(refreshedSync && refreshedSync.readyToken);
-          aiSyncReady = refreshedSync && refreshedSync.ok === true
-            && normalizeValue(refreshedSync.status).toLowerCase() === 'ready'
-            && taskRagReadyToken !== '';
-          aiSyncHasTasks = Math.max(0, Number.parseInt(refreshedSync && refreshedSync.indexedTasks, 10) || 0) > 0;
-          if (!aiSyncReady) {
-            throw new Error('Сервер не подтвердил обновлённый индекс задач.');
-          }
-          if (!aiSyncHasTasks) {
-            useLocalBecauseAiIndexEmpty = true;
-          }
+          }).catch(() => null);
           data = await runCurrentTaskSearch();
         }
         if (cleanedUp || requestSeq !== aiSearchRequestSeq) {
           return;
         }
-        let verifiedByLocalFileSearch = useLocalBecauseAiIndexEmpty
+        let verifiedByLocalFileSearch = useImmediateLocalSearch
           && Array.isArray(data && data.results)
           && data.results.length > 0;
         const aiResults = Array.isArray(data && data.results) ? data.results : [];
@@ -9168,25 +9760,25 @@ function openTaskSearchModal() {
           return;
         }
         removeAiThinkingMessage();
-        const message = error instanceof Error ? error.message : 'Помощник не смог проверить задачи.';
+        const message = 'Не удалось выполнить поиск по актуальным данным. Повторите запрос.';
         if (searchMode === 'ai') {
           if (!taskRagReadyToken) {
             clearTaskRagReadyState({ preservePending: Boolean(error && error.taskRagPending) });
             aiSyncReady = false;
             aiSyncHasTasks = false;
           }
-          setAiSyncVisualState('error', message);
+          setAiSyncVisualState('loading');
         }
         setTaskAiServerResponse(
           error && typeof error.serverResponse === 'string' ? error.serverResponse : '',
-          searchMode === 'ai',
+          false,
           error && typeof error.transportDiagnostic === 'string' ? error.transportDiagnostic : '',
         );
         if (searchMode === 'ai') {
           try {
             setTaskAiSearchStatus(
               aiStatus,
-              'ИИ временно недоступен. Продолжаю поиск по текстам задач и документов…',
+              'Проверяю актуальные тексты задач и документов…',
               'loading',
             );
             const localData = await requestTaskAiSearch(query, {
@@ -9205,19 +9797,18 @@ function openTaskSearchModal() {
               localResults,
               localData && localData.answer,
             );
-            const fallbackAnswer = 'ИИ сейчас недоступен, поэтому я проверил тексты задач и документов.\n\n'
-              + localAnswer;
+            const fallbackAnswer = localAnswer;
             appendTaskAiSearchSessionMessage('assistant', fallbackAnswer);
             saveTaskAiSearchSession({ results: localResults });
             appendTaskAiSearchMessage(aiMessages, 'assistant', fallbackAnswer, localResults);
-            const fallbackStatus = 'Поиск завершён по текстам задач и документов. ИИ можно повторить позже.';
+            const fallbackStatus = 'Результат получен по актуальным текстам задач и документов.';
             saveTaskAiSearchSession({
               statusMessage: fallbackStatus,
               statusTone: 'success',
             });
             setTaskAiSearchStatus(aiStatus, fallbackStatus, 'success');
             if (aiSearchRetryButton instanceof HTMLButtonElement) {
-              aiSearchRetryButton.hidden = false;
+              aiSearchRetryButton.hidden = true;
             }
             return;
           } catch (localError) {
@@ -9296,9 +9887,10 @@ function openTaskSearchModal() {
         if (nextMode === 'ai' && (!aiSyncReady || !taskRagReadyToken)) {
           setTaskAiSearchStatus(
             aiStatus,
-            'При первом запросе подготовлю задачи и документы выбранной области.',
+            'Подготавливаю задачи и документы выбранной области заранее.',
             'success',
           );
+          scheduleTaskAiSearchPrewarm();
         } else if (nextMode === 'ai' && !aiSyncHasTasks) {
           setTaskAiSearchStatus(aiStatus, 'У вас пока нет доступных задач.', 'success');
         } else {
@@ -9357,6 +9949,7 @@ function openTaskSearchModal() {
         if (aiSearchRetryButton instanceof HTMLButtonElement) {
           aiSearchRetryButton.hidden = true;
         }
+        scheduleTaskAiSearchPrewarm(250);
       });
     }
     if (aiOrganization instanceof HTMLSelectElement) {
@@ -9379,6 +9972,7 @@ function openTaskSearchModal() {
         if (aiSearchRetryButton instanceof HTMLButtonElement) {
           aiSearchRetryButton.hidden = true;
         }
+        scheduleTaskAiSearchPrewarm(250);
       });
     }
     if (aiForm instanceof HTMLFormElement) {
@@ -9526,6 +10120,10 @@ function openTaskSearchModal() {
           }
           aiInputResizeFrame = 0;
         }
+        if (aiSyncPrewarmTimer) {
+          window.clearTimeout(aiSyncPrewarmTimer);
+          aiSyncPrewarmTimer = 0;
+        }
         removeAiThinkingMessage();
       } finally {
         setTaskSearchBackgroundLocked(false);
@@ -9538,6 +10136,7 @@ function openTaskSearchModal() {
     if (aiSearchRetryButton instanceof HTMLButtonElement) {
       aiSearchRetryButton.hidden = getTaskAiSearchSession().statusTone !== 'error';
     }
+    scheduleTaskAiSearchPrewarm();
     window.setTimeout(() => {
       const sheet = wrap.closest('.bottom-sheet--task-search');
       if (sheet instanceof HTMLElement && typeof taskSearchViewportCleanup !== 'function') {
@@ -11336,10 +11935,18 @@ function ensureActiveFolderId(value) {
   return exists ? normalized : 'all';
 }
 
-function getFolderCount(folderId) {
-  return resolveFolderScope(state.tasks, folderId)
-    .filter((task) => currentUserParticipatesInTask(task))
-    .length;
+function buildFolderTaskCounts() {
+  const counts = new Map([['all', 0], ['no-folder', 0]]);
+  const tasks = Array.isArray(state.tasks) ? state.tasks : [];
+  tasks.forEach((task) => {
+    if (!currentUserParticipatesInTask(task)) {
+      return;
+    }
+    counts.set('all', (counts.get('all') || 0) + 1);
+    const folderId = normalizeTaskFolderId(task && task.folderId) || 'no-folder';
+    counts.set(folderId, (counts.get(folderId) || 0) + 1);
+  });
+  return counts;
 }
 
 function selectFolder(folderId) {
@@ -11353,6 +11960,7 @@ function selectFolder(folderId) {
     activeFolderId = normalizedFolderId;
     state.activeFilters.folderId = normalizedFolderId;
   }
+  state.pagination.currentPage = 1;
   updateVisibleTasks();
   updateStats();
   updateSummaryFilterState();
@@ -11365,6 +11973,7 @@ function renderFolders() {
   const systemFolders = folders.filter((folder) => folder.system);
   const customFolders = folders.filter((folder) => !folder.system);
   const sortedFolders = [...systemFolders, ...customFolders];
+  const folderTaskCounts = buildFolderTaskCounts();
   elements.foldersList.innerHTML = '';
   sortedFolders.forEach((folder) => {
     const button = document.createElement('button');
@@ -11386,7 +11995,7 @@ function renderFolders() {
     name.textContent = folder.name;
     const count = document.createElement('span');
     count.className = 'folder-count';
-    count.textContent = String(getFolderCount(folder.id));
+    count.textContent = String(folderTaskCounts.get(folder.id) || 0);
     button.append(name, count);
     if (folderManageMode && !folder.system) {
       const manageBtn = document.createElement('button');
@@ -11408,10 +12017,7 @@ function renderFolders() {
   elements.foldersList.appendChild(addButton);
 
   if (elements.foldersCount) {
-    const userTaskCount = Array.isArray(state.tasks)
-      ? state.tasks.filter((task) => currentUserParticipatesInTask(task)).length
-      : 0;
-    elements.foldersCount.textContent = String(userTaskCount);
+    elements.foldersCount.textContent = String(folderTaskCounts.get('all') || 0);
   }
   syncTaskSearchControls();
 }
@@ -11969,6 +12575,36 @@ function movePeopleBlockIntoDisclosure(card, task, executorText, responseLabel) 
   insertionAnchor.after(disclosure);
 }
 
+function setupPeopleControlsOnDemand(card, task) {
+  if (!(card instanceof HTMLElement)) {
+    return;
+  }
+
+  const disclosure = card.querySelector('[data-card-people]');
+  if (!(disclosure instanceof HTMLDetailsElement)) {
+    return;
+  }
+
+  const initialize = () => {
+    if (disclosure.dataset.controlsReady === 'true') {
+      return;
+    }
+    disclosure.dataset.controlsReady = 'true';
+    setupAssignmentControls(card, task);
+    setupSubordinateControls(card, task);
+  };
+
+  disclosure.addEventListener('toggle', () => {
+    if (disclosure.open) {
+      initialize();
+    }
+  });
+
+  if (disclosure.open) {
+    initialize();
+  }
+}
+
 function openTelegramFileAiBriefModal(fileName, briefText) {
   const overlay = document.createElement('div');
   overlay.className = 'appdosc-ai-brief-modal__overlay';
@@ -12386,6 +13022,17 @@ function setCardExpandedState(card, expanded) {
   rememberCardExpansion(card, isExpanded);
   syncDirectorCompletionActionVisibility(card, isExpanded);
   if (isExpanded && card.__task) {
+    if (card.__task.detailsLoaded === false) {
+      const filesContainer = card.querySelector('[data-files]');
+      if (filesContainer instanceof HTMLElement
+        && (Number(card.__task.filesCount) > 0 || Number(card.__task.responsesCount) > 0)) {
+        filesContainer.hidden = false;
+        filesContainer.textContent = 'Файлы загрузятся после нажатия «Просмотреть».';
+      }
+    } else if (card.dataset.filesPopulated !== 'true') {
+      populateCardFiles(card, card.__task.files);
+      card.dataset.filesPopulated = 'true';
+    }
     markTaskViewedOnExpand(card.__task, card, 'mini_app_expand_card');
   }
 
@@ -12482,21 +13129,6 @@ function resolveDocumentUrl(value) {
       return normalized;
     }
     return `/${normalized.replace(/^\/+/, '')}`;
-  }
-}
-
-function appendCacheBuster(url) {
-  if (!url) {
-    return '';
-  }
-  const timestamp = Date.now().toString();
-  try {
-    const parsed = new URL(url, window.location.origin);
-    parsed.searchParams.set('v', timestamp);
-    return parsed.toString();
-  } catch (error) {
-    const separator = String(url).includes('?') ? '&' : '?';
-    return `${url}${separator}v=${timestamp}`;
   }
 }
 
@@ -12650,41 +13282,6 @@ function loadMiniAppPdfFontBytes() {
       throw error;
     });
   return miniAppPdfFontBytesPromise;
-}
-
-function prewarmMiniAppPdfResources() {
-  const run = () => {
-    ensureMiniAppPdfLib().catch(() => null);
-    ensureMiniAppPdfFontkit().catch(() => null);
-    loadMiniAppPdfFontBytes().catch(() => null);
-  };
-
-  run();
-}
-
-function preGenerateTaskSummaries() {
-  if (!Array.isArray(state.tasks) || !state.tasks.length) {
-    return;
-  }
-  const MAX_PREGENERATE = 5;
-  const tasks = state.tasks.slice(0, MAX_PREGENERATE);
-  let index = 0;
-  const scheduleNext = () => {
-    if (index >= tasks.length) {
-      return;
-    }
-    const task = tasks[index++];
-    if (!task || (task.summaryPdf && task.summaryBlobUrl)) {
-      scheduleNext();
-      return;
-    }
-    ensureTaskSummaryPreview(task, null)
-      .then(() => {
-        setTimeout(scheduleNext, 30);
-      })
-      .catch(() => scheduleNext());
-  };
-  setTimeout(scheduleNext, 0);
 }
 
 function sanitizePdfText(font, text) {
@@ -13161,14 +13758,10 @@ function resolveFileFetchUrl(file) {
     return '';
   }
   const absoluteUrl = toAbsoluteUrl(resolved);
-  const extension = getFileExtension(
-    (file && (file.name || file.originalName || file.storedName || file.url || file.previewUrl))
-    || absoluteUrl
-  );
-  if (extension === 'pdf' || absoluteUrl.toLowerCase().includes('.pdf')) {
-    return absoluteUrl;
-  }
-  return appendCacheBuster(absoluteUrl);
+  const fileName = getAttachmentName(file)
+    || normalizeValue(file.originalName)
+    || normalizeValue(file.storedName);
+  return createDownloadFileAccessUrl(absoluteUrl, fileName, 'inline');
 }
 
 function buildAttachmentErrorPage(pdfDoc, PDFLib, fonts, colors, margin, file, errorMessage, fileUrl) {
@@ -13855,6 +14448,12 @@ function createDownloadFileAccessUrl(rawUrl, fileName = '', disposition = 'attac
       endpointUrl.searchParams.set('name', fileName);
     }
     endpointUrl.searchParams.set('disposition', disposition === 'inline' ? 'inline' : 'attachment');
+    // Ответы могут иметь стабильную ревизию ?v=. Сохраняем её в URL endpoint,
+    // чтобы замена файла под тем же путём не получила предыдущий свежий cache entry.
+    const sourceRevision = absoluteUrl.searchParams.get('v');
+    if (sourceRevision) {
+      endpointUrl.searchParams.set('v', sourceRevision);
+    }
     return endpointUrl.toString();
   } catch (error) {
     return normalizedUrl;
@@ -14429,6 +15028,15 @@ function collectTaskAttachmentPreviewCache(tasks) {
       if (!key) {
         return;
       }
+      const hasPreviewState = Boolean(
+        file.previewBlobUrl
+        || file.previewRemoteUrl
+        || file.previewPdf
+        || file.previewPdfPromise
+      );
+      if (!hasPreviewState) {
+        return;
+      }
       entries.set(key, {
         previewBlobUrl: file.previewBlobUrl || '',
         previewRemoteUrl: file.previewRemoteUrl || '',
@@ -14445,6 +15053,10 @@ function applyTaskAttachmentPreviewCache(tasks, entries) {
   if (!Array.isArray(tasks) || !tasks.length) {
     return activeKeys;
   }
+  const previousEntries = entries instanceof Map ? entries : new Map();
+  if (!previousEntries.size && !taskAttachmentPreviewCache.size) {
+    return activeKeys;
+  }
   tasks.forEach((task) => {
     if (!task || typeof task !== 'object') {
       return;
@@ -14458,16 +15070,17 @@ function applyTaskAttachmentPreviewCache(tasks, entries) {
       if (!key) {
         return;
       }
-      const sourceEntry = (entries instanceof Map && entries.has(key))
-        ? entries.get(key)
+      const sourceEntry = previousEntries.has(key)
+        ? previousEntries.get(key)
         : taskAttachmentPreviewCache.get(key);
       const nextEntry = cloneTaskAttachmentPreviewCacheEntry(sourceEntry);
-      if (nextEntry) {
-        file.previewBlobUrl = nextEntry.previewBlobUrl || file.previewBlobUrl || '';
-        file.previewRemoteUrl = nextEntry.previewRemoteUrl || file.previewRemoteUrl || '';
-        file.previewPdf = nextEntry.previewPdf || file.previewPdf || null;
-        file.previewPdfPromise = nextEntry.previewPdfPromise || file.previewPdfPromise || null;
+      if (!nextEntry) {
+        return;
       }
+      file.previewBlobUrl = nextEntry.previewBlobUrl || file.previewBlobUrl || '';
+      file.previewRemoteUrl = nextEntry.previewRemoteUrl || file.previewRemoteUrl || '';
+      file.previewPdf = nextEntry.previewPdf || file.previewPdf || null;
+      file.previewPdfPromise = nextEntry.previewPdfPromise || file.previewPdfPromise || null;
       taskAttachmentPreviewCache.set(key, {
         previewBlobUrl: file.previewBlobUrl || '',
         previewRemoteUrl: file.previewRemoteUrl || '',
@@ -14513,7 +15126,13 @@ function buildTasksSignature(visibleTasks) {
       getFolderColorById(folderId)
     );
   }
-  return `${normalizeTaskListMode(state.taskListMode)}|${parts.join('|')}`;
+  return [
+    normalizeTaskListMode(state.taskListMode),
+    `page:${Math.max(1, Number.parseInt(state.pagination.currentPage, 10) || 1)}`,
+    `visible:${getVisibleTaskCount()}`,
+    `hasMore:${state.pagination.hasMore ? '1' : '0'}`,
+    parts.join('|'),
+  ].join('|');
 }
 
 function hasUrlScheme(value) {
@@ -14594,15 +15213,24 @@ function resolveFilePreviewSource(file, task = null) {
     return null;
   }
 
-  const candidates = [
+  const fileName = normalizeValue(file.originalName)
+    || normalizeValue(file.storedName)
+    || normalizeValue(file.url);
+  const extension = getFileExtension(fileName);
+  const canOpenOriginalDirectly = extension === 'pdf'
+    || IMAGE_EXTENSIONS.has(extension)
+    || VIDEO_EXTENSIONS.has(extension);
+  const previewCandidates = [
     file.previewPdfUrl,
     file.previewPdf,
     file.pdfUrl,
     file.pdf,
     file.previewUrl,
     file.preview,
-    file.url,
   ];
+  const candidates = canOpenOriginalDirectly
+    ? [file.url, ...previewCandidates]
+    : [...previewCandidates, file.url];
 
   for (let index = 0; index < candidates.length; index += 1) {
     const value = normalizeValue(candidates[index]);
@@ -14645,14 +15273,14 @@ function resolveTaskViewerFiles(task) {
 
   const files = Array.isArray(task.files) ? task.files : [];
   const result = [];
-  result.push({
+  const summaryFile = {
     name: SUMMARY_FILE_LABEL,
     kind: 'summary',
     isSummary: true,
     url: '',
     resolvedUrl: '',
     previewUrl: '',
-  });
+  };
 
   files.forEach((file, index) => {
     if (!file || typeof file !== 'object') {
@@ -14689,7 +15317,7 @@ function resolveTaskViewerFiles(task) {
     });
   });
 
-  if (!result.length) {
+  if (result.length === 0) {
     const fallbackUrl = normalizeValue(task.fileUrl);
     if (fallbackUrl) {
       const resolvedUrl = resolveDocumentUrl(fallbackUrl);
@@ -14706,6 +15334,10 @@ function resolveTaskViewerFiles(task) {
       }
     }
   }
+
+  // Пользователь нажимает «Просмотреть» ради самого документа: вложение открывается
+  // первым, а сводка остаётся доступна отдельной вкладкой «Общее».
+  result.push(summaryFile);
 
   return result;
 }
@@ -14845,10 +15477,9 @@ function buildOfficePreviewUrl(resolvedUrl, fileName = '', mode = 'embed') {
   }
 
   try {
-    const normalizedWithVersion = appendCacheBuster(normalized);
     const endpoint = mode === 'view' ? 'view.aspx' : 'embed.aspx';
     const previewUrl = new URL(`https://view.officeapps.live.com/op/${endpoint}`);
-    previewUrl.searchParams.set('src', normalizedWithVersion);
+    previewUrl.searchParams.set('src', normalized);
     previewUrl.searchParams.set('wdStartOn', '1');
     previewUrl.searchParams.set('wdPrint', '0');
     previewUrl.searchParams.set('wdEmbedCode', '0');
@@ -14871,22 +15502,20 @@ function buildPreviewUrl(resolvedUrl, fileName = '') {
   const isPdf = extension === 'pdf'
     || normalized.toLowerCase().includes('.pdf')
     || normalized.includes('/cache/miniapp_pdf/');
-  const normalizedWithVersion = isPdf ? normalized : appendCacheBuster(normalized);
-
   if (isPdf) {
-    const [base, hash] = normalizedWithVersion.split('#');
+    const [base, hash] = normalized.split('#');
     if (hash && hash.includes('zoom=')) {
-      return normalizedWithVersion;
+      return normalized;
     }
     const hashSuffix = hash ? `${hash}&zoom=page-fit` : 'zoom=page-fit';
     return `${base}#${hashSuffix}`;
   }
 
   if (OFFICE_EXTENSIONS.has(extension)) {
-    return buildOfficePreviewUrl(normalizedWithVersion, fileName, 'embed');
+    return buildOfficePreviewUrl(normalized, fileName, 'embed');
   }
 
-  return normalizedWithVersion;
+  return normalized;
 }
 
 function updateCardViewInfo(card, task) {
@@ -15157,6 +15786,9 @@ function stageErrorToText(error) {
 }
 
 const TASK_VIEW_WATCH_SLOW_OPERATION_MS = 3000;
+// Загрузка PDF.js, попытка документа без worker и штатный iframe fallback
+// суммарно могут занять около 94 секунд. Небольшой запас ограничивает loading.
+const VIEWER_PDF_FIRST_DISPLAY_TIMEOUT_MS = 100 * 1000;
 
 function createTaskViewTraceId() {
   const randomPart = Math.random().toString(36).slice(2, 8);
@@ -15301,27 +15933,6 @@ function revokeObjectUrlLater(url) {
   }, 30 * 1000);
 }
 
-function waitForPdfRenderStatus(viewer, timeoutMs = 2000) {
-  if (!viewer || typeof viewer.getPdfRenderStatus !== 'function') {
-    return Promise.resolve(null);
-  }
-  const start = Date.now();
-  return new Promise((resolve) => {
-    const tick = () => {
-      const status = viewer.getPdfRenderStatus();
-      if (status && status.status && status.status !== 'pending') {
-        resolve(status);
-        return;
-      }
-      if (Date.now() - start >= timeoutMs) {
-        resolve(status || null);
-        return;
-      }
-      setTimeout(tick, 120);
-    };
-    tick();
-  });
-}
 
 function buildPdfDiagnosticsRequiredFields(task, traceContext = null, data = {}) {
   const extra = data && typeof data === 'object' ? data : {};
@@ -15374,378 +15985,111 @@ async function openPdfInline(previewUrl, fileName, task, viewerOptions, traceCon
     fileName: fileName || '',
     resolvedUrl: previewUrl,
   });
+  const viewer = pdfViewerInstance;
+  if (!viewer || typeof viewer.open !== 'function') {
+    logClientEvent('task_view_inline_viewer_missing', baseDetails);
+    return null;
+  }
 
   const preloadedArrayBuffer = viewerOptions && viewerOptions.preloadedArrayBuffer
     ? viewerOptions.preloadedArrayBuffer
     : null;
-  if (preloadedArrayBuffer) {
-    logClientEvent('task_view_inline_start', { ...baseDetails, preloaded: true });
-    logViewerDebug('inline:start_preloaded', baseDetails);
-    try {
-      const byteLength = preloadedArrayBuffer.byteLength || 0;
-      docLoadStep('arrayBuffer готов (preloaded): ' + byteLength + ' байт');
-      docLoadSetMeta({ fileSizeBytes: byteLength });
-      updateViewerLoaderStep('Загрузка PDF-движка…', 72);
-      docLoadStep('ожидание pdf.js движка');
-      try { await preloadPdfjs(); } catch (_e) { /* не критично */ }
-      docLoadStep('pdf.js движок готов');
-      updateViewerLoaderStep('Рендеринг PDF…', 80);
-      const viewer = pdfViewerInstance;
-      if (viewer && typeof viewer.open === 'function') {
-        docLoadStep('viewer.open начало');
-        startTaskViewTracePhase(task, traceContext, 'viewer.open', {
-          strategy: 'pdf_inline_preloaded',
-          fileName: fileName || '',
-        });
-        const effectiveViewerOptions = { ...(viewerOptions || {}), forceCanvas: true, isPdf: true };
-        const mode = viewer.open(
-          previewUrl,
-          fileName || 'Документ',
-          effectiveViewerOptions,
-          preloadedArrayBuffer,
-        );
-        if (mode) {
-          endTaskViewTracePhase(task, traceContext, 'viewer.open', {
-            strategy: 'pdf_inline_preloaded',
-            mode,
-          });
-          docLoadStep('viewer.open успех');
-          logClientEvent('task_view_inline_mode', { ...baseDetails, mode, strategy: 'pdf_inline_preloaded' });
-          return mode;
-        }
-      }
-    } catch (error) {
-      logViewerDebug('inline:preloaded_error', {
-        error: error && error.message ? error.message : String(error),
-      });
+  const loaderToken = viewerOptions && viewerOptions.loaderToken ? viewerOptions.loaderToken : null;
+  let firstDisplaySettled = false;
+  let resolveFirstDisplay;
+  const firstDisplayPromise = new Promise((resolve) => {
+    resolveFirstDisplay = resolve;
+  });
+  const settleFirstDisplay = (stage) => {
+    if (firstDisplaySettled) {
+      return;
     }
-  }
+    firstDisplaySettled = true;
+    resolveFirstDisplay(stage);
+  };
+  const firstDisplayTimeoutId = window.setTimeout(
+    () => settleFirstDisplay('first_display_timeout'),
+    VIEWER_PDF_FIRST_DISPLAY_TIMEOUT_MS,
+  );
+  const effectiveViewerOptions = {
+    ...(viewerOptions || {}),
+    forceCanvas: true,
+    isPdf: true,
+    onProgress(progress) {
+      updateViewerLoaderPdfProgress(progress, loaderToken);
+      if (progress && ['ready', 'fallback_ready', 'fallback_timeout', 'fallback_failed', 'cancelled'].includes(progress.stage)) {
+        settleFirstDisplay(progress.stage);
+      }
+    },
+  };
 
-  logClientEvent('task_view_inline_start', baseDetails);
-  logClientEvent('task_view_fetch_start', baseDetails);
-  logViewerDebug('inline:start', baseDetails);
-  logViewerDebugDeep('inline:fetch_start', {
-    url: previewUrl,
+  logClientEvent('task_view_inline_start', {
+    ...baseDetails,
+    preloaded: Boolean(preloadedArrayBuffer),
+    strategy: preloadedArrayBuffer ? 'pdf_inline_preloaded' : 'pdf_inline_range',
+  });
+  updateViewerLoaderStep('Открытие PDF…', 40);
+  docLoadStep(preloadedArrayBuffer ? 'открытие готового PDF' : 'открытие PDF по частям');
+  startTaskViewTracePhase(task, traceContext, 'viewer.open', {
+    strategy: preloadedArrayBuffer ? 'pdf_inline_preloaded' : 'pdf_inline_range',
     fileName: fileName || '',
-    viewerOptions,
   });
 
   try {
-    updateViewerLoaderStep('Скачивание PDF…', 45);
-    docLoadStep('fetch pdf начало');
-    const requestId = createPdfRequestId();
-    startTaskViewTracePhase(task, traceContext, 'fetch', {
-      fileName: fileName || '',
-      previewUrl: previewUrl || '',
-    });
-    const fetchPayload = await fetchPdfBinaryForViewer(previewUrl, 'user_click', requestId, {
-      traceId: traceContext && traceContext.traceId ? traceContext.traceId : '',
-      onProgress: (progress) => updateViewerLoaderTransfer(progress),
-      diagnosticsContext: buildPdfDiagnosticsRequiredFields(task, traceContext, {
-        fileName: fileName || '',
-        previewUrl: previewUrl || '',
-      }),
-    });
-    const contentType = fetchPayload.contentType || '';
-    const contentLength = fetchPayload.contentLength || '';
-    const traceId = fetchPayload.traceId || fetchPayload.requestId || requestId;
-    docLoadStep(`fetch pdf ответ: ${fetchPayload.status}${fetchPayload.fromCache ? ' (cache)' : ''}`);
-
-    logClientEvent('task_view_fetch_success', {
-      ...baseDetails,
-      status: fetchPayload.status,
-      contentType: contentType || 'unknown',
-      contentLength: contentLength || 'unknown',
-      fromCache: Boolean(fetchPayload.fromCache),
-    });
-
-    updateViewerLoaderStep('Чтение данных…', 60);
-    docLoadStep(fetchPayload.fromCache ? 'используется cache' : 'чтение arrayBuffer');
-    const responseHeaders = fetchPayload.headers || {};
-    const resourceTiming = fetchPayload.resourceTiming || null;
-    const connectionInfo = fetchPayload.connectionInfo || null;
-    const fetchDurationMs = typeof fetchPayload.fetchDurationMs === 'number' ? fetchPayload.fetchDurationMs : 0;
-    const requestStartedAt = typeof fetchPayload.requestStartedAt === 'number' ? fetchPayload.requestStartedAt : 0;
-    const fetchStartedAt = typeof fetchPayload.fetchStartedAt === 'number' ? fetchPayload.fetchStartedAt : requestStartedAt;
-    const responseReceivedAt = typeof fetchPayload.responseReceivedAt === 'number' ? fetchPayload.responseReceivedAt : 0;
-    const arrayBufferReadyAt = typeof fetchPayload.arrayBufferReadyAt === 'number' ? fetchPayload.arrayBufferReadyAt : 0;
-    const responseElapsedMs = fetchStartedAt && responseReceivedAt
-      ? Math.max(0, Math.round(responseReceivedAt - fetchStartedAt))
-      : 0;
-    logViewWatchEvent('task_view_watch_phase_end', task, {
-      traceId: traceContext && traceContext.traceId ? traceContext.traceId : '',
-      phase: 'fetch_response',
-      elapsedMs: responseElapsedMs,
-      status: fetchPayload && fetchPayload.status ? fetchPayload.status : 0,
-      responseUrl: fetchPayload && fetchPayload.responseUrl ? fetchPayload.responseUrl : previewUrl,
-    });
-    endTaskViewTracePhase(task, traceContext, 'fetch', {
-      step: 'arrayBuffer_ready',
-      status: fetchPayload && fetchPayload.status ? fetchPayload.status : 0,
-      responseUrl: fetchPayload && fetchPayload.responseUrl ? fetchPayload.responseUrl : previewUrl,
-    });
-    const ttfbMs = typeof fetchPayload.ttfbMs === 'number' ? fetchPayload.ttfbMs : 0;
-    const downloadMs = typeof fetchPayload.downloadMs === 'number' ? fetchPayload.downloadMs : 0;
-    const cacheHitArrayBuffer = Boolean(fetchPayload.cacheHitArrayBuffer);
-    const waitedExistingPromise = Boolean(fetchPayload.waitedExistingPromise);
-    const waitedExistingPromiseDurationMs = typeof fetchPayload.waitedExistingPromiseDurationMs === 'number'
-      ? fetchPayload.waitedExistingPromiseDurationMs
-      : 0;
-    const existingPromiseSource = fetchPayload.existingPromiseSource || '';
-    const fetchCacheKey = fetchPayload.cacheKey || normalizePdfBinaryCacheKey(previewUrl);
-    const source = fetchPayload.source === 'warmup' ? 'warmup' : 'user_click';
-    const responseUrl = fetchPayload.responseUrl || previewUrl;
-    if (cacheHitArrayBuffer) {
-      docLoadStep('мгновенный cache hit');
-    } else if (waitedExistingPromise) {
-      docLoadStep('ожидание warmup promise');
-    }
-    docLoadSetMeta({
-      fetchStatus: fetchPayload.status,
-      fetchDurationMs,
-      ttfbMs,
-      downloadMs,
-      fetchFromCache: Boolean(fetchPayload.fromCache),
-      cacheHitArrayBuffer,
-      fetchContentType: contentType || '',
-      fetchContentLength: contentLength || '',
-      fetchCacheMode: fetchPayload.cacheMode || '',
-      fetchSharedPromise: waitedExistingPromise,
-      fetchSharedPromiseWaitMs: waitedExistingPromiseDurationMs,
-      fetchCacheKey,
-      requestId: fetchPayload.requestId || requestId,
-      traceId,
-      source,
-      responseUrl,
-      'content-length': contentLength || '',
-      fetchStartedAt,
-      requestStartedAt,
-      responseReceivedAt,
-      arrayBufferReadyAt,
-      existingPromiseSource,
-      waitedExistingPromise,
-      waitedExistingPromiseDurationMs,
-    });
-    logViewerDebugDeep('inline:fetch_headers', {
-      url: fetchPayload.responseUrl || previewUrl,
-      status: fetchPayload.status,
-      statusText: fetchPayload.statusText,
-      redirected: fetchPayload.redirected,
-      responseType: fetchPayload.responseType,
-      headers: responseHeaders,
-      fetchDurationMs,
-      sameOrigin: fetchPayload.sameOrigin,
-      cacheMode: fetchPayload.cacheMode || 'default',
-      fromCache: Boolean(fetchPayload.fromCache),
-      resourceTiming,
-      connectionInfo,
-    });
-    logClientEvent('task_view_pdf_diagnostics', {
-      prefix: 'Просмотр2',
-      step: 'inline:fetch_diagnostics',
-      details: {
-        url: responseUrl,
-        requestId: fetchPayload.requestId || requestId,
-        traceId,
-        status: fetchPayload.status,
-        statusText: fetchPayload.statusText,
-        redirected: fetchPayload.redirected,
-        responseType: fetchPayload.responseType,
-        headers: responseHeaders,
-        fetchDurationMs,
-        sameOrigin: fetchPayload.sameOrigin,
-        cacheMode: fetchPayload.cacheMode || 'default',
-        fromCache: Boolean(fetchPayload.fromCache),
-        cacheHitArrayBuffer,
-        cacheKey: fetchCacheKey,
-        source,
-        responseUrl,
-        'content-length': contentLength || '',
-        fetchStartedAt,
-        requestStartedAt,
-        responseReceivedAt,
-        arrayBufferReadyAt,
-        existingPromiseSource,
-        waitedExistingPromise,
-        waitedExistingPromiseDurationMs,
-        ttfbMs,
-        downloadMs,
-        resourceTiming,
-        connectionInfo,
-      },
-      requestId: fetchPayload.requestId || requestId,
-      traceId,
-      source,
-      cacheKey: fetchCacheKey,
-      fetchDurationMs,
-      responseUrl,
-      'content-length': contentLength || '',
-      fetchStartedAt,
-      activeFile: fileName || '',
-      requestStartedAt,
-      responseReceivedAt,
-      arrayBufferReadyAt,
-      cacheHitArrayBuffer,
-      existingPromiseSource,
-      waitedExistingPromise,
-      ttfbMs,
-      downloadMs,
-    }, { keepalive: true });
-    const arrayBuffer = fetchPayload.arrayBuffer;
-    const byteLength = typeof fetchPayload.byteLength === 'number'
-      ? fetchPayload.byteLength
-      : (arrayBuffer ? arrayBuffer.byteLength : 0);
-    docLoadSetMeta({
-      fileSizeBytes: byteLength,
-    });
-    docLoadStep('arrayBuffer готов: ' + byteLength + ' байт');
-    updateViewerLoaderStep('Загрузка PDF-движка…', 72);
-    docLoadStep('ожидание pdf.js движка');
-    try {
-      await preloadPdfjs();
-    } catch (e) {
-      // ошибка предзагрузки не критична, loadPdfDocument повторит попытку
-    }
-    docLoadStep('pdf.js движок готов');
-    updateViewerLoaderStep('Подготовка рендеринга…', 75);
-    const viewer = pdfViewerInstance;
-    const viewerReady = viewer && typeof viewer.isReady === 'function' ? viewer.isReady() : false;
-    const shouldPassData = true;
-    logClientEvent('task_view_inline_headers', {
-      ...baseDetails,
-      status: fetchPayload.status,
-      statusText: fetchPayload.statusText,
-      redirected: fetchPayload.redirected,
-      responseType: fetchPayload.responseType,
-      responseUrl: fetchPayload.responseUrl || previewUrl,
-      headers: responseHeaders,
-      blobType: contentType || 'unknown',
-      blobSize: byteLength,
-      fromCache: Boolean(fetchPayload.fromCache),
-    });
-
-    if (viewer) {
-      logClientEvent('task_view_inline_viewer_ready', {
-        ...baseDetails,
-        viewerReady,
-        viewerKind: viewerOptions && viewerOptions.kind ? viewerOptions.kind : '',
-      });
-      logViewerDebug('inline:viewer_ready', { viewerReady, hasOpen: typeof viewer.open === 'function' });
-      logViewerDebugDeep('inline:viewer_ready', {
-        viewerReady,
-        hasOpen: typeof viewer.open === 'function',
-        viewerKind: viewerOptions && viewerOptions.kind ? viewerOptions.kind : '',
-        options: viewerOptions,
-      });
-    } else {
-      logClientEvent('task_view_inline_viewer_missing', baseDetails);
-      logViewerDebug('inline:viewer_missing');
-      logViewerDebugDeep('inline:viewer_missing', { viewerOptions });
+    const mode = viewer.open(
+      previewUrl,
+      fileName || 'Документ',
+      effectiveViewerOptions,
+      preloadedArrayBuffer || undefined,
+    );
+    if (!mode) {
+      throw new Error('inline_viewer_unavailable');
     }
 
-    if (viewer && typeof viewer.open === 'function') {
-      updateViewerLoaderStep('Рендеринг PDF…', 80);
-      docLoadStep('viewer.open начало');
-      startTaskViewTracePhase(task, traceContext, 'viewer.open', {
-        strategy: 'pdf_inline',
-        fileName: fileName || '',
-      });
-      const effectiveViewerOptions = viewerOptions
-        ? { ...viewerOptions, forceCanvas: true, isPdf: true }
-        : { forceCanvas: true, isPdf: true };
-      logViewerDebugDeep('inline:viewer_open', {
-        url: previewUrl,
-        fileName: fileName || '',
-        options: effectiveViewerOptions,
-        blob: { type: contentType || 'unknown', size: byteLength },
-      });
-      const mode = viewer.open(
-        previewUrl,
-        fileName || 'Документ',
-        effectiveViewerOptions,
-        shouldPassData ? arrayBuffer : undefined,
-      );
-      if (mode) {
-        endTaskViewTracePhase(task, traceContext, 'viewer.open', {
-          strategy: 'pdf_inline',
-          mode,
-        });
-        docLoadSetMeta({
-          inlineMode: mode,
-        });
-        docLoadStep('viewer.open успех');
-        if (runtimeEnvironment.isIos) {
-          updateViewerLoaderStep('Ожидание рендеринга iOS…', 90);
-          docLoadStep('ожидание ios рендеринга');
-          const loadPromise = typeof viewer.getPdfLoadPromise === 'function' ? viewer.getPdfLoadPromise() : null;
-          let renderOk = false;
-          if (loadPromise) {
-            try {
-              const loadTimeout = new Promise((resolve) => { setTimeout(() => resolve(false), 8000); });
-              renderOk = await Promise.race([loadPromise, loadTimeout]);
-            } catch (error) {
-              renderOk = false;
-            }
-          } else {
-            const renderStatus = await waitForPdfRenderStatus(viewer, 10000);
-            renderOk = renderStatus && renderStatus.status === 'complete';
-          }
-          docLoadStep('ios рендеринг: ' + (renderOk ? 'complete' : 'incomplete'));
-          if (!renderOk) {
-            const renderStatus = typeof viewer.getPdfRenderStatus === 'function' ? viewer.getPdfRenderStatus() : null;
-            const hasPartialRender = renderStatus
-              && typeof renderStatus.renderedPages === 'number'
-              && renderStatus.renderedPages > 0;
-            logViewerDebug('inline:ios_render_incomplete', renderStatus);
-            logViewerDebugDeep('inline:ios_render_incomplete', {
-              ...baseDetails,
-              renderStatus,
-              hasPartialRender,
-            });
-            if (hasPartialRender) {
-              docLoadStep('ios рендеринг: частичный, отображаем');
-            } else {
-              updateViewerLoaderStep('Рендеринг продолжается…', 95);
-              docLoadStep('ios рендеринг: продолжается');
-            }
-          }
-        }
-        updateViewerLoaderStep('Готово', 100);
-        logClientEvent('task_view_inline_success', {
-          ...baseDetails,
-          mode,
-          contentType: contentType || 'unknown',
-          size: byteLength,
-          fromCache: Boolean(fetchPayload.fromCache),
-        });
-        logViewerDebug('inline:success', { mode, contentType, size: byteLength, fromCache: Boolean(fetchPayload.fromCache) });
-        logViewerDebugDeep('inline:viewer_mode', { mode, contentType, size: byteLength, fromCache: Boolean(fetchPayload.fromCache) });
-        return 'inline';
-      }
+    const firstDisplayStage = await firstDisplayPromise;
+    if (firstDisplayStage === 'cancelled') {
+      const cancellationError = new Error('viewer_cancelled');
+      cancellationError.name = 'AbortError';
+      cancellationError.code = 'viewer_cancelled';
+      throw cancellationError;
+    }
+    if (firstDisplayStage === 'first_display_timeout') {
+      const timeoutError = new Error('pdf_first_display_timeout');
+      timeoutError.name = 'TimeoutError';
+      timeoutError.code = 'pdf_first_display_timeout';
+      throw timeoutError;
+    }
+    if (firstDisplayStage === 'fallback_timeout' || firstDisplayStage === 'fallback_failed') {
+      const fallbackError = new Error(`pdf_${firstDisplayStage}`);
+      fallbackError.name = firstDisplayStage === 'fallback_timeout' ? 'TimeoutError' : 'Error';
+      fallbackError.code = `pdf_${firstDisplayStage}`;
+      throw fallbackError;
     }
 
     endTaskViewTracePhase(task, traceContext, 'viewer.open', {
-      strategy: 'pdf_inline',
-      reason: 'inline_viewer_unavailable',
-    }, 'error');
-    throw new Error('inline_viewer_unavailable');
+      strategy: preloadedArrayBuffer ? 'pdf_inline_preloaded' : 'pdf_inline_range',
+      mode,
+    });
+    updateViewerLoaderStep('Файл открыт', 100);
+    docLoadSetMeta({
+      inlineMode: mode,
+      loadStrategy: preloadedArrayBuffer ? 'preloaded' : 'range',
+    });
+    docLoadStep('viewer.open успех');
+    logClientEvent('task_view_inline_viewer_ready', {
+      ...baseDetails,
+      viewerReady: typeof viewer.isReady === 'function' ? viewer.isReady() : true,
+      viewerKind: viewerOptions && viewerOptions.kind ? viewerOptions.kind : '',
+    });
+    logClientEvent('task_view_inline_success', {
+      ...baseDetails,
+      mode,
+      preloaded: Boolean(preloadedArrayBuffer),
+      strategy: preloadedArrayBuffer ? 'pdf_inline_preloaded' : 'pdf_inline_range',
+    });
+    return 'inline';
   } catch (error) {
-    endTaskViewTracePhase(task, traceContext, 'fetch', extractTaskViewErrorMeta(error), 'error');
     endTaskViewTracePhase(task, traceContext, 'viewer.open', extractTaskViewErrorMeta(error), 'error');
-    const timeoutError = Boolean(error && (
-      error.code === 'fetch_timeout'
-      || error.code === 'shared_promise_timeout'
-      || error.name === 'FetchTimeoutError'
-      || error.name === 'SharedPromiseTimeoutError'
-    ));
-    const status = typeof error.responseStatus === 'number' ? error.responseStatus : 0;
-    if (status) {
-      logClientEvent('task_view_fetch_error', {
-        ...baseDetails,
-        status,
-        statusText: error && error.message ? error.message : '',
-      });
-    }
     logClientEvent('task_view_inline_error', {
       ...baseDetails,
       error: error && error.message ? error.message : String(error),
@@ -15754,35 +16098,34 @@ async function openPdfInline(previewUrl, fileName, task, viewerOptions, traceCon
     docLoadSetMeta({
       inlineError: error && error.message ? error.message : String(error),
     });
-    if (timeoutError) {
-      updateViewerLoaderStep('Сеть медленная, пробуем повторно…', 66);
-      setStatus('warning', 'Сеть медленная, пробуем повторно через безопасный режим…');
+    if (classifyTaskViewResultByError(error) === 'cancelled') {
+      throw error;
     }
-    logViewerDebug('inline:error', error);
-    logViewerDebugDeep('inline:error', {
-      message: error && error.message ? error.message : String(error),
-      name: error && error.name ? error.name : '',
-    });
-    const inlineErrorContext = buildPdfDiagnosticsRequiredFields(task, traceContext, {
-      fileName: fileName || '',
-      previewUrl: previewUrl || '',
-    });
-    logClientEvent('task_view_pdf_diagnostics', {
-      ...inlineErrorContext,
-      prefix: 'Просмотр2',
-      step: 'inline:error',
-      details: {
-        ...inlineErrorContext,
-        error: error && error.message ? error.message : String(error),
-        ...extractTaskViewErrorMeta(error),
-      },
-      error: error && error.message ? error.message : String(error),
-      ...extractTaskViewErrorMeta(error),
-    }, { keepalive: true });
+    const errorCode = normalizeValue(error && error.code);
+    if (['pdf_first_display_timeout', 'pdf_fallback_timeout', 'pdf_fallback_failed'].includes(errorCode)) {
+      // Внутренний просмотрщик уже дождался штатного iframe fallback. Повторно
+      // открывать тот же iframe нельзя: viewer.open() вернёт mode до события load
+      // и создаст ложное состояние «Готово». Оставляем явное действие открытия.
+      try {
+        viewer.open(previewUrl, fileName || 'Документ', {
+          ...(viewerOptions || {}),
+          forceCanvas: true,
+          isPdf: true,
+          skipPdfLoad: true,
+        });
+      } catch (_messageError) {
+        // Основная ошибка уже записана; сообщение просмотрщика необязательно.
+      }
+      return {
+        terminalFailure: true,
+        reason: errorCode,
+      };
+    }
     return null;
+  } finally {
+    window.clearTimeout(firstDisplayTimeoutId);
   }
 }
-
 async function openInlineFrame(previewUrl, fileName, baseDetails, viewerOptions, traceContext = null, task = null) {
   const viewer = pdfViewerInstance;
   if (!viewer || typeof viewer.open !== 'function') {
@@ -16233,7 +16576,13 @@ function buildDownloadUrl(file) {
   if (!file || typeof file !== 'object') {
     return '';
   }
-  const resolved = resolveTaskFileDownloadSource(file);
+  // Просмотрщик может сохранить в resolvedUrl inline-endpoint. Для действия
+  // «скачать» сначала берём исходный адрес файла и строим attachment-endpoint.
+  const originalSourceCandidate = normalizeValue(file.sourceUrl) || normalizeValue(file.url);
+  const originalSource = isBareFileReference(originalSourceCandidate) ? '' : originalSourceCandidate;
+  const resolved = originalSource
+    ? resolveDocumentUrl(originalSource)
+    : resolveTaskFileDownloadSource(file);
   if (!resolved) {
     return '';
   }
@@ -16242,6 +16591,21 @@ function buildDownloadUrl(file) {
     || normalizeValue(file.storedName)
     || 'document';
 
+  if (isDocsPhpUrl(resolved)) {
+    try {
+      const endpointUrl = new URL(resolved, window.location.origin);
+      if (endpointUrl.origin === window.location.origin
+        && endpointUrl.searchParams.get('action') === 'mini_app_download_file') {
+        endpointUrl.searchParams.set('disposition', 'attachment');
+        if (fileName && !endpointUrl.searchParams.get('name')) {
+          endpointUrl.searchParams.set('name', fileName);
+        }
+        return endpointUrl.toString();
+      }
+    } catch (_endpointError) {
+      // Ниже остаётся прежний безопасный resolver.
+    }
+  }
   return createDownloadFileAccessUrl(toAbsoluteUrl(resolved), fileName, 'attachment');
 }
 
@@ -16527,6 +16891,7 @@ async function deleteTaskResponseFile(task, file) {
     credentials: 'include',
     headers,
     body: JSON.stringify({
+      ...buildRequestBody({ includeInitData: false, includeNameTokens: false }),
       action: 'response_delete',
       organization,
       documentId,
@@ -16544,7 +16909,7 @@ async function deleteTaskResponseFile(task, file) {
     throw new Error((data && (data.error || data.message)) || `Ошибка ${response.status}`);
   }
 
-  await loadTasks(true);
+  await refreshLoadedTaskPages({ force: true, silent: true });
   return data;
 }
 
@@ -16661,11 +17026,6 @@ async function generateViewerFileAiBrief(file, fileName) {
     setStatus('warning', 'Не удалось определить задачу для краткого ИИ.');
     return;
   }
-  if (!telegramBriefModalFactory || typeof telegramBriefModalFactory.requestBriefForSource !== 'function') {
-    setStatus('error', 'Модуль Кратко ИИ не загружен.');
-    return;
-  }
-
   setActionButtonLoading(elements.viewerBrief, true);
   const stopViewerBriefLoading = startViewerBriefLoadingAnimation();
   const source = {
@@ -16678,7 +17038,11 @@ async function generateViewerFileAiBrief(file, fileName) {
 
   try {
     setStatus('info', 'Кратко ИИ: подготавливаю файл...');
-    const result = await telegramBriefModalFactory.requestBriefForSource(source, (message, tone) => {
+    const briefFactory = await ensureTelegramBriefModalFactory();
+    if (!briefFactory || typeof briefFactory.requestBriefForSource !== 'function') {
+      throw new Error('Модуль Кратко ИИ недоступен.');
+    }
+    const result = await briefFactory.requestBriefForSource(source, (message, tone) => {
       setStatus(tone === 'error' ? 'error' : 'info', `Кратко ИИ: ${message}`);
     });
     const nextBrief = normalizeBriefText(result && result.summary);
@@ -16984,21 +17348,6 @@ async function openDocumentLink(rawUrl, fileName, task, preferredPreviewUrl, vie
     isPdf: true,
     forceCanvas: true,
   };
-  let loadingShellOpened = false;
-
-  if (isPdf && !forceFrameRequested) {
-    const shellMode = openViewerLoadingShell(
-      absolutePreviewUrl,
-      fileName,
-      pdfViewerOptions,
-      'Файл загружается... PDF откроется автоматически.',
-    );
-    loadingShellOpened = Boolean(shellMode);
-    if (loadingShellOpened) {
-      updateViewerLoaderStep('Файл загружается...', 35);
-      docLoadStep('мгновенный экран загрузки pdf');
-    }
-  }
 
   logClientEvent('task_view_resolve', {
     ...baseDetails,
@@ -17059,50 +17408,33 @@ async function openDocumentLink(rawUrl, fileName, task, preferredPreviewUrl, vie
     }, { keepalive: true });
   };
 
-  if (isPdf && isWebPlatform) {
-    const webFetchCacheKey = normalizePdfBinaryCacheKey(absolutePreviewUrl);
-    const webPreviouslyTimedOut = TASK_PDF_FETCH_TIMEOUT_MS_USER_CLICK > 0
-      && webFetchCacheKey
-      && pdfFetchTimeoutUrls.has(webFetchCacheKey);
-    if (webPreviouslyTimedOut) {
-      logViewFlow('inline:web_skip_fetch_timeout_cached', { previewUrl: absolutePreviewUrl, platform: 'telegram_web' });
-      startTaskViewTracePhase(task, traceContext, 'fallback', {
-        strategy: 'web_frame_cached_timeout',
-        previewUrl: absolutePreviewUrl,
-      });
-      const cachedWebFrameMode = await openInlineFrame(
-        absolutePreviewUrl,
-        fileName,
-        baseDetails,
-        { ...viewerOptions, forceFrame: true },
-        traceContext,
-        task,
-      );
-      if (cachedWebFrameMode) {
-        endTaskViewTracePhase(task, traceContext, 'fallback', {
-          strategy: 'web_frame_cached_timeout',
-          mode: cachedWebFrameMode,
-        });
-        logClientEvent('task_view_inline_mode', {
-          ...baseDetails,
-          mode: cachedWebFrameMode,
-          strategy: 'web_frame_cached_timeout',
-        });
-        logViewerModeDecision(cachedWebFrameMode, 'web_frame_cached_timeout', {
-          ...modeDecisionBase,
-          url: absolutePreviewUrl,
-          platform: 'telegram_web',
-        });
-        return { mode: cachedWebFrameMode };
-      }
-      endTaskViewTracePhase(task, traceContext, 'fallback', {
-        strategy: 'web_frame_cached_timeout',
-        reason: 'frame_unavailable',
-      }, 'error');
+  const showTerminalPdfPrompt = (inlineResult, platform = '') => {
+    if (!inlineResult || inlineResult.terminalFailure !== true) {
+      return false;
     }
+    const reason = normalizeValue(inlineResult.reason) || 'pdf_inline_terminal_failure';
+    setStatusAction(
+      'error',
+      'Не удалось отрисовать PDF. Откройте файл в новой вкладке.',
+      'Открыть в новой вкладке',
+      () => openExternalDocument(absolutePreviewUrl),
+    );
+    logViewerModeDecision('external', reason, {
+      ...modeDecisionBase,
+      url: absolutePreviewUrl,
+      ...(platform ? { platform } : {}),
+    });
+    logExternalPromptDiagnostics(reason);
+    return true;
+  };
+
+  if (isPdf && isWebPlatform) {
     logViewFlow('inline:try', { previewUrl: absolutePreviewUrl, platform: 'telegram_web' });
     logViewerDebugDeep('inline:try', { previewUrl: absolutePreviewUrl, platform: 'telegram_web' });
     const inlineMode = await openPdfInline(absolutePreviewUrl, fileName, task, pdfViewerOptions, traceContext);
+    if (showTerminalPdfPrompt(inlineMode, 'telegram_web')) {
+      return { mode: 'external_prompt' };
+    }
     if (inlineMode) {
       logClientEvent('task_view_inline_mode', { ...baseDetails, mode: inlineMode, strategy: 'pdf_inline' });
       logViewerDebugDeep('inline:success', { mode: inlineMode, url: absolutePreviewUrl, platform: 'telegram_web' });
@@ -17178,49 +17510,6 @@ async function openDocumentLink(rawUrl, fileName, task, preferredPreviewUrl, vie
 
   if (isPdf) {
     if (runtimeEnvironment.isIos) {
-      const fetchCacheKey = normalizePdfBinaryCacheKey(absolutePreviewUrl);
-      const previouslyTimedOut = TASK_PDF_FETCH_TIMEOUT_MS_USER_CLICK > 0
-        && fetchCacheKey
-        && pdfFetchTimeoutUrls.has(fetchCacheKey);
-      if (previouslyTimedOut) {
-        logViewFlow('inline:ios_skip_fetch_timeout_cached', { previewUrl: absolutePreviewUrl });
-        logViewerDebugDeep('inline:ios_skip_fetch_timeout_cached', {
-          previewUrl: absolutePreviewUrl,
-          reason: 'fetch_previously_timed_out',
-        });
-        startTaskViewTracePhase(task, traceContext, 'fallback', {
-          strategy: 'ios_frame_cached_timeout',
-          previewUrl: absolutePreviewUrl,
-        });
-        const cachedFrameMode = await openInlineFrame(
-          absolutePreviewUrl,
-          fileName,
-          baseDetails,
-          { ...viewerOptions, isPdf: true, forceFrame: true },
-          traceContext,
-          task,
-        );
-        if (cachedFrameMode) {
-          endTaskViewTracePhase(task, traceContext, 'fallback', {
-            strategy: 'ios_frame_cached_timeout',
-            mode: cachedFrameMode,
-          });
-          logClientEvent('task_view_inline_mode', {
-            ...baseDetails,
-            mode: cachedFrameMode,
-            strategy: 'ios_frame_cached_timeout',
-          });
-          logViewerModeDecision(cachedFrameMode, 'ios_frame_cached_timeout', {
-            ...modeDecisionBase,
-            url: absolutePreviewUrl,
-          });
-          return { mode: cachedFrameMode };
-        }
-        endTaskViewTracePhase(task, traceContext, 'fallback', {
-          strategy: 'ios_frame_cached_timeout',
-          reason: 'frame_unavailable',
-        }, 'error');
-      }
       logViewFlow('inline:ios_canvas_first', { previewUrl: absolutePreviewUrl });
       logViewerDebugDeep('inline:ios_canvas_first', { previewUrl: absolutePreviewUrl, reason: 'ios_use_canvas' });
       startTaskViewTracePhase(task, traceContext, 'fallback', {
@@ -17228,25 +17517,14 @@ async function openDocumentLink(rawUrl, fileName, task, preferredPreviewUrl, vie
         previewUrl: absolutePreviewUrl,
       });
       const iosInlineMode = await openPdfInline(absolutePreviewUrl, fileName, task, pdfViewerOptions, traceContext);
+      if (showTerminalPdfPrompt(iosInlineMode)) {
+        endTaskViewTracePhase(task, traceContext, 'fallback', {
+          strategy: 'ios_canvas_first',
+          reason: iosInlineMode.reason || 'pdf_inline_terminal_failure',
+        }, 'error');
+        return { mode: 'external_prompt' };
+      }
       if (iosInlineMode) {
-        const iosRenderStatus = typeof pdfViewerInstance.getPdfRenderStatus === 'function'
-          ? pdfViewerInstance.getPdfRenderStatus()
-          : null;
-        const iosHasTotalPages = iosRenderStatus && typeof iosRenderStatus.totalPages === 'number';
-        const iosHasRenderedPages = iosRenderStatus && typeof iosRenderStatus.renderedPages === 'number';
-        const iosIncompletePages = iosHasTotalPages
-          && iosHasRenderedPages
-          && iosRenderStatus.totalPages > 0
-          && iosRenderStatus.renderedPages < iosRenderStatus.totalPages;
-        if (iosIncompletePages) {
-          logViewerDebug('inline:ios_render_incomplete', iosRenderStatus);
-          logClientEvent('task_view_inline_mode', {
-            ...baseDetails,
-            mode: iosInlineMode,
-            strategy: 'ios_canvas_first_incomplete',
-            renderStatus: iosRenderStatus,
-          });
-        }
         endTaskViewTracePhase(task, traceContext, 'fallback', {
           strategy: 'ios_canvas_first',
           mode: iosInlineMode,
@@ -17312,128 +17590,13 @@ async function openDocumentLink(rawUrl, fileName, task, preferredPreviewUrl, vie
       logExternalPromptDiagnostics('ios_canvas_and_frame_failed');
       return { mode: 'external_prompt' };
     }
-    const otherFetchCacheKey = normalizePdfBinaryCacheKey(absolutePreviewUrl);
-    const otherPreviouslyTimedOut = TASK_PDF_FETCH_TIMEOUT_MS_USER_CLICK > 0
-      && otherFetchCacheKey
-      && pdfFetchTimeoutUrls.has(otherFetchCacheKey);
-    if (otherPreviouslyTimedOut) {
-      logViewFlow('inline:skip_fetch_timeout_cached', { previewUrl: absolutePreviewUrl });
-      startTaskViewTracePhase(task, traceContext, 'fallback', {
-        strategy: 'frame_cached_timeout',
-        previewUrl: absolutePreviewUrl,
-      });
-      const cachedOtherFrameMode = await openInlineFrame(
-        absolutePreviewUrl,
-        fileName,
-        baseDetails,
-        { ...viewerOptions, isPdf: true, forceFrame: true },
-        traceContext,
-        task,
-      );
-      if (cachedOtherFrameMode) {
-        endTaskViewTracePhase(task, traceContext, 'fallback', {
-          strategy: 'frame_cached_timeout',
-          mode: cachedOtherFrameMode,
-        });
-        logClientEvent('task_view_inline_mode', {
-          ...baseDetails,
-          mode: cachedOtherFrameMode,
-          strategy: 'frame_cached_timeout',
-        });
-        logViewerModeDecision(cachedOtherFrameMode, 'frame_cached_timeout', {
-          ...modeDecisionBase,
-          url: absolutePreviewUrl,
-        });
-        return { mode: cachedOtherFrameMode };
-      }
-      endTaskViewTracePhase(task, traceContext, 'fallback', {
-        strategy: 'frame_cached_timeout',
-        reason: 'frame_unavailable',
-      }, 'error');
-    }
     logViewFlow('inline:try', { previewUrl: absolutePreviewUrl });
     logViewerDebugDeep('inline:try', { previewUrl: absolutePreviewUrl });
     const inlineMode = await openPdfInline(absolutePreviewUrl, fileName, task, pdfViewerOptions, traceContext);
+    if (showTerminalPdfPrompt(inlineMode)) {
+      return { mode: 'external_prompt' };
+    }
     if (inlineMode) {
-      const renderStatus = typeof pdfViewerInstance.getPdfRenderStatus === 'function'
-        ? pdfViewerInstance.getPdfRenderStatus()
-        : null;
-      const hasTotalPages = renderStatus && typeof renderStatus.totalPages === 'number';
-      const hasRenderedPages = renderStatus && typeof renderStatus.renderedPages === 'number';
-      const incompletePages = hasTotalPages
-        && hasRenderedPages
-        && renderStatus.totalPages > 0
-        && renderStatus.renderedPages < renderStatus.totalPages;
-      if (incompletePages) {
-        logViewerDebug('inline:render_incomplete', renderStatus);
-        logViewerDebugDeep('inline:render_incomplete', {
-          ...baseDetails,
-          renderStatus,
-          incompletePages,
-        });
-        startTaskViewTracePhase(task, traceContext, 'fallback', {
-          strategy: 'pdf_frame_incomplete',
-          previewUrl: absolutePreviewUrl,
-        });
-        const frameMode = await openInlineFrame(
-          absolutePreviewUrl,
-          fileName,
-          baseDetails,
-          { ...viewerOptions, isPdf: true, forceFrame: true },
-          traceContext,
-          task,
-        );
-        if (frameMode) {
-          endTaskViewTracePhase(task, traceContext, 'fallback', {
-            strategy: 'pdf_frame_incomplete',
-            mode: frameMode,
-          });
-          logClientEvent('task_view_inline_mode', {
-            ...baseDetails,
-            mode: frameMode,
-            strategy: 'pdf_inline_failed_frame_incomplete',
-          });
-          logViewerDebugDeep('inline:frame_fallback', {
-            mode: frameMode,
-            url: absolutePreviewUrl,
-            strategy: 'pdf_inline_failed_frame_incomplete',
-          });
-          logViewerModeDecision(frameMode, 'pdf_inline_failed_frame_incomplete', {
-            ...modeDecisionBase,
-            url: absolutePreviewUrl,
-          });
-          return { mode: frameMode };
-        }
-        endTaskViewTracePhase(task, traceContext, 'fallback', {
-          strategy: 'pdf_frame_incomplete',
-          reason: 'frame_unavailable',
-        }, 'error');
-        startTaskViewTracePhase(task, traceContext, 'fallback', {
-          strategy: 'external_prompt',
-          previewUrl: absolutePreviewUrl,
-        });
-        logViewerDebug('inline:render_incomplete_fallback_failed', renderStatus);
-        logViewerDebugDeep('inline:render_incomplete_fallback_failed', {
-          ...baseDetails,
-          renderStatus,
-        });
-        setStatusAction(
-          'error',
-          'Не удалось полностью отрисовать PDF. Откройте файл в новой вкладке.',
-          'Открыть в новой вкладке',
-          () => openExternalDocument(absolutePreviewUrl),
-        );
-        endTaskViewTracePhase(task, traceContext, 'fallback', {
-          strategy: 'external_prompt',
-          mode: 'external_prompt',
-        });
-        logViewerModeDecision('external', 'pdf_inline_failed_external_prompt', {
-          ...modeDecisionBase,
-          url: absolutePreviewUrl,
-        });
-        logExternalPromptDiagnostics('pdf_inline_failed_external_prompt');
-        return { mode: 'external_prompt' };
-      }
       logClientEvent('task_view_inline_mode', { ...baseDetails, mode: inlineMode, strategy: 'pdf_inline' });
       logViewerDebugDeep('inline:success', { mode: inlineMode, url: absolutePreviewUrl });
       logViewerModeDecision(inlineMode, 'pdf_inline', { ...modeDecisionBase, url: absolutePreviewUrl });
@@ -17546,7 +17709,7 @@ async function openDocumentLink(rawUrl, fileName, task, preferredPreviewUrl, vie
     }
   }
 
-  if (!isPdf && !loadingShellOpened) {
+  if (!isPdf) {
     updateViewerLoaderStep('Файл загружается...', 35);
   }
 
@@ -17641,6 +17804,14 @@ function setViewerTabActive(index) {
     button.setAttribute('aria-selected', isActive ? 'true' : 'false');
     button.dataset.active = isActive ? 'true' : 'false';
   });
+  const activeButton = viewerTabsState.buttons[index];
+  if (activeButton instanceof HTMLElement) {
+    try {
+      activeButton.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+    } catch (_error) {
+      activeButton.scrollIntoView(false);
+    }
+  }
 }
 
 function setViewerTabLoading(index, isLoading) {
@@ -17658,7 +17829,7 @@ function setViewerTabLoading(index, isLoading) {
 }
 
 async function openViewerFile(file, task, options = {}) {
-  const { notify = true, hasMultiple = false, traceContext = null } = options;
+  const { notify = true, hasMultiple = false, traceContext = null, loaderToken = null } = options;
   const openStartedAt = performance.now();
   const openSessionId = ++viewerOpenMetrics.sessionOpenId;
   logClientEvent('task_view_open_start', {
@@ -17673,6 +17844,7 @@ async function openViewerFile(file, task, options = {}) {
   let preview = null;
   let rawUrl = '';
   let fileName = '';
+  let fallbackPreviewUrl = '';
   let isOfficePreview = false;
   let cachedSummaryArrayBuffer = null;
   if (isSummary) {
@@ -17734,11 +17906,6 @@ async function openViewerFile(file, task, options = {}) {
         if (notify && !hasMultiple) {
           setStatus('info', 'Сводка открыта.');
         }
-        void ensureTaskSummaryPreview(task, file).catch(function (err) {
-          logTaskViewStage(task, 'summary_pdf_background_error', {
-            error: err && err.message ? err.message : String(err),
-          });
-        });
         return { mode: htmlMode };
       }
     }
@@ -17808,23 +17975,55 @@ async function openViewerFile(file, task, options = {}) {
     updateViewerLoaderStep('Подготовка документа…', 10);
     docLoadStep('подготовка вложения');
     const directPdfUrl = isPdf ? resolveFileFetchUrl(file) : '';
+    const directMediaUrl = file && (file.kind === 'image' || file.kind === 'video')
+      ? resolveFileFetchUrl(file)
+      : '';
     if (isPdf && directPdfUrl) {
-      rawUrl = directPdfUrl;
       fileName = getAttachmentName(file);
-      file.previewUrl = directPdfUrl;
-      file.resolvedUrl = directPdfUrl;
+      rawUrl = directPdfUrl;
+      const serverFallbackUrl = createDownloadFileAccessUrl(toAbsoluteUrl(rawUrl), fileName, 'inline');
+      fallbackPreviewUrl = serverFallbackUrl !== rawUrl ? serverFallbackUrl : '';
+      file.previewUrl = rawUrl;
+      file.resolvedUrl = rawUrl;
       logTaskViewStage(task, 'open_viewer_prepare_attachment_direct_pdf', {
         fileName,
+        strategy: 'direct_range',
       });
-      docLoadStep('вложение готово (pdf напрямую)');
+      docLoadStep('вложение готово (pdf по частям)');
+    } else if (directMediaUrl) {
+      fileName = getAttachmentName(file);
+      rawUrl = directMediaUrl;
+      file.previewUrl = rawUrl;
+      file.resolvedUrl = rawUrl;
+      logTaskViewStage(task, 'open_viewer_prepare_attachment_direct_media', {
+        fileName,
+        kind: file.kind,
+      });
+      docLoadStep('медиафайл готов напрямую');
     } else {
-      preview = await ensureTaskAttachmentPreview(task, file);
-      logTaskViewStage(task, 'open_viewer_prepare_attachment_done', {
-        fileName: preview && preview.fileName ? preview.fileName : '',
-      });
-      rawUrl = (file && file.previewBlobUrl) || preview.previewUrl;
-      fileName = preview.fileName;
-      docLoadStep('вложение готово');
+      try {
+        preview = await ensureTaskAttachmentPreview(task, file);
+        logTaskViewStage(task, 'open_viewer_prepare_attachment_done', {
+          fileName: preview && preview.fileName ? preview.fileName : '',
+        });
+        rawUrl = (file && file.previewBlobUrl) || preview.previewUrl;
+        fileName = preview.fileName;
+        docLoadStep('вложение готово');
+      } catch (error) {
+        const fallbackUrl = resolveFileFetchUrl(file);
+        if (!fallbackUrl) {
+          throw error;
+        }
+        fileName = getAttachmentName(file);
+        rawUrl = fallbackUrl;
+        file.previewUrl = rawUrl;
+        file.resolvedUrl = rawUrl;
+        logTaskViewStage(task, 'open_viewer_prepare_attachment_direct_fallback', {
+          fileName,
+          error: stageErrorToText(error),
+        });
+        docLoadStep('оригинал готов без конвертации');
+      }
     }
   }
 
@@ -17876,6 +18075,10 @@ async function openViewerFile(file, task, options = {}) {
     sinceStartMs: Math.round(performance.now() - openStartedAt),
   });
   const viewerOpts = shouldForceFrame ? { kind: file.kind, forceFrame: true } : { kind: file.kind };
+  viewerOpts.loaderToken = loaderToken;
+  if (fallbackPreviewUrl) {
+    viewerOpts.fallbackUrl = fallbackPreviewUrl;
+  }
   if (cachedSummaryArrayBuffer) {
     viewerOpts.preloadedArrayBuffer = cachedSummaryArrayBuffer;
   }
@@ -17889,12 +18092,13 @@ async function openViewerFile(file, task, options = {}) {
   );
 
   if (mode === 'inline' || mode === 'window' || mode === 'telegram' || mode === 'external_prompt') {
+    const requiresExternalAction = mode === 'external_prompt';
     docLoadSetMeta({
       openMode: mode,
       openTotalMs: Math.round(performance.now() - openStartedAt),
       memoryAfter: getJsMemorySnapshot(),
     });
-    logTaskViewStage(task, 'open_viewer_profile_done', {
+    logTaskViewStage(task, requiresExternalAction ? 'open_viewer_profile_external_prompt' : 'open_viewer_profile_done', {
       openSessionId,
       openAttempt,
       mode: mode || '',
@@ -17935,7 +18139,7 @@ async function openViewerFile(file, task, options = {}) {
         }
       } catch (_e) { /* не критично */ }
     }
-    logClientEvent('task_view_open', {
+    logClientEvent(requiresExternalAction ? 'task_view_open_external_prompt' : 'task_view_open', {
       ...buildTaskViewLogDetails(task),
       fileName: file.name,
       fileUrl: file.url,
@@ -17966,7 +18170,7 @@ async function openViewerFile(file, task, options = {}) {
     }
 
     if (isOffice) {
-      sendOfficeViewerLog('open', {
+      sendOfficeViewerLog(requiresExternalAction ? 'open_external_prompt' : 'open', {
         ...buildTaskViewLogDetails(task),
         fileName,
         url: rawUrl,
@@ -18029,13 +18233,22 @@ async function openFilesViaStandardViewer(files, task = {}, options = {}) {
   }
   const firstFile = list[0];
   const displayName = firstFile.name || 'Документ';
-  showViewerLoader(displayName);
+  const loaderToken = showViewerLoader(displayName);
   docLoadStart(displayName, firstFile.kind || '');
   docLoadStep('подготовка файлов');
   renderViewerTabs(list, task || {});
   docLoadStep('открытие файла');
-  await openViewerFile(firstFile, task || {}, { notify: true, hasMultiple: list.length > 1, ...options });
-  return true;
+  try {
+    await openViewerFile(firstFile, task || {}, {
+      notify: true,
+      hasMultiple: list.length > 1,
+      loaderToken,
+      ...options,
+    });
+    return true;
+  } finally {
+    hideViewerLoader(loaderToken);
+  }
 }
 
 if (typeof window !== 'undefined') {
@@ -18047,157 +18260,6 @@ if (typeof window !== 'undefined') {
   };
 }
 
-function warmupTaskPdfFiles(task, files, skipFile) {
-  if (!Array.isArray(files) || files.length < 2) {
-    return;
-  }
-  const queue = files.filter((file) => file && file !== skipFile && isPdfFile(file));
-  if (!queue.length) {
-    return;
-  }
-  const isMobilePlatform = runtimeEnvironment.isIos
-    || /android/i.test(String(runtimeEnvironment.webAppPlatform || ''))
-    || /iphone|ipad|ipod|android|mobile/i.test(String(navigator.userAgent || ''));
-  const maxWarmups = isMobilePlatform ? 1 : 2;
-  queue.slice(0, maxWarmups).forEach((file, index) => {
-    const rawUrl = resolveFileFetchUrl(file);
-    if (!rawUrl) {
-      return;
-    }
-    const plannedDelayMs = isMobilePlatform
-      ? (1200 + index * 700)
-      : (400 + index * 260);
-    window.setTimeout(() => {
-      const requestId = createPdfRequestId();
-      const cacheKey = normalizePdfBinaryCacheKey(rawUrl);
-      const fetchStartedAt = Date.now();
-      logClientEvent('task_view_pdf_diagnostics', {
-        ...buildTaskViewLogDetails(task),
-        prefix: 'Просмотр2',
-        step: 'warmup_start',
-        source: 'warmup',
-        requestId,
-        traceId: requestId,
-        cacheKey,
-        responseUrl: rawUrl,
-        fetchStartedAt,
-      }, { keepalive: true });
-      fetchPdfBinaryForViewer(rawUrl, 'warmup', requestId)
-        .then((payload) => {
-          const warmupSource = payload && payload.source === 'warmup' ? 'warmup' : 'user_click';
-          const responseReceivedAt = payload && typeof payload.responseReceivedAt === 'number' ? payload.responseReceivedAt : 0;
-          const arrayBufferReadyAt = payload && typeof payload.arrayBufferReadyAt === 'number' ? payload.arrayBufferReadyAt : 0;
-          const responseUrl = payload && payload.responseUrl ? payload.responseUrl : rawUrl;
-          const contentLength = payload && payload.contentLength ? payload.contentLength : '';
-          const waitedExistingPromiseDurationMs = payload && typeof payload.waitedExistingPromiseDurationMs === 'number'
-            ? payload.waitedExistingPromiseDurationMs
-            : 0;
-          logClientEvent('task_view_pdf_diagnostics', {
-            ...buildTaskViewLogDetails(task),
-            prefix: 'Просмотр2',
-            step: 'warmup_response',
-            source: warmupSource,
-            requestId: payload && payload.requestId ? payload.requestId : requestId,
-            traceId: payload && payload.traceId ? payload.traceId : requestId,
-            cacheKey: payload && payload.cacheKey ? payload.cacheKey : cacheKey,
-            waitedExistingPromise: Boolean(payload && payload.waitedExistingPromise),
-            waitedExistingPromiseDurationMs,
-            ttfbMs: payload && typeof payload.ttfbMs === 'number' ? payload.ttfbMs : 0,
-            downloadMs: payload && typeof payload.downloadMs === 'number' ? payload.downloadMs : 0,
-            fetchStartedAt: payload && typeof payload.fetchStartedAt === 'number' ? payload.fetchStartedAt : fetchStartedAt,
-            responseReceivedAt,
-            arrayBufferReadyAt,
-            responseUrl,
-            'content-length': contentLength,
-          }, { keepalive: true });
-          logTaskViewStage(task, 'pdf_warmup_ready', {
-            fileName: getAttachmentName(file, index + 1),
-            size: payload && typeof payload.byteLength === 'number' ? payload.byteLength : 0,
-            fromCache: Boolean(payload && payload.fromCache),
-            requestId: payload && payload.requestId ? payload.requestId : requestId,
-            traceId: payload && payload.traceId ? payload.traceId : requestId,
-            source: warmupSource,
-            cacheKey: payload && payload.cacheKey ? payload.cacheKey : normalizePdfBinaryCacheKey(rawUrl),
-            cacheHitArrayBuffer: Boolean(payload && payload.cacheHitArrayBuffer),
-            waitedExistingPromise: Boolean(payload && payload.waitedExistingPromise),
-            waitedExistingPromiseDurationMs: payload && typeof payload.waitedExistingPromiseDurationMs === 'number'
-              ? payload.waitedExistingPromiseDurationMs
-              : 0,
-            existingPromiseSource: payload && payload.existingPromiseSource ? payload.existingPromiseSource : '',
-            fetchDurationMs: payload && typeof payload.fetchDurationMs === 'number' ? payload.fetchDurationMs : 0,
-            ttfbMs: payload && typeof payload.ttfbMs === 'number' ? payload.ttfbMs : 0,
-            downloadMs: payload && typeof payload.downloadMs === 'number' ? payload.downloadMs : 0,
-            responseUrl,
-            'content-length': contentLength,
-            fetchStartedAt: payload && typeof payload.fetchStartedAt === 'number' ? payload.fetchStartedAt : fetchStartedAt,
-            responseReceivedAt,
-            arrayBufferReadyAt,
-          });
-          logClientEvent('task_view_pdf_diagnostics', {
-            ...buildTaskViewLogDetails(task),
-            prefix: 'Просмотр2',
-            step: 'warmup_done',
-            source: warmupSource,
-            requestId: payload && payload.requestId ? payload.requestId : requestId,
-            traceId: payload && payload.traceId ? payload.traceId : requestId,
-            cacheKey: payload && payload.cacheKey ? payload.cacheKey : cacheKey,
-            waitedExistingPromise: Boolean(payload && payload.waitedExistingPromise),
-            waitedExistingPromiseDurationMs,
-            ttfbMs: payload && typeof payload.ttfbMs === 'number' ? payload.ttfbMs : 0,
-            downloadMs: payload && typeof payload.downloadMs === 'number' ? payload.downloadMs : 0,
-            fetchStartedAt: payload && typeof payload.fetchStartedAt === 'number' ? payload.fetchStartedAt : fetchStartedAt,
-            responseReceivedAt,
-            arrayBufferReadyAt,
-            responseUrl,
-            'content-length': contentLength,
-          });
-        })
-        .catch((error) => {
-          logClientEvent('task_view_pdf_diagnostics', {
-            ...buildTaskViewLogDetails(task),
-            prefix: 'Просмотр2',
-            step: 'warmup_error',
-            source: 'warmup',
-            requestId,
-            traceId: requestId,
-            cacheKey,
-            waitedExistingPromise: false,
-            waitedExistingPromiseDurationMs: 0,
-            ttfbMs: 0,
-            downloadMs: 0,
-            fetchStartedAt,
-            responseReceivedAt: 0,
-            arrayBufferReadyAt: 0,
-            responseUrl: rawUrl,
-            'content-length': '',
-            details: {
-              error: error && error.message ? error.message : String(error),
-            },
-          }, { keepalive: true });
-          logTaskViewStage(task, 'pdf_warmup_error', {
-            fileName: getAttachmentName(file, index + 1),
-            error: error && error.message ? error.message : String(error),
-            requestId,
-            traceId: requestId,
-            source: 'warmup',
-            cacheKey,
-            cacheHitArrayBuffer: false,
-            waitedExistingPromise: false,
-            waitedExistingPromiseDurationMs: 0,
-            existingPromiseSource: '',
-            fetchDurationMs: 0,
-            ttfbMs: 0,
-            downloadMs: 0,
-            responseUrl: rawUrl,
-            'content-length': '',
-            fetchStartedAt,
-            responseReceivedAt: 0,
-            arrayBufferReadyAt: 0,
-          });
-        });
-    }, plannedDelayMs);
-  });
-}
 
 async function handleViewerTabClick(index, task) {
   if (viewerTabsState.activeIndex === index && !viewerTabsState.switching) {
@@ -18243,73 +18305,6 @@ async function handleViewerTabClick(index, task) {
   });
   const previousActiveIndex = viewerTabsState.activeIndex;
 
-  const viewer = pdfViewerInstance;
-  if (viewer && typeof viewer.captureRenderedContent === 'function') {
-    const snapshot = viewer.captureRenderedContent();
-    if (snapshot) {
-      viewerTabsState.renderedCache.set(previousActiveIndex, snapshot);
-      logViewWatchEvent('task_view_watch_tab_cache_save', task, {
-        tabIndex: previousActiveIndex,
-        fileName: viewerTabsState.files[previousActiveIndex]
-          ? (viewerTabsState.files[previousActiveIndex].name || '')
-          : '',
-        mode: snapshot.mode,
-        traceId: traceContext.traceId,
-      });
-    }
-  }
-
-  const cachedSnapshot = viewerTabsState.renderedCache.get(index);
-  if (cachedSnapshot && viewer && typeof viewer.restoreRenderedContent === 'function') {
-    const restoreStart = performance.now();
-    const restored = viewer.restoreRenderedContent(cachedSnapshot, displayName);
-    if (restored) {
-      viewerTabsState.renderedCache.delete(index);
-      setViewerTabActive(index);
-      viewerTabsState.activeFile = file;
-      updateViewerDownloadState(file);
-      updateViewerDeleteState(file);
-      updateViewerFileOwnerState(file);
-      try { updatePdfTabPageCount(); } catch (_e) { /* не критично */ }
-      const restoreMs = Math.round(performance.now() - restoreStart);
-      logViewWatchEvent('task_view_watch_tab_cache_hit', task, {
-        tabIndex: index,
-        fileName: displayName,
-        fileKind: file && file.kind ? file.kind : '',
-        mode: cachedSnapshot.mode,
-        restoreMs,
-        traceId: traceContext.traceId,
-      });
-      logViewWatchEvent('task_view_watch_tab_success', task, {
-        tabIndex: index,
-        fileName: displayName,
-        fileKind: file && file.kind ? file.kind : '',
-        openMs: Math.round(performance.now() - startedAt),
-        traceId: traceContext.traceId,
-        finalMode: 'inline',
-        fromCache: true,
-      });
-      logViewWatchEvent('task_view_watch_tab_finish', task, {
-        result: 'success',
-        finalMode: 'inline',
-        totalMs: Math.max(0, Math.round(performance.now() - startedAt)),
-        traceId: traceContext.traceId,
-        taskId: traceContext.taskId || '',
-        fileName: displayName,
-        previewUrl: traceContext.previewUrl || '',
-        phase: 'cache_restore',
-        fromCache: true,
-      });
-      viewerTabsState.switching = false;
-      const pendingIdx = viewerTabsState.pendingIndex;
-      viewerTabsState.pendingIndex = null;
-      if (pendingIdx !== null && pendingIdx !== viewerTabsState.activeIndex) {
-        handleViewerTabClick(pendingIdx, task);
-      }
-      return;
-    }
-  }
-
   setViewerTabActive(index);
   setViewerTabLoading(index, true);
   const loaderToken = showViewerLoader(displayName);
@@ -18321,7 +18316,7 @@ async function handleViewerTabClick(index, task) {
   let finalMode = 'failed';
 
   try {
-    const openResult = await openViewerFile(file, task, { notify: false, traceContext });
+    const openResult = await openViewerFile(file, task, { notify: false, traceContext, loaderToken });
     const rawMode = openResult && openResult.mode ? String(openResult.mode) : '';
     if (rawMode === 'inline') {
       finalMode = 'inline';
@@ -18329,6 +18324,7 @@ async function handleViewerTabClick(index, task) {
       finalMode = 'frame';
     } else if (rawMode === 'external_prompt') {
       finalMode = 'external_prompt';
+      result = 'external_prompt';
     } else {
       finalMode = 'failed';
     }
@@ -18347,14 +18343,18 @@ async function handleViewerTabClick(index, task) {
         }
       }
     } catch (_e) { /* не критично */ }
-    logViewWatchEvent('task_view_watch_tab_success', task, {
-      tabIndex: index,
-      fileName: displayName,
-      fileKind: file && file.kind ? file.kind : '',
-      openMs: Math.round(performance.now() - startedAt),
-      traceId: traceContext.traceId,
-      finalMode,
-    });
+    logViewWatchEvent(
+      finalMode === 'external_prompt' ? 'task_view_watch_tab_external_prompt' : 'task_view_watch_tab_success',
+      task,
+      {
+        tabIndex: index,
+        fileName: displayName,
+        fileKind: file && file.kind ? file.kind : '',
+        openMs: Math.round(performance.now() - startedAt),
+        traceId: traceContext.traceId,
+        finalMode,
+      },
+    );
     docLoadFinish();
   } catch (error) {
     openError = error;
@@ -18362,17 +18362,28 @@ async function handleViewerTabClick(index, task) {
     finalMode = 'failed';
     phase = traceContext.phase || phase;
     setViewerTabActive(previousActiveIndex);
-    setStatus('error', 'Не удалось открыть файл. Попробуйте позже.');
-    logViewWatchEvent('task_view_watch_tab_error', task, {
-      tabIndex: index,
-      fileName: displayName,
-      fileKind: file && file.kind ? file.kind : '',
-      openMs: Math.round(performance.now() - startedAt),
-      error: stageErrorToText(error),
-      traceId: traceContext.traceId,
-      ...extractTaskViewErrorMeta(error),
-    });
-    docLoadFinish(error);
+    if (result === 'cancelled') {
+      logViewWatchEvent('task_view_watch_tab_cancelled', task, {
+        tabIndex: index,
+        fileName: displayName,
+        fileKind: file && file.kind ? file.kind : '',
+        openMs: Math.round(performance.now() - startedAt),
+        traceId: traceContext.traceId,
+      });
+      docLoadFinish();
+    } else {
+      setStatus('error', 'Не удалось открыть файл. Попробуйте позже.');
+      logViewWatchEvent('task_view_watch_tab_error', task, {
+        tabIndex: index,
+        fileName: displayName,
+        fileKind: file && file.kind ? file.kind : '',
+        openMs: Math.round(performance.now() - startedAt),
+        error: stageErrorToText(error),
+        traceId: traceContext.traceId,
+        ...extractTaskViewErrorMeta(error),
+      });
+      docLoadFinish(error);
+    }
   } finally {
     logViewWatchEvent('task_view_watch_tab_finish', task, {
       result,
@@ -18413,7 +18424,6 @@ function renderViewerTabs(files, task) {
 
   viewerTabsState.switching = false;
   viewerTabsState.pendingIndex = null;
-  viewerTabsState.renderedCache.clear();
 
   if (!Array.isArray(files) || files.length <= 1) {
     elements.viewerTabs.hidden = true;
@@ -18525,6 +18535,31 @@ async function handleCardView(button, task) {
   const card = button.closest('[data-card]');
   const flowStartedAt = performance.now();
 
+  setActionButtonLoading(button, true);
+  let loaderToken = null;
+  if (task.detailsLoaded === false) {
+    loaderToken = showViewerLoader('Файлы задачи');
+    updateViewerLoaderStep('Получение списка файлов…', 18, loaderToken);
+    let detailsLoaded = false;
+    try {
+      detailsLoaded = await ensureTaskDetails(task);
+    } catch (error) {
+      logClientEvent('task_details_load_error', {
+        ...buildTaskViewLogDetails(task),
+        error: error && error.message ? error.message : String(error),
+      });
+    }
+    if (!detailsLoaded && Number(task.filesCount) > 0) {
+      hideViewerLoader(loaderToken);
+      setStatus('error', 'Не удалось получить актуальную ссылку на файл. Нажмите «Просмотреть» ещё раз.');
+      setActionButtonLoading(button, false);
+      return;
+    }
+    if (detailsLoaded && card) {
+      refreshCardLazyDetails(card, task);
+    }
+  }
+
   const timestamp = new Date().toISOString();
   logTaskViewClick(task, timestamp);
   markTaskViewedOnExpand(task, card, 'mini_app_view');
@@ -18540,7 +18575,9 @@ async function handleCardView(button, task) {
   });
 
   if (!files.length) {
+    hideViewerLoader(loaderToken);
     setStatus('warning', 'Для этой задачи нет файла для просмотра.');
+    setActionButtonLoading(button, false);
     logClientEvent('task_view_error', {
       reason: 'file_missing',
       taskId: task.id || '',
@@ -18553,6 +18590,10 @@ async function handleCardView(button, task) {
     return;
   }
 
+  // Большой список продолжает достраиваться небольшими пакетами. На время
+  // открытия документа отдаём главный поток просмотрщику, а карточки
+  // продолжат добавляться после закрытия либо ошибки открытия.
+  cardRenderPausedForViewer = true;
   setActionButtonLoading(button, true);
   logTaskViewStage(task, 'ui_button_loading_on', {
     sinceClickMs: Math.round(performance.now() - flowStartedAt),
@@ -18560,13 +18601,29 @@ async function handleCardView(button, task) {
 
   const firstFile = files[0];
   const displayName = firstFile.name || 'Документ';
-  showViewerLoader(displayName);
+  if (!loaderToken) {
+    loaderToken = showViewerLoader(displayName);
+  } else {
+    const loaderTitle = document.querySelector('[data-viewer-loader-title]');
+    if (loaderTitle instanceof HTMLElement) {
+      loaderTitle.textContent = `Загрузка: ${displayName}`;
+    }
+    updateViewerLoaderStep('Подготовка выбранного файла…', 32, loaderToken);
+  }
   logTaskViewStage(task, 'ui_loader_shown', {
     sinceClickMs: Math.round(performance.now() - flowStartedAt),
     firstFileName: displayName,
   });
   docLoadStart(displayName, firstFile.kind || '');
   docLoadStep('подготовка файлов');
+
+  // Запускаем только код PDF-просмотрщика после явного входа в «Просмотреть».
+  // Содержимое вложений остаётся ленивым и запрашивается лишь по вкладке файла.
+  if (files.some((file) => file && !file.isSummary && isPdfFile(file))
+    && pdfViewerInstance
+    && typeof pdfViewerInstance.preload === 'function') {
+    void pdfViewerInstance.preload();
+  }
 
   try {
     const tabsRenderStartedAt = performance.now();
@@ -18577,17 +18634,23 @@ async function handleCardView(button, task) {
       tabsCount: files.length,
     });
     docLoadStep('открытие файла');
-    await openViewerFile(firstFile, task, { notify: true, hasMultiple: files.length > 1 });
-    if (ENABLE_TASK_PDF_WARMUP) {
-      warmupTaskPdfFiles(task, files, firstFile);
-    }
-    logViewWatchEvent('task_view_watch_open_success', task, {
-      firstFileName: firstFile && firstFile.name ? firstFile.name : '',
-      firstFileKind: firstFile && firstFile.kind ? firstFile.kind : '',
-      openMs: Math.round(performance.now() - flowStartedAt),
-      filesCount: files.length,
+    const opened = await openViewerFile(firstFile, task, {
+      notify: true,
+      hasMultiple: files.length > 1,
+      loaderToken,
     });
-    logTaskViewStage(task, 'open_viewer_done', {
+    const requiresExternalAction = opened && opened.mode === 'external_prompt';
+    logViewWatchEvent(
+      requiresExternalAction ? 'task_view_watch_open_external_prompt' : 'task_view_watch_open_success',
+      task,
+      {
+        firstFileName: firstFile && firstFile.name ? firstFile.name : '',
+        firstFileKind: firstFile && firstFile.kind ? firstFile.kind : '',
+        openMs: Math.round(performance.now() - flowStartedAt),
+        filesCount: files.length,
+      },
+    );
+    logTaskViewStage(task, requiresExternalAction ? 'open_viewer_external_prompt' : 'open_viewer_done', {
       sinceClickMs: Math.round(performance.now() - flowStartedAt),
       fileName: firstFile && firstFile.name ? firstFile.name : '',
     });
@@ -18600,30 +18663,42 @@ async function handleCardView(button, task) {
     });
     docLoadFinish();
   } catch (error) {
-    logViewFlow('open:error', error && error.message ? error.message : String(error));
-    setStatus('error', 'Не удалось открыть документ. Попробуйте позже или скачайте файл.');
-    logClientEvent('task_view_error', {
-      reason: 'open_failed',
-      taskId: task.id || '',
-      entryNumber: task.entryNumber || '',
-      fileUrl: firstFile?.url || '',
-      error: error && error.message ? error.message : String(error),
-    });
-    logClientEvent('task_view_open_failed', {
-      ...buildTaskViewLogDetails(task),
-      error: error && error.message ? error.message : String(error),
-      file: summarizeViewerFile(firstFile, 0),
-    });
-    logViewWatchEvent('task_view_watch_open_error', task, {
-      firstFileName: firstFile && firstFile.name ? firstFile.name : '',
-      firstFileKind: firstFile && firstFile.kind ? firstFile.kind : '',
-      openMs: Math.round(performance.now() - flowStartedAt),
-      filesCount: files.length,
-      error: stageErrorToText(error),
-    });
-    docLoadFinish(error);
+    const openResult = classifyTaskViewResultByError(error);
+    if (openResult === 'cancelled') {
+      logViewWatchEvent('task_view_watch_open_cancelled', task, {
+        firstFileName: firstFile && firstFile.name ? firstFile.name : '',
+        firstFileKind: firstFile && firstFile.kind ? firstFile.kind : '',
+        openMs: Math.round(performance.now() - flowStartedAt),
+        filesCount: files.length,
+      });
+      docLoadFinish();
+    } else {
+      logViewFlow('open:error', error && error.message ? error.message : String(error));
+      setStatus('error', 'Не удалось открыть документ. Попробуйте позже или скачайте файл.');
+      logClientEvent('task_view_error', {
+        reason: 'open_failed',
+        taskId: task.id || '',
+        entryNumber: task.entryNumber || '',
+        fileUrl: firstFile?.url || '',
+        error: error && error.message ? error.message : String(error),
+      });
+      logClientEvent('task_view_open_failed', {
+        ...buildTaskViewLogDetails(task),
+        error: error && error.message ? error.message : String(error),
+        file: summarizeViewerFile(firstFile, 0),
+      });
+      logViewWatchEvent('task_view_watch_open_error', task, {
+        firstFileName: firstFile && firstFile.name ? firstFile.name : '',
+        firstFileKind: firstFile && firstFile.kind ? firstFile.kind : '',
+        openMs: Math.round(performance.now() - flowStartedAt),
+        filesCount: files.length,
+        error: stageErrorToText(error),
+      });
+      docLoadFinish(error);
+    }
   } finally {
-    hideViewerLoader();
+    cardRenderPausedForViewer = false;
+    hideViewerLoader(loaderToken);
     logTaskViewStage(task, 'ui_loader_hidden', {
       sinceClickMs: Math.round(performance.now() - flowStartedAt),
     });
@@ -19127,12 +19202,13 @@ async function handleStatusButtonClick(container, button, task, status) {
   });
 
   try {
-    await sendTaskMutation({
+    const response = await sendTaskMutation({
       updateType: 'status',
       organization,
       documentId: task.id,
       status: targetStatus,
     });
+    applyTaskMutationResponseInPlace(task, response, 'task_status_updated');
     logClientEvent('task_status_success', {
       taskId: task.id || null,
       organization,
@@ -19141,10 +19217,6 @@ async function handleStatusButtonClick(container, button, task, status) {
     });
     updateStatusButtonsSelection(container, targetStatus);
     setStatus('success', 'Статус обновлён.');
-    const refreshPromise = loadTasks(true);
-    if (refreshPromise && typeof refreshPromise.catch === 'function') {
-      refreshPromise.catch(() => {});
-    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logClientEvent('task_status_error', {
@@ -19186,15 +19258,15 @@ async function handleInstructionSelectChange(select, task) {
   setStatus('info', 'Сохраняем поручение...');
 
   try {
-    await sendTaskMutation({
+    const response = await sendTaskMutation({
       updateType: 'instruction',
       organization,
       documentId: task.id,
       instruction: nextValue,
     });
+    applyTaskMutationResponseInPlace(task, response, 'task_instruction_updated');
     select.dataset.previousInstruction = nextValue;
     setStatus('success', nextValue ? 'Поручение обновлено.' : 'Поручение удалено.');
-    await loadTasks(true);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     setStatus('error', message);
@@ -19282,26 +19354,23 @@ async function handleCardComplete(button, task) {
     } else {
       setDirectorCompletionButtonPressed(button);
     }
-    window.setTimeout(() => {
-      lastRenderedTasksSignature = '';
-      refreshVisibleTaskUi();
-    }, 650);
+    refreshRenderedTaskCardAfterMutation(task);
   } else {
-    refreshVisibleTaskUi();
+    refreshRenderedTaskCardAfterMutation(task);
   }
 
   try {
-    await sendTaskMutation({
+    const response = await sendTaskMutation({
       updateType: 'complete',
       organization,
       documentId: task.id,
     });
+    applyTaskMutationResponseInPlace(task, response, 'task_completion_updated');
     logClientEvent('task_complete_success', {
       taskId: task.id || null,
       organization,
       durationMs: Date.now() - startedAt,
     });
-    refreshTasksInBackground();
     setStatus('success', 'Задача отмечена выполненной.');
   } catch (error) {
     completedOptimistically = false;
@@ -19313,7 +19382,9 @@ async function handleCardComplete(button, task) {
       }
     });
     lastRenderedTasksSignature = '';
-    refreshVisibleTaskUi();
+    refreshRenderedTaskCardAfterMutation(task);
+    updateStats();
+    lastRenderedTasksSignature = buildTasksSignature(getCurrentTaskPageItems());
     const message = error instanceof Error ? error.message : String(error);
     logClientEvent('task_complete_error', {
       taskId: task.id || null,
@@ -19751,6 +19822,98 @@ function applyTaskMutationResponse(task, response) {
   }
 
   lastRenderedTasksSignature = '';
+  return true;
+}
+
+function refreshRenderedTaskCardAfterMutation(task) {
+  if (!task || typeof task !== 'object' || !(elements.cardsContainer instanceof HTMLElement)) {
+    return;
+  }
+
+  const taskKey = `${getTaskOrganization(task)}|${getTaskUniqueKey(task)}`;
+  const card = Array.from(elements.cardsContainer.querySelectorAll('[data-card]')).find((candidate) => {
+    if (!(candidate instanceof HTMLElement) || !candidate.__task) {
+      return false;
+    }
+    if (candidate.__task === task) {
+      return true;
+    }
+    return taskKey !== '|'
+      && `${getTaskOrganization(candidate.__task)}|${getTaskUniqueKey(candidate.__task)}` === taskKey;
+  });
+  if (!(card instanceof HTMLElement)) {
+    return;
+  }
+
+  card.__task = task;
+  const statusState = applyTaskCardStatusState(card, task);
+  const compactDueDateInfo = formatCompactDueDate(
+    task,
+    statusState.completed,
+    statusState.personalDueDateInfo,
+  );
+  setCompactDueDateText(card.querySelector('[data-field="dueDate"]'), compactDueDateInfo);
+  ensureCompactDueDateRow(card, compactDueDateInfo);
+  setCardField(card, '[data-field="instruction"]', resolveInstructionSummary(task));
+  const executorDisplay = formatEntityDisplay(resolveExecutor(task), 'Исполнитель');
+  setCardField(card, '[data-field="executor"]', executorDisplay);
+  setCardField(card, '[data-field="insightExecutor"]', executorDisplay, {
+    fallback: 'Не указан',
+    setTitle: false,
+  });
+  const responseSummary = normalizeValue(card.querySelector('[data-field="responseSummary"]')?.textContent);
+  const responseCount = countResponsesFromSummary(responseSummary);
+  const responseLabel = responseCount > 0 ? formatResponseCountLabel(responseCount) : '';
+  const peopleMeta = card.querySelector('.appdosc-card__people-meta');
+  if (peopleMeta instanceof HTMLElement) {
+    peopleMeta.textContent = buildPeopleDisclosureMeta(task, executorDisplay, responseLabel);
+  }
+  updateStatusButtonsSelection(card.querySelector('[data-card-status]'), statusState.statusText);
+  updateCardViewInfo(card, task);
+}
+
+function applyTaskMutationResponseInPlace(task, response, reason) {
+  const currentPage = Math.max(1, Number.parseInt(state.pagination.currentPage, 10) || 1);
+  const beforeIncluded = currentUserParticipatesInTask(task);
+  const beforeStats = beforeIncluded ? computeStatsFromTasks([task]) : computeStatsFromTasks([]);
+  if (!applyTaskMutationResponse(task, response)) {
+    return false;
+  }
+  const afterIncluded = currentUserParticipatesInTask(task);
+  const afterStats = afterIncluded ? computeStatsFromTasks([task]) : computeStatsFromTasks([]);
+  if (isPlainObject(state.stats)) {
+    ['total', 'completed', 'overdue', 'active'].forEach((field) => {
+      const currentValue = Number(state.stats[field]) || 0;
+      const beforeValue = Number(beforeStats[field]) || 0;
+      const afterValue = Number(afterStats[field]) || 0;
+      state.stats[field] = Math.max(0, currentValue - beforeValue + afterValue);
+    });
+    if (!isPlainObject(state.stats.statuses)) {
+      state.stats.statuses = createEmptyStatusCounters();
+    }
+    Object.keys(STATUS_SUMMARY_CONFIG).forEach((key) => {
+      const currentValue = Number(state.stats.statuses[key]) || 0;
+      const beforeValue = Number(beforeStats.statuses && beforeStats.statuses[key]) || 0;
+      const afterValue = Number(afterStats.statuses && afterStats.statuses[key]) || 0;
+      state.stats.statuses[key] = Math.max(0, currentValue - beforeValue + afterValue);
+    });
+  }
+  // Фильтр и состав текущей страницы намеренно не пересчитываются сразу после
+  // изменения: карточка остаётся на прежнем месте даже при смене её статуса.
+  // Полный список применит фильтры только по явному обновлению, смене фильтра
+  // или переходу пользователя на другую страницу.
+  state.pagination.currentPage = currentPage;
+  pendingTaskViewportRestore = null;
+  refreshRenderedTaskCardAfterMutation(task);
+  updateStats();
+  updateSummaryFilterState();
+  updateFooter();
+  lastRenderedTasksSignature = buildTasksSignature(getCurrentTaskPageItems());
+  logClientEvent('task_mutation_applied_in_place', {
+    reason: normalizeValue(reason) || 'task_mutation_response',
+    currentPage,
+    filters: formatTaskFiltersForLog(state.activeFilters.statusFilters),
+  });
   return true;
 }
 
@@ -21526,6 +21689,9 @@ function currentUserCanReviewSubordinates(task) {
 function getTaskOrganization(task) {
   if (task && normalizeValue(task.organization)) {
     return normalizeValue(task.organization);
+  }
+  if (task && normalizeValue(task.documentFolder)) {
+    return normalizeValue(task.documentFolder);
   }
   if (state.organizations.length === 1) {
     const candidate = state.organizations[0];
@@ -25182,9 +25348,13 @@ function setStatusAction(type, message, actionLabel, actionHandler, options = {}
 function showOverdueTasksFromNotice() {
   state.activeFilters.statusFilters = ['overdue'];
   state.selectedCardAnchor = '';
+  state.pagination.currentPage = 1;
   updateVisibleTasks();
   safeRender('overdue_notice_filter');
   clearStatus();
+  if (state.pagination.hasMore) {
+    void loadRemainingTaskPagesForStatusFilter(['overdue']);
+  }
 }
 
 function maybeShowOverdueOpenNotice() {
@@ -25276,9 +25446,42 @@ function handleSummaryBadgeClick(filter) {
 
   state.activeFilters.statusFilters = nextFilters;
   state.selectedCardAnchor = '';
+  state.pagination.currentPage = 1;
   updateVisibleTasks();
   const reason = nextFilters.length === 0 ? 'task_filter_reset' : 'task_filter_change';
   safeRender(reason);
+  if (nextFilters.length > 0 && state.pagination.hasMore) {
+    void loadRemainingTaskPagesForStatusFilter(nextFilters);
+  }
+}
+
+async function loadRemainingTaskPagesForStatusFilter(expectedFilters) {
+  const expectedSignature = formatTaskFiltersForLog(expectedFilters);
+  setStatus('info', 'Догружаю задачи для выбранного статуса…');
+
+  let completed = true;
+  while (state.pagination.hasMore
+    && formatTaskFiltersForLog(state.activeFilters.statusFilters) === expectedSignature) {
+    // Страницы запрашиваются последовательно, а карточки перестраиваются один раз
+    // после полной догрузки, чтобы не блокировать мобильный WebView.
+    // eslint-disable-next-line no-await-in-loop
+    const loaded = await loadTasks(true, { append: true, silent: true, deferRender: true });
+    if (loaded === false) {
+      completed = false;
+      break;
+    }
+  }
+
+  if (formatTaskFiltersForLog(state.activeFilters.statusFilters) !== expectedSignature) {
+    return;
+  }
+  updateVisibleTasks();
+  safeRender('task_status_filter_pages_loaded');
+  if (completed) {
+    clearStatus();
+  } else {
+    setStatus('error', 'Не удалось догрузить все страницы задач. Попробуйте фильтр ещё раз.');
+  }
 }
 
 function clearEntryTaskFocusForInteractiveSearch(source) {
@@ -25305,7 +25508,7 @@ function attachEvents() {
         logClientEvent('manual_refresh_skipped', { reason: 'task_search_open' });
         return;
       }
-      loadTasks(true);
+      refreshLoadedTaskPages({ force: true, silent: false });
     });
   }
   if (elements.taskSelector) {
@@ -25353,6 +25556,7 @@ function attachEvents() {
         } else {
           applyCompactQuickPreset(preset);
         }
+        state.pagination.currentPage = 1;
         updateVisibleTasks();
         safeRender('compact_filter_quick');
       });
@@ -25383,6 +25587,7 @@ function attachEvents() {
       } else if (valueIndexRaw !== undefined) {
         current.value = normalizeValue(target.value);
       }
+      state.pagination.currentPage = 1;
       syncCompactFilterGroupOptions();
       updateVisibleTasks();
       safeRender('compact_filter_groups_change');
@@ -25404,6 +25609,7 @@ function attachEvents() {
       if (!state.activeFilters.groupFilters.length) {
         state.activeFilters.groupFilters = [{ type: '', value: '' }];
       }
+      state.pagination.currentPage = 1;
       syncCompactFilterGroupOptions();
       updateVisibleTasks();
       safeRender('compact_filter_groups_remove');
@@ -25460,6 +25666,20 @@ function attachEvents() {
       target.addEventListener('click', closeSettingsSheet);
     });
   }
+  if (elements.impersonationSelect) {
+    elements.impersonationSelect.addEventListener('change', renderImpersonationControls);
+  }
+  if (elements.impersonationApply) {
+    elements.impersonationApply.addEventListener('click', activateImpersonationFromSettings);
+  }
+  if (elements.impersonationReset) {
+    elements.impersonationReset.addEventListener('click', resetImpersonation);
+  }
+  if (Array.isArray(elements.impersonationExitButtons)) {
+    elements.impersonationExitButtons.forEach((button) => {
+      button.addEventListener('click', resetImpersonation);
+    });
+  }
   if (Array.isArray(elements.themeOptionButtons) && elements.themeOptionButtons.length) {
     elements.themeOptionButtons.forEach((button) => {
       button.addEventListener('click', () => {
@@ -25481,13 +25701,13 @@ function attachEvents() {
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && !isTaskSearchBackgroundLocked()) {
-      loadTasks(false);
+      refreshLoadedTaskPages({ force: false, silent: true });
     }
   });
 
   window.addEventListener('pageshow', (event) => {
     if (event.persisted && !isTaskSearchBackgroundLocked()) {
-      loadTasks(false);
+      refreshLoadedTaskPages({ force: false, silent: true });
     }
   });
   document.addEventListener('keydown', (event) => {
@@ -25690,17 +25910,6 @@ function updateOrganizationAccessMaps() {
 }
 
 function bootstrap() {
-  if (typeof window !== 'undefined') {
-    window.__DOCS_PDF_LOGGER__ = (entry) => {
-      if (!entry || typeof entry !== 'object') {
-        return;
-      }
-      if (entry.scope !== 'zoom') {
-        return;
-      }
-      sendPdfLogEntry(entry.prefix || '', entry.step || '', entry.details);
-    };
-  }
   attachConsoleCapture();
   attachGlobalErrorHandlers();
   initElements();
@@ -25709,15 +25918,11 @@ function bootstrap() {
   saveFoldersToStorage();
   initThemeMode();
   pdfViewerInstance = createPdfViewer(document);
-  if (pdfViewerInstance && typeof pdfViewerInstance.preload === 'function') {
-    pdfViewerInstance.preload();
-  }
   attachPdfDiagnostics();
   readAssetVersionInfo();
   initTelegram();
   attachPublicTaskHooks();
   attachEvents();
-  prewarmMiniAppPdfResources();
   if (!safeRender('bootstrap_initial')) {
     try {
       renderEmpty();
@@ -26187,11 +26392,8 @@ function refreshDirectorStateAfterLocalTaskMutation(options = {}) {
     return;
   }
   updateSummaryFilterState();
-  updateVisibleTasks();
   updateStats();
   updateSummaryFilterState();
-  updateDirectorSummary();
-  renderBulkFolderPanel();
   updateFooter();
 }
 
@@ -26220,7 +26422,10 @@ function appendResponseCacheKey(url, cacheKey) {
     return '';
   }
 
-  const resolvedKey = normalizeValue(cacheKey) || String(Date.now());
+  const resolvedKey = normalizeValue(cacheKey);
+  if (!resolvedKey) {
+    return url;
+  }
   try {
     const parsed = new URL(url, window.location.origin);
     parsed.searchParams.set('v', resolvedKey);
@@ -26339,7 +26544,10 @@ function resolveResponseViewerFilesForEntry(task, entry, fallbackValue = '') {
     const rawUrl = normalizeValue(file.url)
       || normalizeValue(file.storedName)
       || preview.raw;
-    const cacheKey = normalizeValue(file.uploadedAt) || String(Date.now());
+    const cacheKey = normalizeValue(file.uploadedAt)
+      || normalizeValue(file.storedName)
+      || normalizeValue(file.url)
+      || normalizeValue(file.originalName);
     const resolvedUrl = appendResponseCacheKey(preview.resolved, cacheKey);
     const previewUrl = appendResponseCacheKey(preview.resolved, cacheKey);
     const kind = resolveViewerFileKind(displayName, rawUrl || preview.resolved);
@@ -26352,6 +26560,7 @@ function resolveResponseViewerFilesForEntry(task, entry, fallbackValue = '') {
       kind,
       isResponse: true,
       storedName: normalizeValue(file.storedName),
+      uploadedAt: normalizeValue(file.uploadedAt),
       uploadedByKey: normalizeValue(file.uploadedByKey),
       uploadedBy: findResponsibleNameInAccessByFile(file) || normalizeValue(file.uploadedBy),
     });
@@ -26486,61 +26695,6 @@ function renderResponseFilesCounter(counterElement, count, isFresh = false, butt
   }
 }
 
-async function fetchLatestTaskSnapshotFallbackFromList(task) {
-  if (!task || typeof task !== 'object' || typeof fetch !== 'function') {
-    return null;
-  }
-
-  try {
-    const headers = {
-      'Content-Type': 'application/json',
-    };
-    if (state.telegram.initData) {
-      headers['X-Telegram-Init-Data'] = state.telegram.initData;
-    }
-
-    const response = await fetch(API_URL, {
-      method: 'POST',
-      headers,
-      credentials: 'include',
-      cache: 'no-store',
-      body: JSON.stringify(buildRequestBody()),
-    });
-    if (!response.ok) {
-      return null;
-    }
-
-    const payload = await response.json();
-    if (!payload || payload.success !== true) {
-      return null;
-    }
-
-    const collection = normalizeTasksCollection(payload.tasks);
-    if (!collection.length) {
-      return null;
-    }
-
-    const identityCandidates = [
-      task.id,
-      task.entryNumber,
-      task.registryNumber,
-      task.documentNumber,
-    ].filter(Boolean);
-
-    for (let i = 0; i < identityCandidates.length; i += 1) {
-      const candidate = identityCandidates[i];
-      const matchedTask = collection.find((item) => taskMatchesEntryTask(item, candidate));
-      if (matchedTask) {
-        return matchedTask;
-      }
-    }
-  } catch (_) {
-    return null;
-  }
-
-  return null;
-}
-
 async function fetchLatestTaskSnapshot(task, options = {}) {
   if (!task || typeof task !== 'object' || typeof fetch !== 'function') {
     return { snapshot: null, status: 'invalid' };
@@ -26555,6 +26709,14 @@ async function fetchLatestTaskSnapshot(task, options = {}) {
 
   const controller = typeof AbortController === 'function' ? new AbortController() : null;
   const timeoutId = controller ? window.setTimeout(() => controller.abort(), timeoutMs) : null;
+  const expectedIdentity = {
+    taskKey: buildTaskSnapshotKeyForDeepLink(task),
+    id: normalizeValue(task.id),
+    entryNumber: normalizeValue(task.entryNumber),
+    registryNumber: normalizeValue(task.registryNumber),
+    documentNumber: normalizeValue(task.documentNumber),
+  };
+  const documentFolder = normalizeValue(task.documentFolder);
 
   try {
     const response = await fetch(TASK_SNAPSHOT_API_URL, {
@@ -26565,8 +26727,12 @@ async function fetchLatestTaskSnapshot(task, options = {}) {
       signal: controller ? controller.signal : undefined,
       body: JSON.stringify({
         ...buildRequestBody(),
-        taskId: normalizeValue(task.id),
-        organization: getTaskOrganization(task),
+        taskId: expectedIdentity.id,
+        taskKey: expectedIdentity.taskKey,
+        entryNumber: expectedIdentity.entryNumber,
+        registryNumber: expectedIdentity.registryNumber,
+        documentNumber: expectedIdentity.documentNumber,
+        organization: documentFolder || getTaskOrganization(task),
       }),
     });
 
@@ -26574,6 +26740,27 @@ async function fetchLatestTaskSnapshot(task, options = {}) {
       const payload = await response.json();
       if (payload && payload.success === true) {
         const data = payload.data && typeof payload.data === 'object' ? payload.data : payload;
+        const responseIdentity = {
+          taskKey: normalizeValue(data.taskKey),
+          id: normalizeValue(data.taskId),
+          entryNumber: normalizeValue(data.entryNumber),
+          registryNumber: normalizeValue(data.registryNumber),
+          documentNumber: normalizeValue(data.documentNumber),
+        };
+        const identityMismatch = Object.keys(expectedIdentity).some((field) => {
+          return expectedIdentity[field]
+            && responseIdentity[field]
+            && expectedIdentity[field] !== responseIdentity[field];
+        });
+        if (identityMismatch) {
+          logClientEvent('task_details_identity_mismatch', {
+            ...buildTaskViewLogDetails(task),
+            expectedTaskKey: expectedIdentity.taskKey,
+            responseTaskKey: responseIdentity.taskKey,
+            responseTaskId: responseIdentity.id,
+          });
+          return { snapshot: null, status: 'identity_mismatch' };
+        }
         return {
           snapshot: {
             files: Array.isArray(data.files) ? data.files : [],
@@ -26585,37 +26772,121 @@ async function fetchLatestTaskSnapshot(task, options = {}) {
       }
     }
 
-    let canUseLegacyFallback = response.status === 404 || response.status === 405;
-    if (!canUseLegacyFallback && response.status === 400) {
-      try {
-        const payload = await response.clone().json();
-        const message = normalizeValue(payload && (payload.message || payload.error || payload.reason || ''));
-        const normalizedMessage = message.toLowerCase();
-        if (normalizedMessage.includes('неизвест') && normalizedMessage.includes('действ')) {
-          canUseLegacyFallback = true;
-        }
-        if (normalizedMessage.includes('unknown') && normalizedMessage.includes('action')) {
-          canUseLegacyFallback = true;
-        }
-      } catch (_) {
-        canUseLegacyFallback = false;
-      }
-    }
-
-    if (canUseLegacyFallback) {
-      const legacy = await fetchLatestTaskSnapshotFallbackFromList(task);
-      return { snapshot: legacy, status: legacy ? 'legacy' : 'legacy_failed' };
-    }
-
-    return { snapshot: null, status: 'unavailable' };
+    return {
+      snapshot: null,
+      status: response.status === 409
+        ? 'identity_mismatch'
+        : (response.status === 401 || response.status === 403 ? 'unavailable' : 'http_error'),
+    };
   } catch (error) {
     const isTimeout = Boolean(error && (error.name === 'AbortError' || error.code === 'abort'));
-    return { snapshot: null, status: isTimeout ? 'timeout' : 'error' };
+    return {
+      snapshot: null,
+      status: isTimeout ? 'timeout' : 'error',
+    };
   } finally {
     if (timeoutId !== null) {
       window.clearTimeout(timeoutId);
     }
   }
+}
+
+function refreshCardLazyDetails(card, task) {
+  if (!(card instanceof HTMLElement) || !task || typeof task !== 'object') {
+    return;
+  }
+
+  populateCardFiles(card, task.files);
+  populateCardAiBrief(card, task);
+  card.dataset.filesPopulated = 'true';
+
+  const responseSummaryText = buildTaskResponseSummary(task);
+  setCardField(card, '[data-field="responseSummary"]', responseSummaryText, { setTitle: false });
+  const responseCount = countResponsesFromSummary(responseSummaryText);
+  const filesCount = Array.isArray(task.files) ? task.files.length : 0;
+  const responseLabel = responseCount > 0 ? formatResponseCountLabel(responseCount) : '';
+  const filesLabel = filesCount === 1
+    ? '1 файл'
+    : (filesCount > 1 && filesCount < 5 ? `${filesCount} файла` : `${filesCount} файлов`);
+  setCardField(card, '[data-field="insightResponses"]', responseCount > 0 ? responseLabel : 'Нет ответов', {
+    setTitle: false,
+  });
+  setCardField(card, '[data-field="insightFiles"]', filesCount > 0 ? filesLabel : '0 файлов', {
+    setTitle: false,
+  });
+
+  const peopleMeta = card.querySelector('.appdosc-card__people-meta');
+  const executorText = normalizeValue(card.querySelector('[data-field="executor"]')?.textContent);
+  if (peopleMeta) {
+    peopleMeta.textContent = buildPeopleDisclosureMeta(task, executorText, responseLabel);
+  }
+}
+
+async function ensureTaskDetails(task) {
+  if (!task || typeof task !== 'object') {
+    return false;
+  }
+  if (task.detailsLoaded !== false) {
+    return true;
+  }
+
+  const requestKey = [
+    normalizeValue(task.documentFolder) || getTaskOrganization(task),
+    buildTaskSnapshotKeyForDeepLink(task),
+    normalizeValue(task.id),
+    normalizeValue(task.entryNumber),
+    normalizeValue(task.registryNumber),
+    normalizeValue(task.documentNumber),
+  ].join('|');
+  if (state.taskDetailsRequests.has(requestKey)) {
+    return state.taskDetailsRequests.get(requestKey);
+  }
+
+  const request = (async () => {
+    const expectedFilesCount = Math.max(0, Number(task.filesCount) || 0);
+    let result = await fetchLatestTaskSnapshot(task);
+    let snapshot = result && result.snapshot && typeof result.snapshot === 'object'
+      ? result.snapshot
+      : null;
+    let files = snapshot ? sanitizeTaskFiles(snapshot.files) : [];
+    let hasResolvableFile = files.some((file) => Boolean(resolveFilePreviewSource(file, task)));
+
+    const firstStatus = result && result.status ? result.status : 'empty';
+    const nonRetryableStatuses = new Set(['timeout', 'unavailable', 'identity_mismatch']);
+    const shouldRetry = (snapshot && expectedFilesCount > 0 && !hasResolvableFile)
+      || (!snapshot && !nonRetryableStatuses.has(firstStatus));
+    if (shouldRetry) {
+      logClientEvent('task_details_load_retry', {
+        ...buildTaskViewLogDetails(task),
+        expectedFilesCount,
+        receivedFilesCount: files.length,
+        snapshotStatus: firstStatus,
+      });
+      result = await fetchLatestTaskSnapshot(task, { timeoutMs: TASK_DETAILS_RETRY_TIMEOUT_MS });
+      snapshot = result && result.snapshot && typeof result.snapshot === 'object'
+        ? result.snapshot
+        : null;
+      files = snapshot ? sanitizeTaskFiles(snapshot.files) : [];
+      hasResolvableFile = files.some((file) => Boolean(resolveFilePreviewSource(file, task)));
+    }
+
+    if (!snapshot || (expectedFilesCount > 0 && !hasResolvableFile)) {
+      return false;
+    }
+
+    task.files = files;
+    task.responses = Array.isArray(snapshot.responses) ? snapshot.responses : [];
+    task.filesCount = task.files.length;
+    task.responsesCount = task.responses.length;
+    task.updatedAt = normalizeValue(snapshot.updatedAt) || normalizeValue(task.updatedAt);
+    task.detailsLoaded = true;
+    return true;
+  })().finally(() => {
+    state.taskDetailsRequests.delete(requestKey);
+  });
+
+  state.taskDetailsRequests.set(requestKey, request);
+  return request;
 }
 
 async function resolveTaskForAiDialog(task, options = {}) {
@@ -26817,7 +27088,7 @@ async function openResponseViewerForEntry(button, task, entry, fallbackValue = '
   setActionButtonLoading(button, true);
   const firstFile = files[0];
   const displayName = firstFile.name || 'Ответ к задаче';
-  showViewerLoader(displayName);
+  const loaderToken = showViewerLoader(displayName);
   docLoadStart(displayName, firstFile.kind || '');
   docLoadStep('подготовка ответов');
 
@@ -26829,23 +27100,38 @@ async function openResponseViewerForEntry(button, task, entry, fallbackValue = '
       firstFile: summarizeViewerFile(firstFile),
       files: files.map((item) => summarizeViewerFile(item)),
     });
-    const opened = await openViewerFile(firstFile, task, { notify: true, hasMultiple: files.length > 1 });
-    sendResponseViewerLog('open_success', {
-      ...logBase,
-      mode: opened && opened.mode ? opened.mode : '',
-      firstFile: summarizeViewerFile(firstFile),
+    const opened = await openViewerFile(firstFile, task, {
+      notify: true,
+      hasMultiple: files.length > 1,
+      loaderToken,
     });
+    sendResponseViewerLog(
+      opened && opened.mode === 'external_prompt' ? 'open_external_prompt' : 'open_success',
+      {
+        ...logBase,
+        mode: opened && opened.mode ? opened.mode : '',
+        firstFile: summarizeViewerFile(firstFile),
+      },
+    );
     docLoadFinish();
   } catch (error) {
-    setStatus('error', 'Не удалось открыть ответ. Попробуйте позже.');
-    sendResponseViewerLog('open_error', {
-      ...logBase,
-      error: error && error.message ? String(error.message) : 'unknown_error',
-      firstFile: summarizeViewerFile(firstFile),
-    });
-    docLoadFinish(error);
+    if (classifyTaskViewResultByError(error) === 'cancelled') {
+      sendResponseViewerLog('open_cancelled', {
+        ...logBase,
+        firstFile: summarizeViewerFile(firstFile),
+      });
+      docLoadFinish();
+    } else {
+      setStatus('error', 'Не удалось открыть ответ. Попробуйте позже.');
+      sendResponseViewerLog('open_error', {
+        ...logBase,
+        error: error && error.message ? String(error.message) : 'unknown_error',
+        firstFile: summarizeViewerFile(firstFile),
+      });
+      docLoadFinish(error);
+    }
   } finally {
-    hideViewerLoader();
+    hideViewerLoader(loaderToken);
     setActionButtonLoading(button, false);
   }
 }
@@ -27082,7 +27368,7 @@ function appendSubordinateReviewControls(container, task, entry, fallbackValue =
           setStatus('success', result && result.message
             ? result.message
             : (decision === 'accepted' ? 'Выполнение принято.' : 'Отправлено на доработку.'));
-          await loadTasks(true);
+          applyTaskMutationResponseInPlace(task, result, 'task_subordinate_review_updated');
         } catch (error) {
           const errorDetails = buildErrorDetails(error);
           const message = errorDetails.message || 'Не удалось сохранить решение.';
@@ -28406,9 +28692,6 @@ function setupAssignmentTemplateControls({
     if (missing) {
       details.push(`без Telegram ID ${missing}`);
     }
-    if (added) {
-      refreshTasksInBackground();
-    }
     if (!failed && typeof setStatus === 'function') {
       if (added) {
         setStatus('success', details.length
@@ -28802,6 +29085,9 @@ async function uploadTaskResponseFiles(task, files, setStatus, responseMessageRa
   if (effectiveTelegramId) {
     formData.append('telegram_user_id', effectiveTelegramId);
   }
+  if (state.impersonation && state.impersonation.active && state.impersonation.targetTelegramId) {
+    formData.append('impersonate_user_id', state.impersonation.targetTelegramId);
+  }
 
   const headers = {};
   if (state.telegram.initData) {
@@ -28843,7 +29129,7 @@ async function uploadTaskResponseFiles(task, files, setStatus, responseMessageRa
       },
     );
 
-    await loadTasks(true);
+    await refreshLoadedTaskPages({ force: true, silent: true });
     if (typeof setStatus === 'function') {
       const baseMessage = data.message || 'Ответ загружен.';
       setStatus('success', baseMessage);
@@ -28922,6 +29208,7 @@ async function updateTaskResponseText(task, storedName, textValue, setStatus) {
     credentials: 'include',
     headers,
     body: JSON.stringify({
+      ...buildRequestBody({ includeInitData: false, includeNameTokens: false }),
       action: 'response_text_update',
       organization,
       documentId,
@@ -28939,7 +29226,7 @@ async function updateTaskResponseText(task, storedName, textValue, setStatus) {
   if (!response.ok || !data || data.success !== true) {
     throw new Error((data && (data.error || data.message)) || `Ошибка ${response.status}`);
   }
-  await loadTasks(true);
+  await refreshLoadedTaskPages({ force: true, silent: true });
   if (typeof setStatus === 'function') {
     setStatus('success', data.message || 'Текстовый ответ обновлён.');
   }
@@ -29890,7 +30177,7 @@ function setupAssignmentControls(card, task) {
       removeOptimisticAssignmentFromTask(task, 'responsible', targetValue);
       row.remove();
       updateBulkState();
-      refreshDirectorStateAfterLocalTaskMutation();
+      refreshDirectorStateAfterLocalTaskMutation({ renderCards: false });
 
       try {
         await sendTaskMutation({
@@ -29910,7 +30197,6 @@ function setupAssignmentControls(card, task) {
           durationMs: Date.now() - startedAt,
         });
 
-        refreshTasksInBackground();
         setStatus('success', 'Ответственный удалён.');
       } catch (error) {
         restoreTaskAssignmentSnapshot(task, rollbackSnapshot);
@@ -29941,7 +30227,6 @@ function setupAssignmentControls(card, task) {
   };
 
   const handleBulkAssign = async (options = {}) => {
-    const shouldRefresh = !(options && options.skipRefresh === true);
     if (!canUseResponsibleAuthorScope) {
       return false;
     }
@@ -30066,7 +30351,11 @@ function setupAssignmentControls(card, task) {
         assignees: payloadAssignments,
         subordinates: buildMutationSnapshotEntries(task, 'subordinate'),
       });
-      const taskSyncedFromServer = applyTaskMutationResponse(task, response);
+      const taskSyncedFromServer = applyTaskMutationResponseInPlace(
+        task,
+        response,
+        'task_assignment_updated',
+      );
 
       logClientEvent('task_assign_success', {
         taskId: task.id || null,
@@ -30114,9 +30403,6 @@ function setupAssignmentControls(card, task) {
       setStatus('success', updatesOnly
         ? 'Данные ответственного обновлены.'
         : (payloadAssignments.length > 1 ? 'Ответственные назначены.' : 'Ответственный назначен.'));
-      if (shouldRefresh) {
-        refreshTasksInBackground();
-      }
       return true;
     } catch (error) {
       restoreTaskAssignmentSnapshot(task, rollbackSnapshot);
@@ -31343,7 +31629,7 @@ function setupSubordinateControls(card, task) {
       removeOptimisticAssignmentFromTask(task, 'subordinate', targetValue);
       row.remove();
       updateBulkState();
-      refreshDirectorStateAfterLocalTaskMutation();
+      refreshDirectorStateAfterLocalTaskMutation({ renderCards: false });
 
       try {
         await sendTaskMutation({
@@ -31363,7 +31649,6 @@ function setupSubordinateControls(card, task) {
           durationMs: Date.now() - startedAt,
         });
 
-        refreshTasksInBackground();
         setStatus('success', 'Подчинённый удалён.');
       } catch (error) {
         restoreTaskAssignmentSnapshot(task, rollbackSnapshot);
@@ -31394,7 +31679,6 @@ function setupSubordinateControls(card, task) {
   };
 
   const handleBulkAssign = async (options = {}) => {
-    const shouldRefresh = !(options && options.skipRefresh === true);
     if (!canUseSubordinateAuthorScope) {
       return false;
     }
@@ -31527,9 +31811,6 @@ function setupSubordinateControls(card, task) {
       setStatus('success', updatesOnly
         ? 'Данные подчинённого обновлены.'
         : (payloadAssignments.length > 1 ? 'Подчинённые назначены.' : 'Подчинённый назначен.'));
-      if (shouldRefresh) {
-        refreshTasksInBackground();
-      }
       return true;
     } catch (error) {
       restoreTaskAssignmentSnapshot(task, rollbackSnapshot);

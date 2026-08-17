@@ -6,17 +6,16 @@ const PDFJS_SOURCES = [
     worker: '/js/documents/pdf/pdf.worker.min.js',
   },
 ];
-const PDF_LOG_PREFIX = 'ПДФ';
 const PDF_DIAGNOSTIC_EVENT = 'appdosc:pdf-log';
-const VIEWER_LOG_PREFIX_DEEP = 'Просмотр2';
-const ZOOM_LOG_PREFIX = 'Масштаб';
-const SCROLL_LOG_THROTTLE_MS = 900;
-const IMAGE_SCROLL_LOG_THROTTLE_MS = 650;
-const IMAGE_DRAG_LOG_THROTTLE_MS = 800;
-const MOUSE_FALLBACK_DELAY_MS = 1500;
+const PDFJS_SCRIPT_LOAD_TIMEOUT_MS = 8000;
+const PDF_FRAME_FALLBACK_TIMEOUT_MS = 62000;
+// Если PDF.js не получил структуру документа за это время, нативный iframe
+// даст пользователю более быстрый шанс открыть файл без повторной загрузки PDF.js.
+const PDF_DOCUMENT_OPEN_TIMEOUT_MS = 12000;
 
 let pdfjsPromise = null;
 let pointerWarningLogged = false;
+let backgroundAppSuspension = null;
 
 function logPdfEvent(step, details) {
   if (typeof window === 'undefined') {
@@ -25,46 +24,6 @@ function logPdfEvent(step, details) {
   if (typeof window.dispatchEvent === 'function') {
     try {
       window.dispatchEvent(new CustomEvent(PDF_DIAGNOSTIC_EVENT, { detail: { step, details } }));
-    } catch (error) {
-      // ignore
-    }
-  }
-}
-
-function logViewerDeep(step, details) {
-  if (typeof window === 'undefined') {
-    return;
-  }
-}
-
-function getPlatformDetails() {
-  if (typeof window === 'undefined') {
-    return { platform: '', navigatorPlatform: '' };
-  }
-  const telegramPlatform = window.Telegram && window.Telegram.WebApp
-    ? window.Telegram.WebApp.platform
-    : '';
-  const navigatorPlatform = typeof navigator !== 'undefined' && typeof navigator.platform === 'string'
-    ? navigator.platform
-    : '';
-  return {
-    platform: telegramPlatform || 'web',
-    navigatorPlatform,
-  };
-}
-
-function logZoomEvent(step, details = {}) {
-  if (typeof window === 'undefined') {
-    return;
-  }
-  if (typeof window.__DOCS_PDF_LOGGER__ === 'function') {
-    try {
-      window.__DOCS_PDF_LOGGER__({
-        prefix: ZOOM_LOG_PREFIX,
-        step,
-        details: { ...details, ...getPlatformDetails() },
-        scope: 'zoom',
-      });
     } catch (error) {
       // ignore
     }
@@ -89,7 +48,7 @@ async function ensurePdfjs() {
     logPdfEvent('pdfjs:pending');
     return pdfjsPromise;
   }
-  const cacheVersion = window.__ASSET_VERSION__ || Date.now();
+  const cacheVersion = window.__RUNTIME_ASSET_VERSION__ || window.__ASSET_VERSION__ || Date.now();
 
   const loadFromSource = (index) => new Promise((resolve, reject) => {
     if (index >= PDFJS_SOURCES.length) {
@@ -100,31 +59,59 @@ async function ensurePdfjs() {
     const source = PDFJS_SOURCES[index];
     logPdfEvent('pdfjs:load', { source });
     const script = document.createElement('script');
+    let settled = false;
+    const finish = (callback) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      window.clearTimeout(loadTimeoutId);
+      callback();
+    };
     script.src = `${source.script}${source.script.includes('?') ? '&' : '?'}v=${encodeURIComponent(cacheVersion)}`;
     script.async = true;
     script.onload = () => {
-      if (window.pdfjsLib && window.pdfjsLib.GlobalWorkerOptions) {
-        window.pdfjsLib.GlobalWorkerOptions.workerSrc =
-          `${source.worker}${source.worker.includes('?') ? '&' : '?'}v=${encodeURIComponent(cacheVersion)}`;
-        logPdfEvent('pdfjs:loaded', {
-          worker: window.pdfjsLib.GlobalWorkerOptions.workerSrc || '',
-          version: window.pdfjsLib.version || '',
-        });
-        resolve(window.pdfjsLib);
-        return;
-      }
-      logPdfEvent('pdfjs:error', { source, reason: 'missing_pdfjs' });
-      reject(new Error('pdf.js не загрузилась'));
+      finish(() => {
+        if (window.pdfjsLib && window.pdfjsLib.GlobalWorkerOptions) {
+          window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+            `${source.worker}${source.worker.includes('?') ? '&' : '?'}v=${encodeURIComponent(cacheVersion)}`;
+          logPdfEvent('pdfjs:loaded', {
+            worker: window.pdfjsLib.GlobalWorkerOptions.workerSrc || '',
+            version: window.pdfjsLib.version || '',
+          });
+          resolve(window.pdfjsLib);
+          return;
+        }
+        logPdfEvent('pdfjs:error', { source, reason: 'missing_pdfjs' });
+        reject(new Error('pdf.js не загрузилась'));
+      });
     };
     script.onerror = () => {
-      logPdfEvent('pdfjs:error', { source, reason: 'load_failed' });
-      resolve(loadFromSource(index + 1));
+      finish(() => {
+        logPdfEvent('pdfjs:error', { source, reason: 'load_failed' });
+        resolve(loadFromSource(index + 1));
+      });
     };
+    const loadTimeoutId = window.setTimeout(() => {
+      finish(() => {
+        script.remove();
+        logPdfEvent('pdfjs:error', { source, reason: 'load_timeout' });
+        reject(new Error('pdfjs_script_load_timeout'));
+      });
+    }, PDFJS_SCRIPT_LOAD_TIMEOUT_MS);
     document.head.appendChild(script);
   });
 
-  pdfjsPromise = loadFromSource(0);
+  pdfjsPromise = loadFromSource(0).catch((error) => {
+    pdfjsPromise = null;
+    throw error;
+  });
   return pdfjsPromise;
+}
+
+function isPdfWorkerFailure(error) {
+  const message = error && error.message ? String(error.message) : String(error || '');
+  return /worker|workerSrc|fake worker/i.test(message);
 }
 
 function resolveUrl(rawUrl) {
@@ -145,14 +132,83 @@ function resolveUrl(rawUrl) {
   }
 }
 
+function setBackgroundAppSuspended(active) {
+  if (typeof document === 'undefined') {
+    return;
+  }
+
+  if (active) {
+    if (backgroundAppSuspension) {
+      return;
+    }
+    const viewer = document.querySelector('[data-viewer]');
+    const appRoot = viewer instanceof HTMLElement
+      ? viewer.closest('[data-app]')
+      : document.querySelector('[data-app]');
+    if (!(appRoot instanceof HTMLElement) || !(viewer instanceof HTMLElement)) {
+      return;
+    }
+
+    const backgroundElements = Array.from(appRoot.children)
+      .filter((element) => element instanceof HTMLElement && element !== viewer && !element.contains(viewer))
+      .map((element) => ({
+        element,
+        ariaHidden: element.getAttribute('aria-hidden'),
+        inert: 'inert' in element ? element.inert : null,
+      }));
+
+    backgroundAppSuspension = {
+      elements: backgroundElements,
+      scrollX: typeof window !== 'undefined' ? window.scrollX : 0,
+      scrollY: typeof window !== 'undefined' ? window.scrollY : 0,
+    };
+
+    backgroundElements.forEach(({ element }) => {
+      element.setAttribute('aria-hidden', 'true');
+      if ('inert' in element) {
+        element.inert = true;
+      }
+    });
+    return;
+  }
+
+  const suspension = backgroundAppSuspension;
+  backgroundAppSuspension = null;
+  if (!suspension || !Array.isArray(suspension.elements)) {
+    return;
+  }
+
+  suspension.elements.forEach(({ element, ariaHidden, inert }) => {
+    if (!(element instanceof HTMLElement)) {
+      return;
+    }
+    if (ariaHidden === null) {
+      element.removeAttribute('aria-hidden');
+    } else {
+      element.setAttribute('aria-hidden', ariaHidden);
+    }
+    if ('inert' in element && inert !== null) {
+      element.inert = inert;
+    }
+  });
+
+  if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+    window.requestAnimationFrame(() => {
+      window.scrollTo(suspension.scrollX, suspension.scrollY);
+    });
+  }
+}
+
 function applyBodyLock(active) {
   if (typeof document === 'undefined') {
     return;
   }
   if (active) {
     document.body.classList.add(BODY_LOCK_CLASS);
+    setBackgroundAppSuspended(true);
   } else {
     document.body.classList.remove(BODY_LOCK_CLASS);
+    setBackgroundAppSuspended(false);
   }
 }
 
@@ -201,17 +257,6 @@ export function createPdfViewer(root = document) {
   };
 
   elements.closeButtons = Array.from(root.querySelectorAll('[data-viewer-close]'));
-  const elementNameMap = new Map([
-    [elements.container, 'container'],
-    [elements.surface, 'surface'],
-    [elements.zoom, 'zoom'],
-    [elements.image, 'image'],
-    [elements.video, 'video'],
-    [elements.frame, 'frame'],
-    [elements.pdfCanvas, 'pdfCanvas'],
-    [elements.pdf, 'pdf'],
-  ]);
-
   if (!elements.container || !elements.frame) {
     return {
       open(url) {
@@ -232,132 +277,8 @@ export function createPdfViewer(root = document) {
     };
   }
 
-  function getElementName(target) {
-    if (!target) {
-      return 'unknown';
-    }
-    if (elementNameMap.has(target)) {
-      return elementNameMap.get(target);
-    }
-    let node = target;
-    if (typeof Node !== 'undefined' && node && node.nodeType === Node.TEXT_NODE) {
-      node = node.parentElement;
-    }
-    if (node && typeof node.closest === 'function') {
-      for (const [element, name] of elementNameMap.entries()) {
-        if (element && element.contains && element.contains(node)) {
-          return `${name}/child`;
-        }
-      }
-    }
-    if (node && node.tagName) {
-      return node.tagName.toLowerCase();
-    }
-    return 'unknown';
-  }
-
-  function getEventPathNames(event) {
-    if (!event) {
-      return [];
-    }
-    let path = [];
-    if (typeof event.composedPath === 'function') {
-      path = event.composedPath();
-    } else if (event.target && event.target.parentNode) {
-      let node = event.target;
-      while (node) {
-        path.push(node);
-        node = node.parentNode;
-      }
-    } else if (event.target) {
-      path = [event.target];
-    }
-    if (typeof window !== 'undefined') {
-      path.push(window);
-    }
-    return path
-      .filter(Boolean)
-      .slice(0, 14)
-      .map((node) => {
-        if (typeof window !== 'undefined' && node === window) {
-          return 'window';
-        }
-        if (typeof document !== 'undefined') {
-          if (node === document) {
-            return 'document';
-          }
-          if (node === document.documentElement) {
-            return 'html';
-          }
-          if (node === document.body) {
-            return 'body';
-          }
-        }
-        if (typeof Node !== 'undefined' && node && node.nodeType === Node.DOCUMENT_FRAGMENT_NODE) {
-          return 'shadow-root';
-        }
-        return getElementName(node);
-      });
-  }
-
-  function getTargetVisibilityDetails(target) {
-    if (!target || typeof target !== 'object') {
-      return {
-        targetHidden: null,
-        targetOffsetParent: null,
-      };
-    }
-    const hidden = typeof target.hidden === 'boolean' ? target.hidden : null;
-    const offsetParent = typeof target.offsetParent !== 'undefined' ? target.offsetParent : null;
-    return {
-      targetHidden: hidden,
-      targetOffsetParent: offsetParent ? getElementName(offsetParent) : null,
-    };
-  }
-
   let lastActiveElement = null;
   let pdfResizeObserver = null;
-  let lastScrollLogAt = 0;
-  let lastImageScrollLogAt = 0;
-  let lastImageDragLogAt = 0;
-  let pointerInputSeen = false;
-  let mouseFallbackTimer = null;
-  let mouseFallbackBound = false;
-  let mouseFallbackLogged = false;
-
-  function buildScaleLogDetails(extra = {}) {
-    return {
-      viewerActive: isViewerActive(),
-      viewerMode,
-      zoomEnabled: zoomState.enabled,
-      pdfActive: pdfZoomState.active,
-      scale: zoomState.scale,
-      translateX: zoomState.translateX,
-      translateY: zoomState.translateY,
-      ...getPlatformDetails(),
-      ...extra,
-    };
-  }
-
-  function logScaleConsole(_step, _details, _throttleTarget = 'wheel') {
-    return;
-  }
-
-  function logScaleConsoleVerbose(_step, _details, _throttleTarget = 'wheel') {
-    return;
-  }
-
-  function logViewerConsole(_step, _details, _throttleTarget = 'wheel') {
-    return;
-  }
-
-  function logInputConsole(_step, _details = {}, _throttle = true) {
-    return;
-  }
-
-  function logInputEventSimple(_step, _event) {
-    return;
-  }
 
   if (!elements.container.hasAttribute(ACTIVE_ATTR)) {
     elements.container.setAttribute(ACTIVE_ATTR, 'false');
@@ -365,18 +286,6 @@ export function createPdfViewer(root = document) {
 
   function isViewerActive() {
     return Boolean(elements.container && elements.container.getAttribute(ACTIVE_ATTR) === 'true');
-  }
-
-  function stopNativeZoom(event) {
-    if (!isViewerActive()) {
-      return;
-    }
-    if (isWordOfficeFrameActive()) {
-      return;
-    }
-    if (event.cancelable) {
-      event.preventDefault();
-    }
   }
 
   function focusTrap(event) {
@@ -427,14 +336,10 @@ export function createPdfViewer(root = document) {
     startDistance: 0,
     startCenter: { x: 0, y: 0 },
     startPointer: { x: 0, y: 0 },
+    startScrollLeft: 0,
+    startScrollTop: 0,
     pointers: new Map(),
   };
-  const nativeGestureState = {
-    active: false,
-    mode: '',
-    startScale: 1,
-  };
-  let lastLoggedZoomScale = ZOOM_MIN;
   const pdfZoomState = {
     active: false,
     zoom: 100,
@@ -460,6 +365,8 @@ export function createPdfViewer(root = document) {
     totalPages: 0,
     renderStatus: 'idle',
     loadPromise: null,
+    loadingTask: null,
+    progressCallback: null,
     renderedZoom: 100,
   };
   const supportsPointerEvents = typeof window !== 'undefined' && 'PointerEvent' in window;
@@ -680,14 +587,9 @@ export function createPdfViewer(root = document) {
     zoomState.translateY = 0;
     zoomState.pointers.clear();
     resetWordOfficeFramePresentation({ ...options, clearZoom: true });
-    const urlChanged = setWordOfficeFrameAutoFitUrl();
+    setWordOfficeFrameAutoFitUrl();
     updateZoomLayout();
     updateZoomControls();
-    logZoomEvent('office-fit-width', {
-      mode: 'frame',
-      autoFit: true,
-      urlChanged,
-    });
     return true;
   }
 
@@ -718,10 +620,6 @@ export function createPdfViewer(root = document) {
       setWordOfficeFrameZoomUrl(zoom);
     }
     updateZoomControls();
-    logZoomEvent('office', {
-      mode: 'frame',
-      zoom,
-    });
     return true;
   }
 
@@ -1126,6 +1024,9 @@ export function createPdfViewer(root = document) {
     if (elements.pdf) {
       elements.pdf.hidden = !usePdf;
     }
+    if (elements.pdfCanvas) {
+      elements.pdfCanvas.style.touchAction = usePdf ? 'none' : '';
+    }
     if (elements.html) {
       elements.html.hidden = !useHtml;
     }
@@ -1283,6 +1184,17 @@ export function createPdfViewer(root = document) {
   }
 
   function destroyPdfDocument() {
+    if (pdfRenderState.loadingTask && typeof pdfRenderState.loadingTask.destroy === 'function') {
+      try {
+        const destroyResult = pdfRenderState.loadingTask.destroy();
+        if (destroyResult && typeof destroyResult.catch === 'function') {
+          destroyResult.catch(() => {});
+        }
+      } catch (error) {
+        // ignore
+      }
+    }
+    pdfRenderState.loadingTask = null;
     if (pdfRenderState.doc && typeof pdfRenderState.doc.destroy === 'function') {
       try {
         pdfRenderState.doc.destroy();
@@ -1293,14 +1205,29 @@ export function createPdfViewer(root = document) {
     pdfRenderState.doc = null;
   }
 
-  function resetViewerContent() {
-    pdfRenderState.renderToken += 1;
+  function cancelActivePdfLoad(reason) {
+    const progressCallback = pdfRenderState.progressCallback;
     pdfRenderState.loadToken += 1;
+    pdfRenderState.renderToken += 1;
     pdfRenderState.loading = false;
-    pdfRenderState.lastUrl = '';
     pdfRenderState.loadPromise = null;
-    pdfRenderState.renderedZoom = 100;
     destroyPdfDocument();
+    if (typeof progressCallback === 'function') {
+      try {
+        progressCallback({ stage: 'cancelled', reason: reason || 'viewer_cancelled' });
+      } catch (_progressError) {
+        // Отмена просмотрщика не должна зависеть от внешнего обработчика прогресса.
+      }
+    }
+    if (pdfRenderState.progressCallback === progressCallback) {
+      pdfRenderState.progressCallback = null;
+    }
+  }
+
+  function resetViewerContent() {
+    cancelActivePdfLoad('viewer_replaced');
+    pdfRenderState.lastUrl = '';
+    pdfRenderState.renderedZoom = 100;
     clearPdfCanvas();
     if (elements.frame) {
       elements.frame.removeAttribute('src');
@@ -1392,13 +1319,9 @@ export function createPdfViewer(root = document) {
 
   function waitForNextFrame() {
     return new Promise((resolve) => {
-      if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
-        setTimeout(resolve, 16);
-        return;
-      }
-      window.requestAnimationFrame(() => {
-        setTimeout(resolve, 16);
-      });
+      // В Telegram WebView requestAnimationFrame может приостанавливаться после
+      // скрытия стартового loader. Таймер продолжает очередь остальных страниц.
+      setTimeout(resolve, 16);
     });
   }
 
@@ -1434,17 +1357,6 @@ export function createPdfViewer(root = document) {
     };
 
     return candidates.find((container) => canScroll(container)) || candidates[0] || null;
-  }
-
-  function getPdfScrollContainerInfo(container = getPdfScrollContainer()) {
-    if (!container) {
-      return null;
-    }
-    return {
-      id: container.id || null,
-      className: container.className || null,
-      tag: container.tagName || null,
-    };
   }
 
   function capturePdfScrollState() {
@@ -1523,38 +1435,73 @@ export function createPdfViewer(root = document) {
     return Number.isFinite(zoom) && zoom > 0 ? zoom : 100;
   }
 
-  function applyPdfCanvasVisualZoom() {
+  function applyPdfPageVisualScale(page, scale) {
+    if (!(page instanceof HTMLElement)) {
+      return;
+    }
+    const baseWidth = Number(page.dataset.pdfPageWidth || 0);
+    const baseHeight = Number(page.dataset.pdfPageHeight || 0);
+    if (baseWidth > 0) {
+      page.style.width = `${baseWidth * scale}px`;
+    }
+    if (baseHeight > 0) {
+      page.style.minHeight = `${baseHeight * scale}px`;
+    }
+    const image = page.querySelector('.appdosc-pdf-viewer__page-image, canvas');
+    if (!(image instanceof HTMLElement)) {
+      return;
+    }
+    if (baseWidth > 0) {
+      image.style.width = `${baseWidth * scale}px`;
+    }
+    if (baseHeight > 0) {
+      image.style.height = `${baseHeight * scale}px`;
+    }
+  }
+
+  function applyPdfCanvasVisualZoom(anchorPoint = null) {
     if (!elements.pdfCanvas || !pdfZoomState.useCanvas) {
       return;
     }
     const scrollContainer = getPdfScrollContainer();
-    const scrollRatio = scrollContainer && scrollContainer.scrollHeight > 0
-      ? scrollContainer.scrollTop / scrollContainer.scrollHeight
-      : 0;
+    let zoomAnchor = null;
+    if (scrollContainer) {
+      const rect = scrollContainer.getBoundingClientRect();
+      const localX = anchorPoint && Number.isFinite(anchorPoint.x)
+        ? clamp(anchorPoint.x - rect.left, 0, scrollContainer.clientWidth)
+        : scrollContainer.clientWidth / 2;
+      const localY = anchorPoint && Number.isFinite(anchorPoint.y)
+        ? clamp(anchorPoint.y - rect.top, 0, scrollContainer.clientHeight)
+        : scrollContainer.clientHeight / 2;
+      zoomAnchor = {
+        localX,
+        localY,
+        contentXRatio: scrollContainer.scrollWidth > 0
+          ? (scrollContainer.scrollLeft + localX) / scrollContainer.scrollWidth
+          : 0,
+        contentYRatio: scrollContainer.scrollHeight > 0
+          ? (scrollContainer.scrollTop + localY) / scrollContainer.scrollHeight
+          : 0,
+      };
+    }
     const scale = clamp(pdfZoomState.zoom / getRenderedPdfZoom(), PDF_ZOOM_MIN / PDF_ZOOM_MAX, PDF_ZOOM_MAX / PDF_ZOOM_MIN);
     const pages = Array.from(elements.pdfCanvas.querySelectorAll('.appdosc-pdf-viewer__page'));
     pages.forEach((page) => {
-      const baseWidth = Number(page.dataset.pdfPageWidth || 0);
-      const baseHeight = Number(page.dataset.pdfPageHeight || 0);
-      if (baseWidth > 0) {
-        page.style.width = `${baseWidth * scale}px`;
-      }
-      if (baseHeight > 0) {
-        page.style.minHeight = `${baseHeight * scale}px`;
-      }
-      const image = page.querySelector('.appdosc-pdf-viewer__page-image, canvas');
-      if (image instanceof HTMLElement) {
-        if (baseWidth > 0) {
-          image.style.width = `${baseWidth * scale}px`;
-        }
-        if (baseHeight > 0) {
-          image.style.height = `${baseHeight * scale}px`;
-        }
-      }
+      applyPdfPageVisualScale(page, scale);
     });
-    if (scrollContainer && Number.isFinite(scrollRatio)) {
+    if (scrollContainer && zoomAnchor) {
+      const maxScrollLeft = Math.max(0, scrollContainer.scrollWidth - scrollContainer.clientWidth);
       const maxScrollTop = Math.max(0, scrollContainer.scrollHeight - scrollContainer.clientHeight);
-      scrollContainer.scrollTop = clamp(scrollRatio * scrollContainer.scrollHeight, 0, maxScrollTop);
+      scrollContainer.scrollLeft = clamp(
+        zoomAnchor.contentXRatio * scrollContainer.scrollWidth - zoomAnchor.localX,
+        0,
+        maxScrollLeft,
+      );
+      scrollContainer.scrollTop = clamp(
+        zoomAnchor.contentYRatio * scrollContainer.scrollHeight - zoomAnchor.localY,
+        0,
+        maxScrollTop,
+      );
     }
   }
 
@@ -1566,14 +1513,14 @@ export function createPdfViewer(root = document) {
     pdfRenderState.resizeTimer = null;
   }
 
-  function applyPdfZoomWithoutRerender() {
+  function applyPdfZoomWithoutRerender(anchorPoint = null) {
     if (!pdfZoomState.useCanvas || !pdfRenderState.doc) {
       return;
     }
-    applyPdfCanvasVisualZoom();
+    applyPdfCanvasVisualZoom(anchorPoint);
   }
 
-  async function renderPdfPagesInternal(forcePixelRatio) {
+  async function renderPdfPagesInternal(forcePixelRatio, onProgress = null) {
     if (!elements.pdfCanvas || !pdfRenderState.doc) {
       pdfRenderState.renderedPages = 0;
       pdfRenderState.totalPages = 0;
@@ -1588,32 +1535,57 @@ export function createPdfViewer(root = document) {
       return false;
     }
     const currentToken = ++pdfRenderState.renderToken;
+    const isCurrentRender = () => currentToken === pdfRenderState.renderToken;
     const doc = pdfRenderState.doc;
     let renderedPages = 0;
+    let firstPageReadySent = false;
     const basePixelRatio = typeof window !== 'undefined' && window.devicePixelRatio
       ? Math.max(1, window.devicePixelRatio)
       : 1;
-    const zoomBoost = pdfZoomState.fit ? 1 : clamp(pdfZoomState.zoom / 100, 1, 2);
+    const renderZoom = pdfZoomState.fit ? 100 : pdfZoomState.zoom;
+    const zoomBoost = clamp(renderZoom / 100, 1, 2);
     const pixelRatio = typeof forcePixelRatio === 'number' && forcePixelRatio > 0
       ? forcePixelRatio
       : basePixelRatio * zoomBoost;
 
     const { isMobile, isIos } = detectMobilePlatform();
+    let remainingPagesStatus = null;
+
+    const updateRemainingPagesStatus = () => {
+      if (!elements.pdfCanvas || doc.numPages <= 1) {
+        return;
+      }
+      if (renderedPages >= doc.numPages) {
+        if (remainingPagesStatus && remainingPagesStatus.parentNode) {
+          remainingPagesStatus.parentNode.removeChild(remainingPagesStatus);
+        }
+        remainingPagesStatus = null;
+        return;
+      }
+      if (!remainingPagesStatus) {
+        remainingPagesStatus = document.createElement('div');
+        remainingPagesStatus.className = 'appdosc-pdf-viewer__loader';
+        remainingPagesStatus.setAttribute('role', 'status');
+        remainingPagesStatus.setAttribute('aria-live', 'polite');
+      }
+      remainingPagesStatus.textContent = `Показано ${renderedPages} из ${doc.numPages} страниц · готовим следующую…`;
+      elements.pdfCanvas.appendChild(remainingPagesStatus);
+    };
 
     // На мобильных устройствах браузеры (особенно iOS Safari) имеют жёсткий лимит на память
     // canvas. Поэтому canvas используется только как временный рендер-буфер, а в DOM остаются
     // изображения страниц. Так Telegram WebView не теряет хвост PDF после первой страницы.
-    const MAX_TOTAL_CANVAS_PIXELS_DESKTOP = 48 * 1024 * 1024;
-    const MAX_TOTAL_CANVAS_PIXELS_IOS = 12 * 1024 * 1024;
-    const MAX_TOTAL_CANVAS_PIXELS_MOBILE = 20 * 1024 * 1024;
+    const MAX_TOTAL_CANVAS_PIXELS_DESKTOP = 192 * 1024 * 1024;
+    const MAX_TOTAL_CANVAS_PIXELS_IOS = 48 * 1024 * 1024;
+    const MAX_TOTAL_CANVAS_PIXELS_MOBILE = 96 * 1024 * 1024;
     const MAX_TOTAL_CANVAS_PIXELS = isIos
       ? MAX_TOTAL_CANVAS_PIXELS_IOS
       : (isMobile ? MAX_TOTAL_CANVAS_PIXELS_MOBILE : MAX_TOTAL_CANVAS_PIXELS_DESKTOP);
 
     // Максимальная площадь одного canvas (~16M пикселей — безопасный порог для всех браузеров).
-    const MAX_SINGLE_CANVAS_PIXELS = isIos ? 4 * 1024 * 1024 : 16 * 1024 * 1024;
+    const MAX_SINGLE_CANVAS_PIXELS = isIos ? 8 * 1024 * 1024 : 24 * 1024 * 1024;
     // Минимальный pixelRatio — ниже этого значения не снижаем (страницы будут размытыми, но видимыми).
-    const MIN_PIXEL_RATIO = 0.35;
+    const MIN_PIXEL_RATIO = isIos ? 0.7 : 1;
     let usedCanvasPixels = 0;
 
     // Предварительная оценка: если страниц много, снижаем pixelRatio заранее,
@@ -1623,8 +1595,11 @@ export function createPdfViewer(root = document) {
       try {
         // eslint-disable-next-line no-await-in-loop
         const samplePage = await doc.getPage(1);
+        if (!isCurrentRender()) {
+          return false;
+        }
         const sampleFitScale = getPdfFitScale(samplePage);
-        const sampleZoomScale = pdfZoomState.fit ? 1 : pdfZoomState.zoom / 100;
+        const sampleZoomScale = renderZoom / 100;
         const sampleViewport = samplePage.getViewport({ scale: sampleFitScale * sampleZoomScale });
         const estimatedPerPage = sampleViewport.width * sampleViewport.height * pixelRatio * pixelRatio;
         const estimatedTotal = estimatedPerPage * doc.numPages;
@@ -1645,6 +1620,9 @@ export function createPdfViewer(root = document) {
         // ошибка оценки не критична
       }
     }
+    if (!isCurrentRender()) {
+      return false;
+    }
 
     logPdfEvent('рендер', {
       pages: doc.numPages,
@@ -1661,26 +1639,35 @@ export function createPdfViewer(root = document) {
     const scrollState = capturePdfScrollState();
     clearPdfCanvas();
 
-    const IMAGE_LOADING_MODE = isIos ? 'eager' : null;
+    // Все уже отрисованные страницы должны декодироваться сразу: lazy-loading
+    // внутри Telegram WebView оставлял дальние страницы пустыми до прокрутки.
+    const IMAGE_LOADING_MODE = 'eager';
+    const FIRST_PAGE_JPEG_QUALITY = isIos ? 0.94 : 0.97;
+    const OTHER_PAGE_JPEG_QUALITY = isIos ? 0.92 : 0.95;
     let failedPages = 0;
+    const pageRetryCounts = new Map();
+    const PAGE_RENDER_RETRY_LIMIT = 2;
     for (let pageNumber = 1; pageNumber <= doc.numPages; pageNumber += 1) {
-      if (currentToken !== pdfRenderState.renderToken) {
-        pdfRenderState.renderedPages = renderedPages;
-        pdfRenderState.totalPages = doc.numPages;
-        pdfRenderState.renderStatus = 'canceled';
+      if (!isCurrentRender()) {
         return false;
       }
       let pageWrapper = null;
       try {
         // eslint-disable-next-line no-await-in-loop
         const page = await doc.getPage(pageNumber);
+        if (!isCurrentRender()) {
+          return false;
+        }
         const fitScale = getPdfFitScale(page);
-        const zoomScale = pdfZoomState.fit ? 1 : pdfZoomState.zoom / 100;
+        const zoomScale = renderZoom / 100;
         const renderScale = fitScale * zoomScale;
         const viewport = page.getViewport({ scale: renderScale });
 
         // Рассчитываем эффективный pixelRatio с учётом лимитов canvas
-        let effectivePixelRatio = adjustedPixelRatio;
+        // Первая видимая страница сохраняет исходную плотность и ограничивается
+        // только безопасным лимитом одного canvas. Общий бюджет влияет на остальные страницы.
+        const pageBasePixelRatio = pageNumber === 1 ? pixelRatio : adjustedPixelRatio;
+        let effectivePixelRatio = pageBasePixelRatio;
         let scaledW = Math.ceil(viewport.width * effectivePixelRatio);
         let scaledH = Math.ceil(viewport.height * effectivePixelRatio);
         let canvasPixels = scaledW * scaledH;
@@ -1694,7 +1681,7 @@ export function createPdfViewer(root = document) {
           canvasPixels = scaledW * scaledH;
           logPdfEvent('рендер:масштаб_снижен', {
             page: pageNumber,
-            originalPixelRatio: adjustedPixelRatio,
+            originalPixelRatio: pageBasePixelRatio,
             effectivePixelRatio,
             reason: 'single_canvas_limit',
           });
@@ -1715,7 +1702,7 @@ export function createPdfViewer(root = document) {
           canvasPixels = scaledW * scaledH;
           logPdfEvent('рендер:масштаб_снижен', {
             page: pageNumber,
-            originalPixelRatio: adjustedPixelRatio,
+            originalPixelRatio: pageBasePixelRatio,
             effectivePixelRatio,
             reason: 'total_budget_limit',
             usedCanvasPixels,
@@ -1752,7 +1739,6 @@ export function createPdfViewer(root = document) {
               pageWrapper.dataset.pdfPageHeight = String(viewport.height);
               pageWrapper.style.width = `${viewport.width}px`;
               pageWrapper.style.minHeight = `${viewport.height}px`;
-              elements.pdfCanvas.appendChild(pageWrapper);
             }
             const context = canvas.getContext('2d', { alpha: false });
             if (!context) {
@@ -1760,28 +1746,61 @@ export function createPdfViewer(root = document) {
             }
             // eslint-disable-next-line no-await-in-loop
             await page.render({ canvasContext: context, viewport: attemptViewport }).promise;
-            const blob = await canvasToBlob(canvas, 'image/jpeg', isIos ? 0.82 : 0.88);
+            if (!isCurrentRender()) {
+              return false;
+            }
+            const pageJpegQuality = pageNumber === 1
+              ? FIRST_PAGE_JPEG_QUALITY
+              : OTHER_PAGE_JPEG_QUALITY;
+            const blob = await canvasToBlob(canvas, 'image/jpeg', pageJpegQuality);
+            if (!isCurrentRender()) {
+              return false;
+            }
             const image = document.createElement('img');
             image.className = 'appdosc-pdf-viewer__page-image';
             image.alt = `Страница ${pageNumber} из ${doc.numPages}`;
             image.decoding = 'async';
-            image.loading = IMAGE_LOADING_MODE || (pageNumber <= 2 ? 'eager' : 'lazy');
+            image.loading = IMAGE_LOADING_MODE;
             image.draggable = false;
             image.width = Math.max(1, Math.round(viewport.width));
             image.height = Math.max(1, Math.round(viewport.height));
             image.style.width = `${viewport.width}px`;
             image.style.height = `${viewport.height}px`;
 
+            let blobUrl = '';
             if (blob) {
-              const blobUrl = URL.createObjectURL(blob);
+              blobUrl = URL.createObjectURL(blob);
               image.src = blobUrl;
               image.setAttribute('data-pdf-blob-url', blobUrl);
             } else {
-              image.src = canvas.toDataURL('image/jpeg', isIos ? 0.78 : 0.84);
+              image.src = canvas.toDataURL('image/jpeg', Math.max(0.78, pageJpegQuality - 0.04));
+            }
+
+            if (typeof image.decode === 'function') {
+              try {
+                await image.decode();
+              } catch (_decodeError) {
+                // WebView может не поддержать decode для blob URL; src остаётся рабочим.
+              }
+            }
+            if (!isCurrentRender()) {
+              if (blobUrl) {
+                URL.revokeObjectURL(blobUrl);
+              }
+              return false;
             }
 
             pageWrapper.textContent = '';
             pageWrapper.appendChild(image);
+            if (!pageWrapper.parentNode) {
+              if (remainingPagesStatus && remainingPagesStatus.parentNode === elements.pdfCanvas) {
+                elements.pdfCanvas.insertBefore(pageWrapper, remainingPagesStatus);
+              } else {
+                elements.pdfCanvas.appendChild(pageWrapper);
+              }
+            }
+            const visibleZoom = pdfZoomState.fit ? 100 : pdfZoomState.zoom;
+            applyPdfPageVisualScale(pageWrapper, visibleZoom / renderZoom);
             successfulCanvasPixels = attemptPixels;
             pageRendered = true;
             if (attempt > 0) {
@@ -1792,6 +1811,9 @@ export function createPdfViewer(root = document) {
               });
             }
           } catch (attemptError) {
+            if (!isCurrentRender()) {
+              return false;
+            }
             lastPageError = attemptError;
             logPdfEvent('рендер:страница_повтор', {
               page: pageNumber,
@@ -1814,14 +1836,57 @@ export function createPdfViewer(root = document) {
 
         usedCanvasPixels += successfulCanvasPixels;
         renderedPages += 1;
+        pdfRenderState.renderedPages = renderedPages;
+        pdfRenderState.totalPages = doc.numPages;
+        pdfRenderState.renderStatus = renderedPages < doc.numPages ? 'partial' : 'complete';
+        pdfRenderState.renderedZoom = renderZoom;
+        if (renderedPages === 1) {
+          pdfZoomState.useCanvas = true;
+          updateZoomControls();
+        }
         pageWrapper = null;
+        updateRemainingPagesStatus();
 
-        if (isIos && pageNumber < doc.numPages) {
-          // Даём Safari/WebView шанс освободить память перед следующей страницей.
+        if (pageNumber === 1 && typeof onProgress === 'function') {
+          try {
+            onProgress({
+              stage: 'ready',
+              page: 1,
+              renderedPages: 1,
+              totalPages: doc.numPages,
+              complete: doc.numPages === 1,
+            });
+            firstPageReadySent = true;
+          } catch (progressError) {
+            // Прогресс не должен влиять на отрисовку документа.
+          }
+        }
+
+        if (pageNumber < doc.numPages) {
+          // Между страницами отдаём кадр браузеру: готовые страницы появляются постепенно,
+          // а Telegram не зависает на непрерывной отрисовке большого документа.
           // eslint-disable-next-line no-await-in-loop
           await waitForNextFrame();
+          if (!isCurrentRender()) {
+            return false;
+          }
+        }
+
+        if (typeof onProgress === 'function') {
+          try {
+            onProgress({
+              stage: 'render',
+              page: pageNumber,
+              totalPages: doc.numPages,
+            });
+          } catch (progressError) {
+            // Прогресс не должен влиять на отрисовку документа.
+          }
         }
       } catch (error) {
+        if (!isCurrentRender()) {
+          return false;
+        }
         logPdfEvent('рендер:ошибка', {
           page: pageNumber,
           totalPages: doc.numPages,
@@ -1836,6 +1901,19 @@ export function createPdfViewer(root = document) {
           }
         } catch (_removeErr) { /* не критично */ }
         pageWrapper = null;
+        const retryCount = pageRetryCounts.get(pageNumber) || 0;
+        if (retryCount < PAGE_RENDER_RETRY_LIMIT && currentToken === pdfRenderState.renderToken) {
+          pageRetryCounts.set(pageNumber, retryCount + 1);
+          // Range-загрузка в Telegram иногда отдаёт структуру документа раньше,
+          // чем готов следующий фрагмент. Повторяем именно эту страницу.
+          // eslint-disable-next-line no-await-in-loop
+          await new Promise((resolve) => setTimeout(resolve, 120 * (retryCount + 1)));
+          if (!isCurrentRender()) {
+            return false;
+          }
+          pageNumber -= 1;
+          continue;
+        }
         failedPages += 1;
         // Продолжаем рендеринг остальных страниц вместо остановки
         continue;
@@ -1848,6 +1926,24 @@ export function createPdfViewer(root = document) {
         totalPages: doc.numPages,
         usedCanvasPixels,
       });
+    }
+
+    if (remainingPagesStatus && renderedPages < doc.numPages) {
+      remainingPagesStatus.textContent = `Показано ${renderedPages} из ${doc.numPages} страниц. Часть страниц не удалось отрисовать.`;
+    }
+
+    if (renderedPages > 0 && typeof onProgress === 'function') {
+      try {
+        onProgress({
+          stage: firstPageReadySent ? 'render_complete' : 'ready',
+          page: doc.numPages,
+          renderedPages,
+          totalPages: doc.numPages,
+          complete: renderedPages === doc.numPages,
+        });
+      } catch (progressError) {
+        // Финальный прогресс не должен влиять на уже загруженные страницы.
+      }
     }
 
     const firstPageMedia = elements.pdfCanvas.querySelector('canvas, .appdosc-pdf-viewer__page-image');
@@ -1870,7 +1966,7 @@ export function createPdfViewer(root = document) {
 
     pdfRenderState.renderedPages = renderedPages;
     pdfRenderState.totalPages = doc.numPages;
-    pdfRenderState.renderedZoom = pdfZoomState.fit ? 100 : pdfZoomState.zoom;
+    pdfRenderState.renderedZoom = renderZoom;
     const isComplete = renderedPages === doc.numPages && doc.numPages > 0;
     if (renderedPages === 0) {
       pdfRenderState.renderStatus = 'empty';
@@ -1890,15 +1986,18 @@ export function createPdfViewer(root = document) {
       });
     }
     await waitForNextFrame();
+    if (!isCurrentRender()) {
+      return false;
+    }
     restorePdfScrollState(scrollState);
     return isComplete;
   }
 
-  async function renderPdfPages() {
-    return renderPdfPagesInternal();
+  async function renderPdfPages(onProgress = null) {
+    return renderPdfPagesInternal(undefined, onProgress);
   }
 
-  async function loadPdfDocument(url, data) {
+  async function loadPdfDocument(url, data, onProgress = null) {
     if (!url || !elements.pdfCanvas || !elements.pdf) {
       return false;
     }
@@ -1910,56 +2009,78 @@ export function createPdfViewer(root = document) {
     pdfRenderState.totalPages = 0;
     setPdfCanvasMessage('Загрузка PDF...', { variant: 'loader' });
     logPdfEvent('загрузка:старт', { url, hasData: Boolean(data) });
+    if (typeof onProgress === 'function') {
+      try {
+        onProgress({ stage: 'load', loaded: 0, total: 0 });
+      } catch (progressError) {
+        // ignore
+      }
+    }
+    let activeLoadingTask = null;
 
     try {
       const pdfjsLib = await ensurePdfjs();
       if (currentLoadToken !== pdfRenderState.loadToken) {
-        return false;
+        return null;
       }
-      const telegramPlatform = window.Telegram && window.Telegram.WebApp
-        ? window.Telegram.WebApp.platform
-        : '';
-      const isWebPlatform = typeof telegramPlatform === 'string'
-        && telegramPlatform.startsWith('web');
-      const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent || '' : '';
-      const maxTouchPoints = typeof navigator !== 'undefined' && typeof navigator.maxTouchPoints === 'number'
-        ? navigator.maxTouchPoints
-        : 0;
-      const isIos = /iPad|iPhone|iPod/i.test(userAgent)
-        || (/Macintosh/i.test(userAgent) && maxTouchPoints > 1);
-      const shouldDisableWorker = window.origin === 'null' || isWebPlatform || isIos;
+      const shouldDisableWorker = window.origin === 'null';
       const createTask = (options) => {
         const task = pdfjsLib.getDocument(options);
-        const progressState = { logged: 0 };
         task.onProgress = (progress) => {
           if (!progress || typeof progress.loaded !== 'number') {
             return;
           }
-          const now = Date.now();
-          if (now - progressState.logged < 1200) {
-            return;
+          if (typeof onProgress === 'function') {
+            try {
+              onProgress({
+                stage: 'download',
+                loaded: progress.loaded,
+                total: typeof progress.total === 'number' ? progress.total : 0,
+              });
+            } catch (progressError) {
+              // Прогресс интерфейса не должен останавливать загрузку.
+            }
           }
-          progressState.logged = now;
-          logPdfEvent('загрузка:прогресс', {
-            url,
-            loaded: progress.loaded,
-            total: typeof progress.total === 'number' ? progress.total : null,
-          });
         };
         return task;
       };
+      const waitForDocument = (task) => new Promise((resolve, reject) => {
+        const timeoutId = window.setTimeout(() => {
+          const timeoutError = new Error('pdf_document_open_timeout');
+          timeoutError.code = 'pdf_document_open_timeout';
+          reject(timeoutError);
+        }, PDF_DOCUMENT_OPEN_TIMEOUT_MS);
+        task.promise.then(
+          (documentProxy) => {
+            window.clearTimeout(timeoutId);
+            resolve(documentProxy);
+          },
+          (error) => {
+            window.clearTimeout(timeoutId);
+            reject(error);
+          },
+        );
+      });
 
       const safeData = data && typeof data.slice === 'function' ? data.slice(0) : data;
-      const baseOptions = safeData ? { data: safeData, withCredentials: true } : { url, withCredentials: true };
+      let withCredentials = true;
+      try {
+        withCredentials = new URL(url, window.location.href).origin === window.location.origin;
+      } catch (error) {
+        // Относительный URL относится к текущему домену и использует авторизацию BIMMAX.
+      }
+      const baseOptions = safeData ? { data: safeData } : { url, withCredentials };
       if (shouldDisableWorker) {
         baseOptions.disableWorker = true;
       }
       let task = createTask(baseOptions);
+      activeLoadingTask = task;
+      pdfRenderState.loadingTask = task;
       let doc;
       try {
-        doc = await task.promise;
+        doc = await waitForDocument(task);
       } catch (error) {
-        if (!shouldDisableWorker) {
+        if (shouldDisableWorker || !isPdfWorkerFailure(error)) {
           throw error;
         }
         logPdfEvent('pdfjs:disable_worker', {
@@ -1967,35 +2088,50 @@ export function createPdfViewer(root = document) {
           reason: error && error.message ? error.message : String(error),
         });
         task = createTask({ ...baseOptions, disableWorker: true });
-        doc = await task.promise;
+        activeLoadingTask = task;
+        pdfRenderState.loadingTask = task;
+        doc = await waitForDocument(task);
       }
       if (currentLoadToken !== pdfRenderState.loadToken) {
+        if (pdfRenderState.loadingTask === activeLoadingTask) {
+          pdfRenderState.loadingTask = null;
+        }
         if (doc && typeof doc.destroy === 'function') {
           doc.destroy();
         }
-        return false;
+        return null;
+      }
+      if (pdfRenderState.loadingTask === activeLoadingTask) {
+        pdfRenderState.loadingTask = null;
       }
       destroyPdfDocument();
       pdfRenderState.doc = doc;
       pdfRenderState.loading = false;
       const layoutReady = await waitForPdfLayout();
       if (currentLoadToken !== pdfRenderState.loadToken) {
-        return false;
+        return null;
       }
       if (!layoutReady) {
         logPdfEvent('layout:fail', { url, metrics: getPdfLayoutMetrics() });
         return false;
       }
-      const rendered = await renderPdfPages();
+      if (typeof onProgress === 'function') {
+        try {
+          onProgress({ stage: 'render_start', totalPages: doc.numPages });
+        } catch (progressError) {
+          // ignore
+        }
+      }
+      const rendered = await renderPdfPages(onProgress);
       if (currentLoadToken !== pdfRenderState.loadToken) {
-        return false;
+        return null;
       }
       const hasVisibleContent = rendered || (pdfRenderState.renderedPages > 0);
       const hasCompleteContent = pdfRenderState.totalPages > 0
         && pdfRenderState.renderedPages === pdfRenderState.totalPages;
       pdfZoomState.useCanvas = hasVisibleContent;
       updateZoomControls();
-      if (isIos && hasVisibleContent && !hasCompleteContent) {
+      if (hasVisibleContent && !hasCompleteContent) {
         appendPdfCanvasActionMessage('Показана часть PDF. Откройте файл полностью в новой вкладке.', {
           actionLabel: 'Открыть полностью',
           onAction: () => {
@@ -2015,20 +2151,39 @@ export function createPdfViewer(root = document) {
       });
       return hasVisibleContent;
     } catch (error) {
+      if (pdfRenderState.loadingTask === activeLoadingTask) {
+        pdfRenderState.loadingTask = null;
+      }
+      if (activeLoadingTask && typeof activeLoadingTask.destroy === 'function') {
+        try {
+          const destroyResult = activeLoadingTask.destroy();
+          if (destroyResult && typeof destroyResult.catch === 'function') {
+            destroyResult.catch(() => {});
+          }
+        } catch (destroyError) {
+          // ignore
+        }
+      }
+      if (currentLoadToken !== pdfRenderState.loadToken) {
+        return null;
+      }
       pdfRenderState.loading = false;
       pdfZoomState.useCanvas = false;
-      setPdfCanvasMessage('Не удалось загрузить PDF. Откройте файл в новой вкладке.', {
-        variant: 'message',
-        actionLabel: 'Открыть в новой вкладке',
-        onAction: () => {
-          window.open(url, '_blank', 'noopener');
-        },
-      });
       logPdfEvent('загрузка:ошибка', {
         url,
         hasData: Boolean(data),
         message: error && error.message ? error.message : String(error),
       });
+      if (typeof onProgress === 'function') {
+        try {
+          onProgress({
+            stage: 'error',
+            message: error && error.message ? error.message : String(error),
+          });
+        } catch (progressError) {
+          // ignore
+        }
+      }
       return false;
     }
   }
@@ -2047,17 +2202,6 @@ export function createPdfViewer(root = document) {
       return;
     }
     pdfZoomState.zoom = nextZoom;
-    logPdfEvent('масштаб', {
-      zoom: pdfZoomState.zoom,
-      fit: pdfZoomState.fit,
-      scrollContainer: getPdfScrollContainerInfo(),
-    });
-    logZoomEvent('кнопка', {
-      mode: 'pdf',
-      delta,
-      zoom: pdfZoomState.zoom,
-      fit: pdfZoomState.fit,
-    });
     if (pdfZoomState.useCanvas) {
       applyPdfZoomWithoutRerender();
     } else {
@@ -2067,7 +2211,7 @@ export function createPdfViewer(root = document) {
     updateZoomControls();
   }
 
-  function setPdfZoomByScale(distanceRatio) {
+  function setPdfZoomByScale(distanceRatio, anchorPoint = null) {
     if (!pdfZoomState.active) {
       return;
     }
@@ -2082,117 +2226,13 @@ export function createPdfViewer(root = document) {
       return;
     }
     pdfZoomState.zoom = nextZoom;
-    logPdfEvent('масштаб', {
-      zoom: pdfZoomState.zoom,
-      fit: pdfZoomState.fit,
-      source: 'pinch',
-      scrollContainer: getPdfScrollContainerInfo(),
-    });
-    logZoomEvent('пинч', {
-      mode: 'pdf',
-      zoom: pdfZoomState.zoom,
-      fit: pdfZoomState.fit,
-    });
     if (pdfZoomState.useCanvas) {
-      applyPdfZoomWithoutRerender();
+      applyPdfZoomWithoutRerender(anchorPoint);
     } else {
       capturePdfFramePosition();
       setPdfZoom(`${Math.round(pdfZoomState.zoom)}`);
     }
     updateZoomControls();
-  }
-
-  function getPdfNativeGestureBaseZoom() {
-    if (!pdfZoomState.active) {
-      return 100;
-    }
-    if (!pdfZoomState.fit) {
-      return pdfZoomState.zoom;
-    }
-    const detected = getPdfZoomFromUrl(elements.frame ? elements.frame.getAttribute('src') : '');
-    return Number.isFinite(detected) ? detected : pdfZoomState.zoom;
-  }
-
-  function resolveNativeGestureMode() {
-    if (!isViewerActive()) {
-      return '';
-    }
-    if (isWordOfficeFrameActive()) {
-      return '';
-    }
-    if (viewerMode === 'frame' && zoomState.enabled) {
-      return 'frame';
-    }
-    if (viewerMode === 'pdf' && pdfZoomState.active && !zoomState.enabled) {
-      return 'pdf';
-    }
-    return '';
-  }
-
-  function getNativeGestureScale(event) {
-    const scale = Number(event && event.scale);
-    return Number.isFinite(scale) && scale > 0 ? scale : 0;
-  }
-
-  function startNativeGesture(mode) {
-    nativeGestureState.active = true;
-    nativeGestureState.mode = mode;
-    nativeGestureState.startScale = mode === 'pdf'
-      ? getPdfNativeGestureBaseZoom()
-      : zoomState.scale;
-    zoomState.startScale = nativeGestureState.startScale;
-  }
-
-  function handleNativeGestureStart(event) {
-    stopNativeZoom(event);
-    const mode = resolveNativeGestureMode();
-    if (!mode) {
-      nativeGestureState.active = false;
-      nativeGestureState.mode = '';
-      return;
-    }
-    startNativeGesture(mode);
-  }
-
-  function handleNativeGestureChange(event) {
-    stopNativeZoom(event);
-    const mode = nativeGestureState.active ? nativeGestureState.mode : resolveNativeGestureMode();
-    const gestureScale = getNativeGestureScale(event);
-    if (!mode || !gestureScale) {
-      return;
-    }
-    if (!nativeGestureState.active || nativeGestureState.mode !== mode) {
-      startNativeGesture(mode);
-    }
-    if (mode === 'pdf') {
-      setPdfZoomByScale(gestureScale);
-      return;
-    }
-    setZoomScale(nativeGestureState.startScale * gestureScale);
-  }
-
-  function handleNativeGestureEnd(event) {
-    stopNativeZoom(event);
-    const mode = nativeGestureState.mode;
-    const wasActive = nativeGestureState.active;
-    nativeGestureState.active = false;
-    nativeGestureState.mode = '';
-    if (!wasActive || !mode) {
-      return;
-    }
-    if (mode === 'pdf') {
-      logZoomEvent('пинч', {
-        mode: 'pdf',
-        zoom: pdfZoomState.zoom,
-        fit: pdfZoomState.fit,
-      });
-      return;
-    }
-    logZoomEvent('пинч', {
-      mode: 'frame',
-      scale: zoomState.scale,
-    });
-    lastLoggedZoomScale = zoomState.scale;
   }
 
   function setZoomScale(nextScale) {
@@ -2245,19 +2285,6 @@ export function createPdfViewer(root = document) {
 
   function zoomStep(delta) {
     setZoomScale(zoomState.scale + delta);
-    logScaleConsole('Кнопка:масштаб', {
-      delta,
-      scale: zoomState.scale,
-      translateX: zoomState.translateX,
-      translateY: zoomState.translateY,
-      ...getPlatformDetails(),
-    });
-    logZoomEvent('кнопка', {
-      mode: 'image',
-      delta,
-      scale: zoomState.scale,
-    });
-    lastLoggedZoomScale = zoomState.scale;
   }
 
   function hideViewer() {
@@ -2277,7 +2304,7 @@ export function createPdfViewer(root = document) {
     pdfZoomState.fit = true;
     pdfZoomState.zoom = 100;
     pdfZoomState.useCanvas = false;
-    destroyPdfDocument();
+    cancelActivePdfLoad('viewer_closed');
     clearPdfCanvas();
     if (elements.image) {
       elements.image.removeAttribute('src');
@@ -2294,51 +2321,6 @@ export function createPdfViewer(root = document) {
       }
     }
     lastActiveElement = null;
-    if (mouseFallbackTimer) {
-      clearTimeout(mouseFallbackTimer);
-      mouseFallbackTimer = null;
-    }
-    pointerInputSeen = false;
-  }
-
-  function scheduleMouseFallback() {
-    if (!supportsPointerEvents || mouseFallbackBound || typeof window === 'undefined') {
-      return;
-    }
-    pointerInputSeen = false;
-    if (mouseFallbackTimer) {
-      clearTimeout(mouseFallbackTimer);
-    }
-    mouseFallbackTimer = window.setTimeout(() => {
-      mouseFallbackTimer = null;
-      if (!isViewerActive() || pointerInputSeen || mouseFallbackBound) {
-        return;
-      }
-      const targets = [elements.zoom, elements.image];
-      const { platform } = getPlatformDetails();
-      targets.forEach((target) => {
-        if (!target) {
-          return;
-        }
-        if (!mouseFallbackLogged) {
-          logInputConsole('fallback:mouse-bound', { platform, target }, false);
-          mouseFallbackLogged = true;
-        }
-        bindMouseEvents(target, { force: true, reason: 'fallback' });
-      });
-      mouseFallbackBound = true;
-    }, MOUSE_FALLBACK_DELAY_MS);
-  }
-
-  function notePointerInput() {
-    if (!supportsPointerEvents) {
-      return;
-    }
-    pointerInputSeen = true;
-    if (mouseFallbackTimer) {
-      clearTimeout(mouseFallbackTimer);
-      mouseFallbackTimer = null;
-    }
   }
 
   function showViewer(url, title, options = {}, data) {
@@ -2364,6 +2346,26 @@ export function createPdfViewer(root = document) {
           : (options && options.kind === 'video' ? 'video' : 'frame'));
     const skipPdfLoad = Boolean(options && options.skipPdfLoad);
     const isPdf = wantsPdf && !forceFrame;
+    const sourceProgressCallback = typeof options.onProgress === 'function' ? options.onProgress : null;
+    let reportPdfProgress = null;
+    if (isPdf && sourceProgressCallback) {
+      reportPdfProgress = (progress) => {
+        if (pdfRenderState.progressCallback !== reportPdfProgress) {
+          return;
+        }
+        try {
+          sourceProgressCallback(progress);
+        } finally {
+          const stage = progress && progress.stage ? progress.stage : '';
+          if (['ready', 'fallback_ready', 'fallback_timeout', 'fallback_failed', 'cancelled'].includes(stage)
+            && pdfRenderState.progressCallback === reportPdfProgress) {
+            pdfRenderState.progressCallback = null;
+          }
+        }
+      };
+      pdfRenderState.progressCallback = reportPdfProgress;
+    }
+    const pdfFallbackUrl = resolveUrl(options && options.fallbackUrl ? options.fallbackUrl : '') || resolvedUrl;
     const frameFileName = options && options.fileName ? options.fileName : title;
     const frameFileExtension = options && options.extension ? options.extension : '';
 
@@ -2394,22 +2396,31 @@ export function createPdfViewer(root = document) {
       logPdfEvent('layout:open', getPdfLayoutMetrics());
       setupPdfResizeObserver();
     }
-    logViewerDeep('viewer:open', {
-      url: resolvedUrl,
-      title: title || '',
-      kind,
-      wantsPdf,
-      forceFrame,
-      skipPdfLoad,
-      isPdf,
-      hasFrame: Boolean(elements.frame),
-      hasCanvas: Boolean(elements.pdfCanvas),
-      hasPdfContainer: Boolean(elements.pdf),
-    });
-
     const activateFrameFallback = (fallbackUrl, reason) => {
       if (!elements.frame) {
         return false;
+      }
+      if (reportPdfProgress) {
+        let fallbackSettled = false;
+        const finishFallback = (stage) => {
+          if (fallbackSettled) {
+            return;
+          }
+          fallbackSettled = true;
+          window.clearTimeout(fallbackTimeoutId);
+          elements.frame.removeEventListener('load', handleFallbackLoad);
+          try {
+            reportPdfProgress({ stage, reason: reason || 'canvas_unavailable' });
+          } catch (progressError) {
+            // ignore
+          }
+        };
+        const handleFallbackLoad = () => finishFallback('fallback_ready');
+        const fallbackTimeoutId = window.setTimeout(
+          () => finishFallback('fallback_timeout'),
+          PDF_FRAME_FALLBACK_TIMEOUT_MS,
+        );
+        elements.frame.addEventListener('load', handleFallbackLoad, { once: true });
       }
       const fallbackTitle = title ? `Просмотр: ${title}` : 'Просмотр документа';
       const frameUrl = wantsPdf ? buildPdfUrlWithZoom(fallbackUrl, 'page-fit', null) : fallbackUrl;
@@ -2421,21 +2432,9 @@ export function createPdfViewer(root = document) {
         elements.image.removeAttribute('alt');
       }
       setViewerMode('frame');
-      logViewerDeep('viewer:mode:state', {
-        mode: viewerMode,
-        useImage: viewerMode === 'image' && Boolean(elements.image),
-        usePdf: viewerMode === 'pdf' && Boolean(elements.pdf && elements.pdfCanvas),
-        forceFrame,
-        skipPdfLoad,
-        hasZoom: Boolean(elements.zoom),
-        hasSurface: Boolean(elements.surface),
-        hasImage: Boolean(elements.image),
-        hasFrame: Boolean(elements.frame),
-      });
       pdfZoomState.active = false;
       pdfZoomState.useCanvas = false;
       updateZoomControls();
-      logViewerDeep('viewer:frame_fallback', { url: frameUrl, reason: reason || 'unknown' });
       return true;
     };
 
@@ -2447,25 +2446,6 @@ export function createPdfViewer(root = document) {
         elements.frame.removeAttribute('src');
       }
       setViewerMode('image');
-      logViewerDeep('viewer:mode:state', {
-        mode: viewerMode,
-        useImage: viewerMode === 'image' && Boolean(elements.image),
-        usePdf: viewerMode === 'pdf' && Boolean(elements.pdf && elements.pdfCanvas),
-        forceFrame,
-        skipPdfLoad,
-        hasZoom: Boolean(elements.zoom),
-        hasSurface: Boolean(elements.surface),
-        hasImage: Boolean(elements.image),
-        hasFrame: Boolean(elements.frame),
-      });
-      logScaleConsole('Просмотр:открытие', {
-        url: resolvedUrl,
-        scale: zoomState.scale,
-        translateX: zoomState.translateX,
-        translateY: zoomState.translateY,
-        ...getPlatformDetails(),
-      });
-      logViewerDeep('viewer:mode', { mode: 'image', url: resolvedUrl });
     } else if (kind === 'video' && elements.video) {
       if (elements.frame) {
         elements.frame.removeAttribute('src');
@@ -2479,7 +2459,6 @@ export function createPdfViewer(root = document) {
       elements.video.setAttribute('playsinline', '');
       elements.video.load();
       setViewerMode('video');
-      logViewerDeep('viewer:mode', { mode: 'video', url: resolvedUrl });
     } else if (pdfZoomState.active && elements.pdf && elements.pdfCanvas) {
       if (elements.frame) {
         elements.frame.removeAttribute('src');
@@ -2489,18 +2468,6 @@ export function createPdfViewer(root = document) {
         elements.image.removeAttribute('alt');
       }
       setViewerMode('pdf');
-      logViewerDeep('viewer:mode:state', {
-        mode: viewerMode,
-        useImage: viewerMode === 'image' && Boolean(elements.image),
-        usePdf: viewerMode === 'pdf' && Boolean(elements.pdf && elements.pdfCanvas),
-        forceFrame,
-        skipPdfLoad,
-        hasZoom: Boolean(elements.zoom),
-        hasSurface: Boolean(elements.surface),
-        hasImage: Boolean(elements.image),
-        hasFrame: Boolean(elements.frame),
-      });
-      logViewerDeep('viewer:mode', { mode: 'pdf', url: resolvedUrl, skipPdfLoad });
       if (skipPdfLoad) {
         const isLoadingOnly = Boolean(options && options.loadingOnly);
         setPdfCanvasMessage(
@@ -2530,33 +2497,34 @@ export function createPdfViewer(root = document) {
           });
         };
         const fallbackToFrame = (reason) => {
-          const switched = activateFrameFallback(resolvedUrl, reason);
+          const switched = activateFrameFallback(pdfFallbackUrl, reason);
+          if (reportPdfProgress) {
+            try {
+              reportPdfProgress({
+                stage: switched ? 'fallback' : 'fallback_failed',
+                reason: reason || 'canvas_unavailable',
+              });
+            } catch (progressError) {
+              // ignore
+            }
+          }
           if (!switched) {
             fallbackToMessage();
           }
           return switched;
         };
-        pdfRenderState.loadPromise = loadPdfDocument(resolvedUrl, data).then(async (loaded) => {
+        pdfRenderState.loadPromise = loadPdfDocument(resolvedUrl, data, reportPdfProgress).then((loaded) => {
           if (loaded) {
             return true;
           }
-          const { isIos } = detectMobilePlatform();
-          if (isIos) {
-            const switched = fallbackToFrame(
-              pdfRenderState.renderStatus === 'empty' ? 'canvas_empty' : 'canvas_incomplete',
-            );
-            if (!switched) {
-              fallbackToMessage();
-            }
+          if (loaded === null) {
             return false;
           }
-          const retryUrl = `${resolvedUrl}${resolvedUrl.includes('?') ? '&' : '?'}retry=${Date.now()}`;
-          logPdfEvent('загрузка:повтор', { url: retryUrl });
-          const retried = await loadPdfDocument(retryUrl, data);
-          if (retried) {
-            return true;
-          }
-          const switched = fallbackToFrame('canvas_incomplete');
+          const { isIos } = detectMobilePlatform();
+          const fallbackReason = pdfRenderState.renderStatus === 'empty'
+            ? 'canvas_empty'
+            : (isIos ? 'ios_canvas_incomplete' : 'canvas_incomplete');
+          const switched = fallbackToFrame(fallbackReason);
           if (!switched) {
             fallbackToMessage();
           }
@@ -2576,17 +2544,6 @@ export function createPdfViewer(root = document) {
       const targetUrl = wantsPdf ? buildPdfUrlWithZoom(resolvedUrl, 'page-fit', null) : resolvedUrl;
       if (wantsPdf && !forceFrame) {
         setViewerMode('pdf');
-        logViewerDeep('viewer:mode:state', {
-          mode: viewerMode,
-          useImage: viewerMode === 'image' && Boolean(elements.image),
-          usePdf: viewerMode === 'pdf' && Boolean(elements.pdf && elements.pdfCanvas),
-          forceFrame,
-          skipPdfLoad,
-          hasZoom: Boolean(elements.zoom),
-          hasSurface: Boolean(elements.surface),
-          hasImage: Boolean(elements.image),
-          hasFrame: Boolean(elements.frame),
-        });
         setPdfCanvasMessage('Не удалось открыть PDF. Откройте файл в новой вкладке.', {
           variant: 'message',
           actionLabel: 'Открыть в новой вкладке',
@@ -2594,7 +2551,6 @@ export function createPdfViewer(root = document) {
             window.open(targetUrl, '_blank', 'noopener');
           },
         });
-        logViewerDeep('viewer:mode', { mode: 'pdf-fallback', url: targetUrl });
       } else {
         setFrameFileContext(frameFileName, frameFileExtension);
         elements.frame.setAttribute('src', targetUrl);
@@ -2604,18 +2560,6 @@ export function createPdfViewer(root = document) {
           elements.image.removeAttribute('alt');
         }
         setViewerMode('frame');
-        logViewerDeep('viewer:mode:state', {
-          mode: viewerMode,
-          useImage: viewerMode === 'image' && Boolean(elements.image),
-          usePdf: viewerMode === 'pdf' && Boolean(elements.pdf && elements.pdfCanvas),
-          forceFrame,
-          skipPdfLoad,
-          hasZoom: Boolean(elements.zoom),
-          hasSurface: Boolean(elements.surface),
-          hasImage: Boolean(elements.image),
-          hasFrame: Boolean(elements.frame),
-        });
-        logViewerDeep('viewer:mode', { mode: 'frame', url: targetUrl });
       }
     }
 
@@ -2639,7 +2583,6 @@ export function createPdfViewer(root = document) {
       }
     }
 
-    scheduleMouseFallback();
     return true;
   }
 
@@ -2683,47 +2626,10 @@ export function createPdfViewer(root = document) {
   }
 
   function handlePointerDown(event) {
-    notePointerInput();
     const target = getZoomTarget();
     const isPdfMode = viewerMode === 'pdf';
     const isPdfPinch = isPdfMode && pdfZoomState.active;
     const isWordOfficeFrame = viewerMode === 'frame' && isWordOfficeFrameActive();
-    const shouldLogMouse = event.pointerType === 'mouse' && event.button === 0;
-    logInputEventSimple('pointerdown', event);
-    logInputConsole('pointerdown', {
-      pointerType: event.pointerType || '',
-      button: typeof event.button === 'number' ? event.button : null,
-      targetFound: Boolean(target),
-      viewerActive: isViewerActive(),
-      viewerMode,
-      zoomEnabled: zoomState.enabled,
-      eventTarget: event.target,
-      path: getEventPathNames(event),
-      target,
-    }, false);
-    if (shouldLogMouse) {
-      logScaleConsole('ЛКМ:нажатие', buildScaleLogDetails({
-        pointerType: event.pointerType || '',
-        button: typeof event.button === 'number' ? event.button : null,
-        panAvailable: isImagePanAvailable(),
-        targetFound: Boolean(target),
-        targetTag: target && target.tagName ? target.tagName : '',
-      }), 'drag');
-      logScaleConsoleVerbose('ЛКМ:нажатие', buildScaleLogDetails({
-        pointerType: event.pointerType || '',
-        button: typeof event.button === 'number' ? event.button : null,
-        panAvailable: isImagePanAvailable(),
-        targetFound: Boolean(target),
-        targetTag: target && target.tagName ? target.tagName : '',
-      }), 'drag');
-      logViewerConsole('ЛКМ:нажатие', buildScaleLogDetails({
-        pointerType: event.pointerType || '',
-        button: typeof event.button === 'number' ? event.button : null,
-        panAvailable: isImagePanAvailable(),
-        targetFound: Boolean(target),
-        targetTag: target && target.tagName ? target.tagName : '',
-      }), 'drag');
-    }
     if (!target) {
       logViewerEarlyExit('target=null', event);
       return;
@@ -2739,30 +2645,24 @@ export function createPdfViewer(root = document) {
     }
     const point = getPointerPosition(event);
     zoomState.pointers.set(event.pointerId, point);
-    if (target && typeof target.setPointerCapture === 'function') {
-      target.setPointerCapture(event.pointerId);
+    const captureTarget = event.currentTarget && typeof event.currentTarget.setPointerCapture === 'function'
+      ? event.currentTarget
+      : target;
+    if (captureTarget && typeof captureTarget.setPointerCapture === 'function') {
+      try {
+        captureTarget.setPointerCapture(event.pointerId);
+      } catch (_error) {
+        // Некоторые Telegram WebView не разрешают capture на первом touch-событии.
+      }
     }
 
     if (zoomState.pointers.size === 1) {
       zoomState.startPointer = point;
       zoomState.startTranslateX = zoomState.translateX;
       zoomState.startTranslateY = zoomState.translateY;
-      if (isImagePanAvailable()) {
-        const now = Date.now();
-        if (now - lastImageDragLogAt >= IMAGE_DRAG_LOG_THROTTLE_MS) {
-          lastImageDragLogAt = now;
-          const overflow = getImageOverflowState();
-          logPdfEvent('перетаскивание:старт', {
-            pointerType: event.pointerType || '',
-            button: typeof event.button === 'number' ? event.button : null,
-            scale: zoomState.scale,
-            translateX: zoomState.translateX,
-            translateY: zoomState.translateY,
-            overflowX: overflow.overflowX,
-            overflowY: overflow.overflowY,
-            ...getPlatformDetails(),
-          });
-        }
+      if (isPdfMode && elements.pdfCanvas) {
+        zoomState.startScrollLeft = elements.pdfCanvas.scrollLeft;
+        zoomState.startScrollTop = elements.pdfCanvas.scrollTop;
       }
     } else if (zoomState.pointers.size === 2) {
       const [first, second] = Array.from(zoomState.pointers.values());
@@ -2781,50 +2681,13 @@ export function createPdfViewer(root = document) {
   }
 
   function handlePointerMove(event) {
-    const shouldLogMouse = event.pointerType === 'mouse' && (event.buttons & 1) === 1;
     const target = getZoomTarget();
     const isPdfScrollMode = pdfZoomState.active && !zoomState.enabled;
     const isPdfMode = viewerMode === 'pdf';
     const isPdfPinch = isPdfMode && pdfZoomState.active;
     const isWordOfficeFrame = viewerMode === 'frame' && isWordOfficeFrameActive();
-    logInputEventSimple('pointermove', event);
-    logInputConsole('pointermove', {
-      pointerType: event.pointerType || '',
-      buttons: typeof event.buttons === 'number' ? event.buttons : null,
-      targetFound: Boolean(target),
-      pointerTracked: zoomState.pointers.has(event.pointerId),
-      viewerActive: isViewerActive(),
-      viewerMode,
-      zoomEnabled: zoomState.enabled,
-      eventTarget: event.target,
-      path: getEventPathNames(event),
-      target,
-    });
     if (!target) {
       logViewerEarlyExit('target=null', event);
-      if (shouldLogMouse) {
-        logScaleConsole('ЛКМ:перемещение', buildScaleLogDetails({
-          dx: 0,
-          dy: 0,
-          pointerType: event.pointerType || '',
-          panAvailable: isImagePanAvailable(),
-          targetFound: false,
-        }), 'drag');
-        logScaleConsoleVerbose('ЛКМ:перемещение', buildScaleLogDetails({
-          dx: 0,
-          dy: 0,
-          pointerType: event.pointerType || '',
-          panAvailable: isImagePanAvailable(),
-          targetFound: false,
-        }), 'drag');
-        logViewerConsole('ЛКМ:перемещение', buildScaleLogDetails({
-          dx: 0,
-          dy: 0,
-          pointerType: event.pointerType || '',
-          panAvailable: isImagePanAvailable(),
-          targetFound: false,
-        }), 'drag');
-      }
       return;
     }
     if (isWordOfficeFrame) {
@@ -2832,16 +2695,6 @@ export function createPdfViewer(root = document) {
     }
     if (!zoomState.pointers.has(event.pointerId)) {
       logViewerEarlyExit('pointer not tracked', event);
-      if (shouldLogMouse) {
-        logViewerConsole('ЛКМ:перемещение', buildScaleLogDetails({
-          dx: 0,
-          dy: 0,
-          pointerType: event.pointerType || '',
-          panAvailable: isImagePanAvailable(),
-          targetFound: true,
-          pointerTracked: false,
-        }), 'drag');
-      }
       return;
     }
     const point = getPointerPosition(event);
@@ -2857,11 +2710,21 @@ export function createPdfViewer(root = document) {
         return;
       }
       const distanceRatio = distance / zoomState.startDistance;
-      setPdfZoomByScale(distanceRatio);
+      setPdfZoomByScale(distanceRatio, {
+        x: (first.x + second.x) / 2,
+        y: (first.y + second.y) / 2,
+      });
       return;
     }
 
-    if (isPdfPinch) {
+    if (isPdfMode) {
+      if (event.cancelable) {
+        event.preventDefault();
+      }
+      if (elements.pdfCanvas) {
+        elements.pdfCanvas.scrollLeft = zoomState.startScrollLeft - (point.x - zoomState.startPointer.x);
+        elements.pdfCanvas.scrollTop = zoomState.startScrollTop - (point.y - zoomState.startPointer.y);
+      }
       return;
     }
 
@@ -2880,21 +2743,6 @@ export function createPdfViewer(root = document) {
       zoomState.translateY = clamped.y;
       applyZoomTransform();
       updateZoomControls();
-      logScaleConsole('ЛКМ:перемещение', buildScaleLogDetails({
-        dx,
-        dy,
-        panAvailable: true,
-      }), 'drag');
-      logScaleConsoleVerbose('ЛКМ:перемещение', buildScaleLogDetails({
-        dx,
-        dy,
-        panAvailable: true,
-      }), 'drag');
-      logViewerConsole('ЛКМ:перемещение', buildScaleLogDetails({
-        dx,
-        dy,
-        panAvailable: true,
-      }), 'drag');
       return;
     }
 
@@ -2921,39 +2769,9 @@ export function createPdfViewer(root = document) {
   }
 
   function handlePointerEnd(event) {
-    const shouldLogMouse = event.pointerType === 'mouse';
     const target = getZoomTarget();
-    logInputEventSimple('pointerup', event);
-    logInputConsole('pointerup', {
-      pointerType: event.pointerType || '',
-      button: typeof event.button === 'number' ? event.button : null,
-      targetFound: Boolean(target),
-      viewerActive: isViewerActive(),
-      viewerMode,
-      zoomEnabled: zoomState.enabled,
-      eventTarget: event.target,
-      path: getEventPathNames(event),
-      target,
-    }, false);
     if (!target) {
       logViewerEarlyExit('target=null', event);
-      if (shouldLogMouse) {
-        logScaleConsole('ЛКМ:отпускание', buildScaleLogDetails({
-          pointerType: event.pointerType || '',
-          panAvailable: isImagePanAvailable(),
-          targetFound: false,
-        }), 'drag');
-        logScaleConsoleVerbose('ЛКМ:отпускание', buildScaleLogDetails({
-          pointerType: event.pointerType || '',
-          panAvailable: isImagePanAvailable(),
-          targetFound: false,
-        }), 'drag');
-        logViewerConsole('ЛКМ:отпускание', buildScaleLogDetails({
-          pointerType: event.pointerType || '',
-          panAvailable: isImagePanAvailable(),
-          targetFound: false,
-        }), 'drag');
-      }
       return;
     }
     if (zoomState.pointers.has(event.pointerId)) {
@@ -2962,43 +2780,14 @@ export function createPdfViewer(root = document) {
     if (isWordOfficeFrameActive()) {
       return;
     }
-    if (zoomState.pointers.size === 0 && isImagePanAvailable()) {
-      logScaleConsole('ЛКМ:отпускание', buildScaleLogDetails({
-        pointerType: event.pointerType || '',
-        panAvailable: true,
-      }), 'drag');
-      logScaleConsoleVerbose('ЛКМ:отпускание', buildScaleLogDetails({
-        pointerType: event.pointerType || '',
-        panAvailable: true,
-      }), 'drag');
-      logViewerConsole('ЛКМ:отпускание', buildScaleLogDetails({
-        pointerType: event.pointerType || '',
-        panAvailable: true,
-      }), 'drag');
-      const now = Date.now();
-      if (now - lastImageDragLogAt >= IMAGE_DRAG_LOG_THROTTLE_MS) {
-        lastImageDragLogAt = now;
-        const overflow = getImageOverflowState();
-        logPdfEvent('перетаскивание:конец', {
-          pointerType: event.pointerType || '',
-          scale: zoomState.scale,
-          translateX: zoomState.translateX,
-          translateY: zoomState.translateY,
-          overflowX: overflow.overflowX,
-          overflowY: overflow.overflowY,
-          ...getPlatformDetails(),
-        });
-      }
+    if (viewerMode === 'pdf' && zoomState.pointers.size === 1 && elements.pdfCanvas) {
+      const remainingPoint = Array.from(zoomState.pointers.values())[0];
+      zoomState.startPointer = remainingPoint;
+      zoomState.startScrollLeft = elements.pdfCanvas.scrollLeft;
+      zoomState.startScrollTop = elements.pdfCanvas.scrollTop;
     }
     if (viewerMode !== 'frame' && zoomState.pointers.size === 0 && zoomState.scale <= ZOOM_MIN) {
       resetImageTransform();
-    }
-    if (zoomState.pointers.size === 0 && zoomState.enabled && zoomState.scale !== lastLoggedZoomScale) {
-      logZoomEvent('пинч', {
-        mode: viewerMode === 'frame' ? 'frame' : 'image',
-        scale: zoomState.scale,
-      });
-      lastLoggedZoomScale = zoomState.scale;
     }
   }
 
@@ -3009,35 +2798,9 @@ export function createPdfViewer(root = document) {
     startTranslateY: 0,
   };
 
-  function logMouseDrag(step, details) {
-    logScaleConsole(step, buildScaleLogDetails(details), 'drag');
-    logScaleConsoleVerbose(step, buildScaleLogDetails(details), 'drag');
-    logViewerConsole(step, buildScaleLogDetails(details), 'drag');
-  }
-
   function handleMouseDown(event) {
     const target = getZoomTarget();
-    const panAvailable = isImagePanAvailable();
     const button = typeof event.button === 'number' ? event.button : null;
-    logInputEventSimple('mousedown', event);
-    logInputConsole('mousedown', {
-      button,
-      panAvailable,
-      targetFound: Boolean(target),
-      viewerActive: isViewerActive(),
-      viewerMode,
-      zoomEnabled: zoomState.enabled,
-      eventTarget: event.target,
-      path: getEventPathNames(event),
-      target,
-    }, false);
-    logMouseDrag('Мышь:нажатие', {
-      button,
-      dx: 0,
-      dy: 0,
-      panAvailable,
-      targetFound: Boolean(target),
-    });
     if (!target || button !== 0) {
       if (!target) {
         logViewerEarlyExit('target=null', event);
@@ -3054,23 +2817,6 @@ export function createPdfViewer(root = document) {
     mouseDragState.startPoint = getPointerPosition(event);
     mouseDragState.startTranslateX = zoomState.translateX;
     mouseDragState.startTranslateY = zoomState.translateY;
-    if (panAvailable) {
-      const now = Date.now();
-      if (now - lastImageDragLogAt >= IMAGE_DRAG_LOG_THROTTLE_MS) {
-        lastImageDragLogAt = now;
-        const overflow = getImageOverflowState();
-        logPdfEvent('перетаскивание:старт', {
-          pointerType: 'mouse',
-          button,
-          scale: zoomState.scale,
-          translateX: zoomState.translateX,
-          translateY: zoomState.translateY,
-          overflowX: overflow.overflowX,
-          overflowY: overflow.overflowY,
-          ...getPlatformDetails(),
-        });
-      }
-    }
   }
 
   function handleMouseMove(event) {
@@ -3080,28 +2826,6 @@ export function createPdfViewer(root = document) {
     const point = getPointerPosition(event);
     const dx = mouseDragState.active ? point.x - mouseDragState.startPoint.x : 0;
     const dy = mouseDragState.active ? point.y - mouseDragState.startPoint.y : 0;
-    logInputEventSimple('mousemove', event);
-    logInputConsole('mousemove', {
-      button: typeof event.button === 'number' ? event.button : null,
-      hasPrimary,
-      dx,
-      dy,
-      panAvailable,
-      targetFound: Boolean(target),
-      viewerActive: isViewerActive(),
-      viewerMode,
-      zoomEnabled: zoomState.enabled,
-      eventTarget: event.target,
-      path: getEventPathNames(event),
-      target,
-    });
-    logMouseDrag('Мышь:перемещение', {
-      button: typeof event.button === 'number' ? event.button : null,
-      dx,
-      dy,
-      panAvailable,
-      targetFound: Boolean(target),
-    });
     if (!target || !hasPrimary || !mouseDragState.active) {
       if (!target) {
         logViewerEarlyExit('target=null', event);
@@ -3131,27 +2855,6 @@ export function createPdfViewer(root = document) {
 
   function handleMouseUp(event) {
     const target = getZoomTarget();
-    const panAvailable = isImagePanAvailable();
-    const button = typeof event.button === 'number' ? event.button : null;
-    logInputEventSimple('mouseup', event);
-    logInputConsole('mouseup', {
-      button,
-      panAvailable,
-      targetFound: Boolean(target),
-      viewerActive: isViewerActive(),
-      viewerMode,
-      zoomEnabled: zoomState.enabled,
-      eventTarget: event.target,
-      path: getEventPathNames(event),
-      target,
-    }, false);
-    logMouseDrag('Мышь:отпускание', {
-      button,
-      dx: 0,
-      dy: 0,
-      panAvailable,
-      targetFound: Boolean(target),
-    });
     if (!target) {
       logViewerEarlyExit('target=null', event);
     }
@@ -3159,23 +2862,6 @@ export function createPdfViewer(root = document) {
       return;
     }
     mouseDragState.active = false;
-    if (panAvailable) {
-      const now = Date.now();
-      if (now - lastImageDragLogAt >= IMAGE_DRAG_LOG_THROTTLE_MS) {
-        lastImageDragLogAt = now;
-        const overflow = getImageOverflowState();
-        logPdfEvent('перетаскивание:конец', {
-          pointerType: 'mouse',
-          button,
-          scale: zoomState.scale,
-          translateX: zoomState.translateX,
-          translateY: zoomState.translateY,
-          overflowX: overflow.overflowX,
-          overflowY: overflow.overflowY,
-          ...getPlatformDetails(),
-        });
-      }
-    }
     if (viewerMode !== 'frame' && zoomState.scale <= ZOOM_MIN) {
       resetImageTransform();
     }
@@ -3209,6 +2895,10 @@ export function createPdfViewer(root = document) {
       zoomState.startPointer = point;
       zoomState.startTranslateX = zoomState.translateX;
       zoomState.startTranslateY = zoomState.translateY;
+      if (isPdfMode && elements.pdfCanvas) {
+        zoomState.startScrollLeft = elements.pdfCanvas.scrollLeft;
+        zoomState.startScrollTop = elements.pdfCanvas.scrollTop;
+      }
     } else if (zoomState.pointers.size >= 2) {
       const [first, second] = Array.from(zoomState.pointers.values());
       zoomState.startDistance = getPointerDistance(first, second);
@@ -3235,7 +2925,7 @@ export function createPdfViewer(root = document) {
       return;
     }
     if (event.cancelable && (
-      isPdfPinch
+      isPdfMode
       || (!isPdfMode && !isPdfScrollMode && (event.touches.length > 1 || zoomState.scale > ZOOM_MIN))
     )) {
       event.preventDefault();
@@ -3248,11 +2938,19 @@ export function createPdfViewer(root = document) {
       if (!zoomState.startDistance) {
         return;
       }
-      setPdfZoomByScale(distance / zoomState.startDistance);
+      setPdfZoomByScale(distance / zoomState.startDistance, {
+        x: (first.x + second.x) / 2,
+        y: (first.y + second.y) / 2,
+      });
       return;
     }
 
     if (isPdfMode) {
+      if (event.touches.length === 1 && elements.pdfCanvas) {
+        const point = Array.from(zoomState.pointers.values())[0];
+        elements.pdfCanvas.scrollLeft = zoomState.startScrollLeft - (point.x - zoomState.startPointer.x);
+        elements.pdfCanvas.scrollTop = zoomState.startScrollTop - (point.y - zoomState.startPointer.y);
+      }
       return;
     }
 
@@ -3307,16 +3005,13 @@ export function createPdfViewer(root = document) {
       zoomState.startPointer = point;
       zoomState.startTranslateX = zoomState.translateX;
       zoomState.startTranslateY = zoomState.translateY;
+      if (viewerMode === 'pdf' && elements.pdfCanvas) {
+        zoomState.startScrollLeft = elements.pdfCanvas.scrollLeft;
+        zoomState.startScrollTop = elements.pdfCanvas.scrollTop;
+      }
     }
     if (viewerMode !== 'frame' && zoomState.pointers.size === 0 && zoomState.scale <= ZOOM_MIN) {
       resetImageTransform();
-    }
-    if (zoomState.pointers.size === 0 && zoomState.enabled && zoomState.scale !== lastLoggedZoomScale) {
-      logZoomEvent('пинч', {
-        mode: viewerMode === 'frame' ? 'frame' : 'image',
-        scale: zoomState.scale,
-      });
-      lastLoggedZoomScale = zoomState.scale;
     }
   }
 
@@ -3327,61 +3022,12 @@ export function createPdfViewer(root = document) {
     if (event) {
       event.__appdoscViewerHandled = true;
     }
-    const target = event.target;
-    const deltaY = event.deltaY;
     const viewerActive = isViewerActive();
-    logInputEventSimple('wheel', event);
-    logInputConsole('wheel', {
-      viewerActive,
-      viewerMode,
-      pdfZoomStateActive: pdfZoomState.active,
-      zoomEnabled: zoomState.enabled,
-      eventTarget: event.target,
-      path: getEventPathNames(event),
-      target,
-      deltaY,
-      deltaMode: event.deltaMode,
-      ctrlKey: Boolean(event.ctrlKey),
-      metaKey: Boolean(event.metaKey),
-    });
     if (!viewerActive) {
       logViewerEarlyExit('viewerActive=false', event);
-      if (typeof event.deltaY === 'number') {
-        logViewerConsole('Колесо:игнор', buildScaleLogDetails({
-          deltaY: event.deltaY,
-          deltaX: event.deltaX,
-          deltaMode: event.deltaMode,
-          ctrlKey: Boolean(event.ctrlKey),
-          metaKey: Boolean(event.metaKey),
-          reason: 'viewer_inactive',
-        }));
-      }
       return;
     }
     const isPdfView = pdfZoomState.active && !zoomState.enabled;
-    if (typeof event.deltaY === 'number') {
-      logScaleConsole('Колесо:событие', buildScaleLogDetails({
-        deltaY: event.deltaY,
-        deltaX: event.deltaX,
-        deltaMode: event.deltaMode,
-        ctrlKey: Boolean(event.ctrlKey),
-        metaKey: Boolean(event.metaKey),
-      }));
-      logScaleConsoleVerbose('Колесо:событие', buildScaleLogDetails({
-        deltaY: event.deltaY,
-        deltaX: event.deltaX,
-        deltaMode: event.deltaMode,
-        ctrlKey: Boolean(event.ctrlKey),
-        metaKey: Boolean(event.metaKey),
-      }));
-      logViewerConsole('Колесо:событие', buildScaleLogDetails({
-        deltaY: event.deltaY,
-        deltaX: event.deltaX,
-        deltaMode: event.deltaMode,
-        ctrlKey: Boolean(event.ctrlKey),
-        metaKey: Boolean(event.metaKey),
-      }));
-    }
     if (isPdfView) {
       if (elements.pdfCanvas) {
         const scrollFactor = event.deltaMode === 1
@@ -3395,15 +3041,6 @@ export function createPdfViewer(root = document) {
         }
         if (deltaY !== 0) {
           elements.pdfCanvas.scrollTop += deltaY;
-        }
-        const now = Date.now();
-        if (deltaY !== 0 && now - lastScrollLogAt >= SCROLL_LOG_THROTTLE_MS) {
-          lastScrollLogAt = now;
-          logPdfEvent('скролл:вертикаль', {
-            deltaY,
-            mode: 'pdf',
-            ...getPlatformDetails(),
-          });
         }
       }
       return;
@@ -3434,60 +3071,10 @@ export function createPdfViewer(root = document) {
         zoomState.translateY = clamped.y;
         applyZoomTransform();
         updateZoomControls();
-        logScaleConsole('Колесо:прокрутка', {
-          deltaX,
-          deltaY,
-          scale: zoomState.scale,
-          translateX: zoomState.translateX,
-          translateY: zoomState.translateY,
-          ctrlKey: Boolean(event.ctrlKey),
-          metaKey: Boolean(event.metaKey),
-          ...getPlatformDetails(),
-        });
-        logScaleConsoleVerbose('Колесо:прокрутка', {
-          deltaX,
-          deltaY,
-          scale: zoomState.scale,
-          translateX: zoomState.translateX,
-          translateY: zoomState.translateY,
-          ctrlKey: Boolean(event.ctrlKey),
-          metaKey: Boolean(event.metaKey),
-          ...getPlatformDetails(),
-        });
-        logViewerDeep('wheel:pan', {
-          deltaX,
-          deltaY,
-          scale: zoomState.scale,
-          translateX: zoomState.translateX,
-          translateY: zoomState.translateY,
-          ...getPlatformDetails(),
-        });
-        const now = Date.now();
-        if (now - lastImageScrollLogAt >= IMAGE_SCROLL_LOG_THROTTLE_MS) {
-          lastImageScrollLogAt = now;
-          const overflow = getImageOverflowState();
-          logPdfEvent('скролл:картинка:колесо', {
-            deltaX,
-            deltaY,
-            scale: zoomState.scale,
-            translateX: zoomState.translateX,
-            translateY: zoomState.translateY,
-            overflowX: overflow.overflowX,
-            overflowY: overflow.overflowY,
-            ...getPlatformDetails(),
-          });
-        }
       } else if (event.ctrlKey || event.metaKey) {
         if (event.cancelable) {
           event.preventDefault();
         }
-      } else if (!panAvailable) {
-        logViewerDeep('wheel:pan_unavailable', {
-          deltaX,
-          deltaY,
-          scale: zoomState.scale,
-          ...getPlatformDetails(),
-        });
       }
       return;
     }
@@ -3533,22 +3120,10 @@ export function createPdfViewer(root = document) {
     elements.frame.addEventListener('load', () => {
       ensureFrameScrollability();
       logPdfEvent('frame:load', { src: elements.frame.getAttribute('src') || '' });
-      logViewerDeep('frame:load', {
-        src: elements.frame.getAttribute('src') || '',
-        sandbox: elements.frame.getAttribute('sandbox') || '',
-        allow: elements.frame.getAttribute('allow') || '',
-        referrerPolicy: elements.frame.getAttribute('referrerpolicy') || '',
-      });
       restorePdfFramePosition();
     });
     elements.frame.addEventListener('error', () => {
       logPdfEvent('frame:error', { src: elements.frame.getAttribute('src') || '' });
-      logViewerDeep('frame:error', {
-        src: elements.frame.getAttribute('src') || '',
-        sandbox: elements.frame.getAttribute('sandbox') || '',
-        allow: elements.frame.getAttribute('allow') || '',
-        referrerPolicy: elements.frame.getAttribute('referrerpolicy') || '',
-      });
     });
   }
 
@@ -3561,12 +3136,6 @@ export function createPdfViewer(root = document) {
       event.preventDefault();
       if (pdfZoomState.active && !zoomState.enabled) {
         adjustPdfZoom(25);
-        logZoomEvent('кнопка', {
-          mode: 'pdf',
-          delta: 25,
-          zoom: pdfZoomState.zoom,
-          fit: pdfZoomState.fit,
-        });
       } else if (viewerMode === 'frame') {
         adjustFrameZoom(0.25);
       } else {
@@ -3580,12 +3149,6 @@ export function createPdfViewer(root = document) {
       event.preventDefault();
       if (pdfZoomState.active && !zoomState.enabled) {
         adjustPdfZoom(-25);
-        logZoomEvent('кнопка', {
-          mode: 'pdf',
-          delta: -25,
-          zoom: pdfZoomState.zoom,
-          fit: pdfZoomState.fit,
-        });
       } else if (viewerMode === 'frame') {
         adjustFrameZoom(-0.25);
       } else {
@@ -3602,29 +3165,16 @@ export function createPdfViewer(root = document) {
         pdfZoomState.zoom = 100;
         if (pdfZoomState.useCanvas) {
           clearPdfZoomRenderTimer();
-          renderPdfPages();
+          applyPdfZoomWithoutRerender();
         } else {
           capturePdfFramePosition();
           setPdfZoom('page-fit');
         }
         updateZoomControls();
-        logZoomEvent('вписать', {
-          mode: 'pdf',
-          zoom: pdfZoomState.zoom,
-          fit: pdfZoomState.fit,
-        });
       } else if (viewerMode === 'frame') {
         resetFrameTransform();
-        logZoomEvent('вписать', {
-          mode: 'frame',
-          scale: zoomState.scale,
-        });
       } else {
         resetImageTransform();
-        logZoomEvent('вписать', {
-          mode: 'image',
-          scale: zoomState.scale,
-        });
       }
     });
   }
@@ -3635,49 +3185,12 @@ export function createPdfViewer(root = document) {
 
   if (elements.container) {
     elements.container.addEventListener('click', handleBackdrop);
-    elements.container.addEventListener('gesturestart', handleNativeGestureStart, { passive: false });
-    elements.container.addEventListener('gesturechange', handleNativeGestureChange, { passive: false });
-    elements.container.addEventListener('gestureend', handleNativeGestureEnd, { passive: false });
-    elements.container.addEventListener('wheel', (event) => {
-      logInputConsole('wheel:capture', {
-        target: event.target,
-        deltaY: event.deltaY,
-        viewerMode,
-      }, false);
-    }, { capture: true, passive: false });
-    ['pointerdown', 'wheel', 'mousedown'].forEach((eventType) => {
-      elements.container.addEventListener(eventType, (event) => {
-        logInputConsole('capture:event', {
-          target: getElementName(event.target),
-          type: event.type,
-          viewerActive: isViewerActive(),
-          viewerMode,
-        }, false);
-      }, { capture: true, passive: true });
-    });
-  }
-  if (typeof window !== 'undefined') {
-    window.addEventListener('wheel', (event) => {
-      logInputConsole('wheel:capture:window', {
-        target: event.target,
-        deltaY: event.deltaY,
-        viewerMode,
-      }, false);
-    }, { capture: true, passive: false });
   }
 
   function bindPointerEvents(target) {
     if (!target) {
-      logInputConsole('bind:pointer:skip', { reason: 'no_target' }, false);
       return;
     }
-    logInputConsole('bind:pointer', {
-      target: getElementName(target),
-      viewerMode,
-      viewerActive: isViewerActive(),
-      ...getTargetVisibilityDetails(target),
-    }, false);
-    logInputEventSimple('bind:pointer', { currentTarget: target, type: 'bind:pointer' });
     target.addEventListener('pointerdown', handlePointerDown);
     target.addEventListener('pointermove', handlePointerMove);
     target.addEventListener('pointerup', handlePointerEnd);
@@ -3686,30 +3199,11 @@ export function createPdfViewer(root = document) {
   }
 
   bindPointerEvents(elements.surface);
-  bindPointerEvents(elements.zoom);
-  bindPointerEvents(elements.frame);
-  bindPointerEvents(elements.image);
-  bindPointerEvents(elements.pdfCanvas);
 
-  function bindMouseEvents(target, options = {}) {
-    const force = Boolean(options.force);
-    const reason = options.reason || (force ? 'force' : 'default');
-    if (!target || (!force && supportsPointerEvents)) {
-      if (!target) {
-        logInputConsole('bind:mouse:skip', { reason: 'no_target' }, false);
-      } else if (supportsPointerEvents) {
-        logInputConsole('bind:mouse:skip', { reason: 'pointer_events_supported', target: getElementName(target) }, false);
-      }
+  function bindMouseEvents(target) {
+    if (!target || supportsPointerEvents) {
       return;
     }
-    logInputConsole('bind:mouse', {
-      target: getElementName(target),
-      reason,
-      viewerMode,
-      viewerActive: isViewerActive(),
-      ...getTargetVisibilityDetails(target),
-    }, false);
-    logInputEventSimple('bind:mouse', { currentTarget: target, type: 'bind:mouse' });
     target.addEventListener('mousedown', handleMouseDown);
     target.addEventListener('mousemove', handleMouseMove);
     target.addEventListener('mouseup', handleMouseUp);
@@ -3717,21 +3211,11 @@ export function createPdfViewer(root = document) {
   }
 
   bindMouseEvents(elements.surface);
-  bindMouseEvents(elements.zoom);
-  bindMouseEvents(elements.frame);
-  bindMouseEvents(elements.image);
-  bindMouseEvents(elements.pdfCanvas);
 
   function bindTouchEvents(target) {
     if (!target || supportsPointerEvents) {
-      if (!target) {
-        logInputConsole('bind:touch:skip', { reason: 'no_target' }, false);
-      } else if (supportsPointerEvents) {
-        logInputConsole('bind:touch:skip', { reason: 'pointer_events_supported', target }, false);
-      }
       return;
     }
-    logInputConsole('bind:touch', { target }, false);
     target.addEventListener('touchstart', handleTouchStart, { passive: false });
     target.addEventListener('touchmove', handleTouchMove, { passive: false });
     target.addEventListener('touchend', handleTouchEnd);
@@ -3739,44 +3223,19 @@ export function createPdfViewer(root = document) {
   }
 
   bindTouchEvents(elements.surface);
-  bindTouchEvents(elements.zoom);
-  bindTouchEvents(elements.frame);
-  bindTouchEvents(elements.image);
-  bindTouchEvents(elements.pdfCanvas);
 
   function bindWheelEvents(target) {
     if (!target) {
-      logInputConsole('bind:wheel:skip', { reason: 'no_target' }, false);
       return;
     }
-    logInputConsole('bind:wheel', {
-      target: getElementName(target),
-      viewerMode,
-      viewerActive: isViewerActive(),
-      ...getTargetVisibilityDetails(target),
-    }, false);
-    logInputEventSimple('bind:wheel', { currentTarget: target, type: 'bind:wheel' });
     target.addEventListener('wheel', handleWheel, { passive: false });
   }
 
   bindWheelEvents(elements.surface);
-  bindWheelEvents(elements.zoom);
-  bindWheelEvents(elements.frame);
-  bindWheelEvents(elements.image);
-  bindWheelEvents(elements.pdfCanvas);
   if (elements.surface) {
     elements.surface.addEventListener('contextmenu', handleContextMenu);
   }
-  if (elements.zoom) {
-    elements.zoom.addEventListener('contextmenu', handleContextMenu);
-  }
-  if (elements.image) {
-    elements.image.addEventListener('contextmenu', handleContextMenu);
-  }
 
-  document.addEventListener('gesturestart', handleNativeGestureStart, { passive: false });
-  document.addEventListener('gesturechange', handleNativeGestureChange, { passive: false });
-  document.addEventListener('gestureend', handleNativeGestureEnd, { passive: false });
   document.addEventListener('keydown', handleKeydown, true);
   window.addEventListener('resize', () => {
     if (isViewerActive() && pdfZoomState.active && pdfZoomState.useCanvas) {
@@ -3844,87 +3303,6 @@ export function createPdfViewer(root = document) {
     },
     getPdfLoadPromise() {
       return pdfRenderState.loadPromise;
-    },
-    captureRenderedContent() {
-      if (!elements.container || !isViewerActive()) {
-        return null;
-      }
-      if (viewerMode === 'pdf' && elements.pdfCanvas && elements.pdfCanvas.children.length > 0) {
-        const fragment = document.createDocumentFragment();
-        while (elements.pdfCanvas.firstChild) {
-          fragment.appendChild(elements.pdfCanvas.firstChild);
-        }
-        const doc = pdfRenderState.doc;
-        pdfRenderState.doc = null;
-        return {
-          mode: 'pdf',
-          fragment,
-          doc,
-          renderStatus: pdfRenderState.renderStatus,
-          renderedPages: pdfRenderState.renderedPages,
-          totalPages: pdfRenderState.totalPages,
-          lastUrl: pdfRenderState.lastUrl,
-          useCanvas: pdfZoomState.useCanvas,
-          zoom: pdfZoomState.zoom,
-          fit: pdfZoomState.fit,
-        };
-      }
-      if (viewerMode === 'html' && elements.html) {
-        return { mode: 'html', htmlContent: elements.html.innerHTML };
-      }
-      if (viewerMode === 'frame' && elements.frame && elements.frame.src) {
-        return { mode: 'frame', src: elements.frame.src };
-      }
-      return null;
-    },
-    restoreRenderedContent(snapshot, title) {
-      if (!snapshot || !snapshot.mode || !elements.container) {
-        return false;
-      }
-      resetViewerContent();
-      lastActiveElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-      elements.container.hidden = false;
-      elements.container.setAttribute(ACTIVE_ATTR, 'true');
-      applyBodyLock(true);
-      if (elements.title) {
-        const label = title && String(title).trim() ? String(title).trim() : 'Документ';
-        elements.title.textContent = label;
-      }
-      if (snapshot.mode === 'pdf' && elements.pdfCanvas && elements.pdf) {
-        pdfZoomState.active = true;
-        pdfZoomState.useCanvas = Boolean(snapshot.useCanvas);
-        pdfZoomState.zoom = snapshot.zoom || 100;
-        pdfZoomState.fit = snapshot.fit !== false;
-        pdfRenderState.doc = snapshot.doc || null;
-        pdfRenderState.lastUrl = snapshot.lastUrl || '';
-        pdfRenderState.renderStatus = snapshot.renderStatus || 'complete';
-        pdfRenderState.renderedPages = snapshot.renderedPages || 0;
-        pdfRenderState.totalPages = snapshot.totalPages || 0;
-        pdfRenderState.loading = false;
-        pdfRenderState.loadPromise = Promise.resolve(true);
-        elements.pdfCanvas.appendChild(snapshot.fragment);
-        setViewerMode('pdf');
-        updateZoomControls();
-        setupPdfResizeObserver();
-        return true;
-      }
-      if (snapshot.mode === 'html' && elements.html) {
-        pdfZoomState.active = false;
-        elements.html.innerHTML = snapshot.htmlContent;
-        setViewerMode('html');
-        updateZoomControls();
-        return true;
-      }
-      if (snapshot.mode === 'frame' && elements.frame && snapshot.src) {
-        pdfZoomState.active = false;
-        pdfZoomState.useCanvas = false;
-        setFrameFileContext(title);
-        elements.frame.setAttribute('src', snapshot.src);
-        setViewerMode('frame');
-        updateZoomControls();
-        return true;
-      }
-      return false;
     },
     get _viewerMode() {
       return viewerMode;
